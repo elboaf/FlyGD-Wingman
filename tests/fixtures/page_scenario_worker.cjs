@@ -979,9 +979,7 @@ const BOOTSTRAP = String.raw`
     specifier => { throw new SafeError('Unknown DOM require ' + specifier); }
   );
   const rawCreateDOM = domModule.createDOM;
-  function createTrackedDOM(page, synthetic) {
-    const dom = rawCreateDOM(page);
-    const Element = dom.Element;
+  function trackElementClass(Element, synthetic = false) {
     const prototype = Element.prototype;
     domsWerePristine = domsWerePristine
       && safeGetOwnPropertyDescriptor(prototype, '__wingmanPoison') === undefined;
@@ -990,25 +988,32 @@ const BOOTSTRAP = String.raw`
       const addEventListener = prototype.addEventListener;
       const removeEventListener = prototype.removeEventListener;
       prototype.addEventListener = function(name, callback) {
+        const result = addEventListener.call(this, name, callback);
         safeArrayPush(
           listenerRoots,
           [this, name, callback, removeEventListener, synthetic]
         );
         if (!synthetic) safeArrayPush(realListenerTargets, this);
-        return addEventListener.call(this, name, callback);
+        return result;
       };
       prototype.removeEventListener = function(name, callback) {
+        const result = removeEventListener.call(this, name, callback);
         for (let index = listenerRoots.length - 1; index >= 0; index--) {
           const row = listenerRoots[index];
           if (row[0] === this && row[1] === name && row[2] === callback) {
             safeArraySplice(listenerRoots, index, 1);
           }
         }
-        return removeEventListener.call(this, name, callback);
+        return result;
       };
     }
-    safeArrayPush(domRoots, dom);
     globalThis.__wingmanElement = Element;
+  }
+  globalThis.trackElementClass = trackElementClass;
+  function createTrackedDOM(page, synthetic) {
+    const dom = rawCreateDOM(page);
+    trackElementClass(dom.Element, synthetic);
+    safeArrayPush(domRoots, dom);
     return dom;
   }
   const createDOM = page => createTrackedDOM(page, false);
@@ -1188,7 +1193,7 @@ const BOOTSTRAP = String.raw`
     for (const key of [
       'clearImmediate', 'clearInterval', 'clearTimeout', 'console', 'document',
       'Event', 'process', 'setImmediate', 'setInterval', 'setTimeout',
-      'URLSearchParams', '__adapterInput',
+      'trackElementClass', 'URLSearchParams', '__adapterInput',
       '__priorReply', '__unresolved', '__wingmanElement'
     ]) delete globalThis[key];
     const receipt = safeCreate(null);
@@ -1196,7 +1201,6 @@ const BOOTSTRAP = String.raw`
     receipt.host_callbacks = timers.size;
     receipt.active_rejection_listeners = 0;
     receipt.pending_rejection_records = 0;
-    receipt.retained_realms = 0;
     return receipt;
   }
 
@@ -1252,6 +1256,11 @@ let cachedFixtureOutputJson = 'null';
 let hostModule = null;
 let previousReplyJsonText = hostJsonStringify({nested: {value: 'clean'}});
 let activeRequest = null;
+const retainedRealms = new Set();
+
+function releaseRequestRealm(context) {
+  retainedRealms.delete(context);
+}
 
 function familyProtocolForScenario(scenario) {
   const qualificationPrefix = 'qualification/' + family + '/';
@@ -1361,6 +1370,7 @@ async function executeRequest(request) {
     : sourceRegistry[PROGRAM_BY_PROTOCOL[protocol]];
   if (typeof programSource !== 'string') throw new TypeError('program source unavailable');
   const context = vm.createContext(Object.create(null));
+  retainedRealms.add(context);
   const pageSelector = qualificationPage(input);
   const inputJson = hostJsonStringify(input);
   const hostParsedInput = hostJsonParse(inputJson);
@@ -1433,6 +1443,16 @@ async function executeRequest(request) {
           return null;
         }
         const detached = hostJsonParse(serialized);
+        releaseRequestRealm(context);
+        if (!detached.cleanup || typeof detached.cleanup !== 'object') {
+          fatalProtocol('request cleanup receipt was invalid');
+          return null;
+        }
+        detached.cleanup.retained_realms = retainedRealms.size;
+        if (detached.cleanup.retained_realms !== 0) {
+          fatalProtocol('request retained a VM realm');
+          return null;
+        }
         assertFiniteJson(detached);
         const hostInputClean = !input.nested
           || hostParsedInput.nested.value === input.nested.value;
@@ -1465,6 +1485,7 @@ async function executeRequest(request) {
     activeRequest = null;
     process.removeListener('unhandledRejection', captureRejection);
     delete context[failureSerializerSlot];
+    releaseRequestRealm(context);
   }
 }
 
@@ -1494,7 +1515,11 @@ async function serveLine(line) {
 
 const inputLines = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
 (async () => {
-  for await (const line of inputLines) {
-    await serveLine(line);
+  try {
+    for await (const line of inputLines) {
+      await serveLine(line);
+    }
+  } finally {
+    retainedRealms.clear();
   }
 })().catch(error => fatalProtocol('worker read loop failed', error));

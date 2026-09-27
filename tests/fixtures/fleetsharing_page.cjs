@@ -14,9 +14,7 @@ const scenario = process.argv[3];
 const web = process.argv[4];
 const safeParse = JSON.parse.bind(JSON);
 const pageJson = JSON.stringify(input.page);
-const cachedSharingPage = input.page;
 const page = safeParse(pageJson);
-page.attrs.__sharingBuilt = true;
 let activeElement = null;
 class Element {
   constructor(tag, attrs = {}) {
@@ -64,6 +62,9 @@ class Element {
     if (on) classes.push(key); this.className = classes.join(' ');
   }}; }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
+  removeEventListener(name, fn) {
+    this.listeners[name] = (this.listeners[name] || []).filter(listener => listener !== fn);
+  }
   dispatchEvent(event) { event.target ||= this; (this.listeners[event.type] || []).forEach(fn => fn(event)); }
   querySelectorAll(selector) {
     const all = this.children.flatMap(c => [c, ...c.querySelectorAll('*')]);
@@ -74,6 +75,9 @@ class Element {
     assert.match(selector, /^\.[\w-]+$/);
     return all.filter(c => c.className.split(/\s+/).includes(selector.slice(1)));
   }
+}
+if (typeof globalThis.trackElementClass === 'function') {
+  globalThis.trackElementClass(Element);
 }
 const ids = {};
 function build(node) {
@@ -1053,7 +1057,6 @@ async function run() {
     assert.equal(ids['sharing-confirm-on'].disabled, false, 'recovery rearms every available control');
   }
   assert.equal(errors.length, scenario === 'bridge-source-rejection' ? 2 : scenario === 'reject' ? 1 : 0);
-  assert.equal(input.page.attrs.__sharingBuilt, undefined, 'stage-b mutation adapter-sharing-dom-isolation');
   console.log('PASS ' + scenario);
 }
 const scenarioCompletion = run();

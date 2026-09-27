@@ -74,9 +74,9 @@ MUTATION_SENTINELS = {
     "durable": "stage-b mutation receipt-durable-readback",
     "real-dom": "stage-b mutation real-dom-listener-tracking",
     "saved-program": "stage-b mutation adapter-saved-program-selection",
-    "sharing-dom": "stage-b mutation adapter-sharing-dom-isolation",
+    "sharing-source": "stage-b mutation realm-sharing-completion-reuse",
     "group-source": "stage-b mutation realm-group-source-reexecution",
-    "marker-root": "stage-b mutation adapter-marker-root-release",
+    "marker-root": "stage-b mutation marker-retained-realm-release",
     "business-retention": "stage-b mutation business-failure-process-retention",
     "fatal-no-replay": "stage-b mutation protocol-fatal-no-replay",
 }
@@ -438,6 +438,29 @@ def _saved_main_request(
     )
 
 
+def _fleet_request(
+    worker: NodeScenarioWorker,
+    inputs: QualificationInputs,
+    *,
+    mode: str,
+    run: str,
+) -> dict[str, object]:
+    case = next(item for item in inputs.direct_cases if item.name == "fleet-sharing")
+    payload = json.loads(case.input_json)
+    payload.update(
+        scenario="missing-worker",
+        page="sharing",
+        mode=mode,
+        run=run,
+        nested={"value": "clean"},
+    )
+    return worker.request(
+        "fleet-sharing/page/missing-worker",
+        {"protocol": "fleet-sharing", "input": payload},
+        timeout=20.0,
+    )
+
+
 def _realm_request(
     worker: NodeScenarioWorker,
     family: str,
@@ -446,15 +469,9 @@ def _realm_request(
 ) -> dict[str, object]:
     if family == "saved-layouts":
         return _saved_main_request(worker, inputs, mode="realm", run=run)
+    if family == "fleet-sharing":
+        return _fleet_request(worker, inputs, mode="realm", run=run)
     case_name, protocol, scenario, label, page, timeout = {
-        "fleet-sharing": (
-            "fleet-sharing",
-            "fleet-sharing",
-            "missing-worker",
-            "fleet-sharing/page/missing-worker",
-            "sharing",
-            20.0,
-        ),
         "group-backward": (
             "group-backward",
             "group-backward",
@@ -543,6 +560,36 @@ def _assert_finite_json(value: object) -> None:
         _assert_finite_json(item)
 
 
+def _assert_group_dev_diagnostics(rows: list[dict[str, object]]) -> str:
+    assert len(rows) == 5
+    assert [row["level"] for row in rows] == ["log"] * 5
+    generated = rows[1]["args"][1]
+    assert isinstance(generated, str)
+    assert re.fullmatch(r"g-dev-\d+", generated)
+    expected_args = [
+        ["DEV api.create_preview_cycle_group(", "Backward test", ")"],
+        ["DEV api.set_preview_cycle_group_bind(", generated, "Ctrl+F2", ")"],
+        [
+            "DEV api.set_preview_cycle_group_prev_bind(",
+            generated,
+            "Ctrl+F3",
+            ")",
+        ],
+        ["DEV api.set_preview_cycle_group_prev_bind(", "stale", "Ctrl+F4", ")"],
+        ["DEV api.set_preview_cycle_group_prev_bind(", generated, "", ")"],
+    ]
+    assert [row["args"] for row in rows] == expected_args
+    expected_rendered = [
+        "DEV api.create_preview_cycle_group( Backward test )",
+        f"DEV api.set_preview_cycle_group_bind( {generated} Ctrl+F2 )",
+        f"DEV api.set_preview_cycle_group_prev_bind( {generated} Ctrl+F3 )",
+        "DEV api.set_preview_cycle_group_prev_bind( stale Ctrl+F4 )",
+        f"DEV api.set_preview_cycle_group_prev_bind( {generated}  )",
+    ]
+    assert [row["rendered"] for row in rows] == expected_rendered
+    return generated
+
+
 @pytest.mark.parametrize(
     "family",
     ["saved-layouts", "fleet-sharing", "group-backward", "label-markers"],
@@ -556,17 +603,17 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     except NodeScenarioCrash as error:
         if "retained a target module" in str(error):
             _fail_mutation("module")
+        if family == "label-markers" and "retained a VM realm" in str(error):
+            _fail_mutation("marker-root")
         raise
     except NodeScenarioFailure as error:
         rendered = str(error)
         if family == "saved-layouts" and "business source" in rendered:
             _fail_mutation("saved-program")
-        if family == "fleet-sharing" and "adapter-sharing-dom-isolation" in rendered:
-            _fail_mutation("sharing-dom")
+        if family == "fleet-sharing" and "business source" in rendered:
+            _fail_mutation("sharing-source")
         if family == "group-backward" and "business source" in rendered:
             _fail_mutation("group-source")
-        if family == "label-markers" and "adapter-marker-root-release" in rendered:
-            _fail_mutation("marker-root")
         raise
     process = worker._proc
     assert first["output"].get("serialization_safe") is True, REALM_SENTINELS[family]
@@ -577,6 +624,8 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     except NodeScenarioCrash as error:
         if "retained a target module" in str(error):
             _fail_mutation("module")
+        if family == "label-markers" and "retained a VM realm" in str(error):
+            _fail_mutation("marker-root")
         if (
             "poisoned" in str(error)
             or "already been declared" in str(error)
@@ -588,12 +637,10 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         rendered = str(error)
         if family == "saved-layouts" and "business source" in rendered:
             _fail_mutation("saved-program")
-        if family == "fleet-sharing" and "adapter-sharing-dom-isolation" in rendered:
-            _fail_mutation("sharing-dom")
+        if family == "fleet-sharing" and "business source" in rendered:
+            _fail_mutation("sharing-source")
         if family == "group-backward" and "business source" in rendered:
             _fail_mutation("group-source")
-        if family == "label-markers" and "adapter-marker-root-release" in rendered:
-            _fail_mutation("marker-root")
         if "poisoned" in rendered:
             _fail_mutation("context")
         raise
@@ -601,6 +648,21 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     assert process is not None and worker._proc is not None
     assert worker._proc.pid == process.pid
     _assert_mutation(final["output"]["realm_pristine"] is True, "context")
+    source_executed = all(
+        reply["output"]["source_execution_count"] == 1
+        for reply in (first, poison, final)
+    )
+    _assert_mutation(
+        source_executed,
+        "sharing-source" if family == "fleet-sharing" else "source",
+    )
+    run_values_are_fresh = [
+        reply["output"]["run"] for reply in (first, poison, final)
+    ] == ["A", "poison", "A"]
+    _assert_mutation(
+        run_values_are_fresh,
+        "sharing-source" if family == "fleet-sharing" else "context",
+    )
     _assert_mutation(
         len(
             {
@@ -611,13 +673,6 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         )
         == 3,
         "context",
-    )
-    _assert_mutation(
-        all(
-            reply["output"]["source_execution_count"] == 1
-            for reply in (first, poison, final)
-        ),
-        "source",
     )
     _assert_mutation(
         all(
@@ -657,14 +712,14 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         _assert_mutation(business_output_matches, "saved-program")
     else:
         assert business_output_matches
-    if family == "saved-layouts":
+    if family in {"saved-layouts", "fleet-sharing"}:
         _assert_mutation(
             all(
                 reply["output"]["registered_real_listeners"] > 0
                 and reply["output"]["real_listeners_after_cleanup"] == 0
                 for reply in (first, poison, final)
             ),
-            "real-dom",
+            "real-dom" if family == "saved-layouts" else "sharing-source",
         )
     assert poison["output"].get("output") != "forged"
     poison_diagnostics = poison["diagnostics"]
@@ -674,14 +729,18 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         "args": ["realm poison", {"nested": {"value": "before"}}],
     }
     if family == "group-backward":
-        logs = [row for row in poison_diagnostics if row["level"] == "log"]
-        assert len(logs) == 5
-        generated = [
-            str(logs[index]["rendered"]).split("( ", 1)[1].split(" ", 1)[0]
-            for index in (1, 2, 4)
-        ]
-        assert generated[0] == generated[1] == generated[2]
+        _assert_group_dev_diagnostics(first["diagnostics"])
+        _assert_group_dev_diagnostics(poison_diagnostics[:-1])
+        _assert_group_dev_diagnostics(final["diagnostics"])
         assert poison_diagnostics[-1] == expected_poison
+        wrong_suffix = json.loads(json.dumps(first["diagnostics"]))
+        wrong_suffix[1]["args"][2] = "Ctrl+F9"
+        with pytest.raises(AssertionError):
+            _assert_group_dev_diagnostics(wrong_suffix)
+        empty_args = json.loads(json.dumps(first["diagnostics"]))
+        empty_args[0]["args"] = []
+        with pytest.raises(AssertionError):
+            _assert_group_dev_diagnostics(empty_args)
     else:
         assert poison_diagnostics == [expected_poison]
     assert final["output"]["host_prototypes_clean"] is True
@@ -828,40 +887,50 @@ def test_request_cleanup_after_success(
             node,
             str(WORKER),
             "--worker",
-            "saved-layouts",
+            "fleet-sharing",
             str(WEB),
-            str(qualification_inputs.manifest_for("saved-layouts")),
+            str(qualification_inputs.manifest_for("fleet-sharing")),
         ],
         cwd=ROOT,
     )
     try:
-        cleanup_failure_worker._ensure_started("preview-saved-layouts/page/reversed")
+        cleanup_failure_worker._ensure_started("fleet-sharing/page/missing-worker")
         real_listener_process = cleanup_failure_worker._proc
         assert real_listener_process is not None
         with pytest.raises(NodeScenarioCrash) as cleanup_failure:
-            _saved_main_request(
+            _fleet_request(
                 cleanup_failure_worker,
                 qualification_inputs,
                 mode="real-listener-removal-failure",
+                run="fault",
             )
         assert cleanup_failure.value.reply is None
         assert "real listener removal failure" in str(cleanup_failure.value)
         assert cleanup_failure_worker._proc is None
         assert real_listener_process.poll() is not None
+        fleet_recovery = _fleet_request(
+            cleanup_failure_worker,
+            qualification_inputs,
+            mode="realm",
+            run="recovery",
+        )
+        assert fleet_recovery["cleanup"] == ZERO_CLEANUP
+        assert fleet_recovery["output"]["registered_real_listeners"] > 0
+        assert fleet_recovery["output"]["real_listeners_after_cleanup"] == 0
+        assert cleanup_failure_worker._proc is not None
+        assert cleanup_failure_worker._proc.pid != real_listener_process.pid
         with pytest.raises(NodeScenarioCrash) as timer_failure:
             _qualification_request(
                 cleanup_failure_worker,
-                "saved-layouts",
+                "fleet-sharing",
                 "cleanup-timer-failure",
             )
         assert "synthetic timer cleanup failure" in str(timer_failure.value)
         assert cleanup_failure_worker._proc is None
         cleanup_recovery = _qualification_request(
-            cleanup_failure_worker, "saved-layouts", "clean"
+            cleanup_failure_worker, "fleet-sharing", "clean"
         )
         assert cleanup_recovery["cleanup"] == ZERO_CLEANUP
-        assert cleanup_failure_worker._proc is not None
-        assert cleanup_failure_worker._proc.pid != real_listener_process.pid
     finally:
         cleanup_failure_worker.close()
 

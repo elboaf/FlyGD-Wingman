@@ -891,9 +891,9 @@ TASK3_RECIPES = (
 
 TASK4_RECIPES = (
     "adapter-saved-program-selection",
-    "adapter-sharing-dom-isolation",
+    "realm-sharing-completion-reuse",
     "realm-group-source-reexecution",
-    "adapter-marker-root-release",
+    "marker-retained-realm-release",
     "business-failure-process-retention",
     "protocol-fatal-no-replay",
     "protocol-malformed-ndjson",
@@ -973,9 +973,9 @@ EXPECTED_OWNERS = {
     "receipt-reader-release": (RECEIPT_ID,),
     "receipt-once-construction": ("external::saved-main/receipt-count-55",),
     "adapter-saved-program-selection": (REALM_SAVED_ID,),
-    "adapter-sharing-dom-isolation": (REALM_SHARING_ID,),
+    "realm-sharing-completion-reuse": (REALM_SHARING_ID,),
     "realm-group-source-reexecution": (REALM_GROUP_ID,),
-    "adapter-marker-root-release": (REALM_MARKER_ID,),
+    "marker-retained-realm-release": (REALM_MARKER_ID,),
     "business-failure-process-retention": (CLEANUP_FAILURE_ID,),
     "protocol-fatal-no-replay": (CLEANUP_FAILURE_ID,),
     "protocol-malformed-ndjson": ("external::fatal/malformed-ndjson",),
@@ -2956,6 +2956,7 @@ git commit -m "test: share saved receipt and real DOM ownership"
 - Modify: `tests/test_fleetsharing_hydration.py:1-213`
 - Modify: `tests/test_preview_group_backward.py:1-471`
 - Modify: `tests/test_preview_labelmarkers_page.py:1-64`
+- Modify: `tests/fixtures/page_scenario_worker.cjs`
 - Modify: `tests/fixtures/fleetsharing_page.cjs:1-1041`
 - Modify: `tests/fixtures/preview_group_backward.cjs:1-473`
 - Modify: `tests/fixtures/preview_labelmarkers.cjs:1-351`
@@ -3195,11 +3196,22 @@ bridge-source-rejection: two errors in Start then Stop order, exact method prefi
 all other Fleet Sharing cases: zero controlled bridge errors
 saved dev: 21 ordered log diagnostics and one theme error diagnostic
 business output: exact PASS terminal only, no trailing newline, no duplicate PASS diagnostic
-group dev: five ordered log diagnostics; one generated ID equal in appearances 2, 3, and 5
+group dev: five ordered log diagnostics with exact method grammar, detached
+arguments, Forward/Back/Clear suffixes, and one generated ID equal in appearances
+2, 3, and 5; both normal A requests and the poison request carry that grammar
 ```
 
 Expected product rejection/error scenarios remain `ok:true`. A test assertion or
-adapter semantic failure is `ok:false`, not a fatal protocol exit.
+adapter semantic failure is `ok:false`, not a fatal protocol exit. Internal
+qualification counterexamples replace one group suffix and erase one detached
+argument list; both must be rejected by the same persistent-diagnostic checker.
+
+Fleet's VM-only `trackElementClass` hook wraps the fixture's actual Element
+`addEventListener` and `removeEventListener` methods after the class is declared.
+The direct one-shot CLI has no hook and keeps its original behavior. Realm
+qualification requires positive Fleet real-listener registration and zero after
+cleanup. A Fleet listener-removal exception is fatal before reply, discards that
+process, and only a later request may start a clean process.
 
 - [ ] **Step 4: Switch all four realm qualifications to real programs**
 
@@ -3208,7 +3220,10 @@ representatives are saved `saved-main/reversed`, sharing
 `fleet-sharing/missing-worker`, group `group-backward/dev`, and marker
 `label-markers/hydration`. Every A-poison-A request executes source text and
 production scripts anew. Require one PID per row and no host/realm/input/result/
-module/diagnostic/cached-execution poison.
+module/diagnostic/cached-execution poison. The host tracks every live context in
+a real Set, releases it through one helper before reply and again in `finally`,
+derives `cleanup.retained_realms` from that Set, and clears the Set when the
+worker input loop shuts down.
 
 - [ ] **Step 5: Run all 165 and all 205 with exact JUnit evidence**
 
@@ -3282,9 +3297,14 @@ cross-module IDs re-enter it.
 - [ ] **Step 7: Run per-family isolation, fatal-request, and business mutations**
 
 Load the same immutable registry and execute `TASK4_RECIPES` in its declared
-order. Do not restate or alias a Task 3 recipe: group source re-execution,
-business-failure retention, fatal no-replay, the four independent fatal variants,
-and the exact 165 inventory each have one canonical Task 4 name. Require
+order. Do not restate or alias a Task 3 recipe: Fleet completion reuse, group
+source re-execution, retained marker realm, business-failure retention, fatal
+no-replay, the four independent fatal variants, and the exact 165 inventory each
+have one canonical Task 4 name. The Fleet mutation reuses the prior worker
+completion and must fail the real A-B-A source/fresh-output witness; it does not
+use a fixture-only page marker. The marker mutation makes the worker's real realm
+release helper a no-op and must fail before a reply because the host Set remains
+nonempty; it does not use a fixture-only global marker. Require
 `validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task4",
 scratch_root=prepare_scratch_root("task4"))` before execution and one result per
 canonical name afterward.
@@ -3322,6 +3342,24 @@ git commit -m "test: reuse remaining page workers"
 ```
 
 Expected: exact relevant `225 passed`, with no skips and no existing ID change.
+
+#### Task 4 review correction
+
+The post-Task-4 review replaces two circular fixture-owned mutation witnesses
+without changing the 16-recipe partition. Remove Fleet's cached-page/build marker
+and the label-marker fixture's cleanup global. Add the VM-only Fleet Element hook,
+real add/remove listener ownership and fatal removal/restart witness, plus the
+host retained-realm Set and release helper. Strengthen the permanent Fleet and
+marker A-B-A checks and require the full five-row group dev diagnostic grammar
+(including detached args) on normal and final A, with wrong-suffix and empty-args
+counterexamples. Regenerate the registry and recursive manifests, rerun the
+225/165/205 selections and all four orders, the Fleet fault, all 16 Task 4
+recipes with exact restoration and saved-main anti-mask, 33/62 fsync audits,
+collections, syntax/Ruff/docs/scope checks, then commit:
+
+```bash
+git commit -m "test: track real family resources"
+```
 
 ---
 

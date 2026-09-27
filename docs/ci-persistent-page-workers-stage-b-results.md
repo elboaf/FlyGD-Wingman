@@ -213,17 +213,19 @@ actual post-success rejection still exits 70, emits no second reply, and remains
 attributed to the prior request when the next call observes it.
 
 The four A-poison-A realm rows passed in one PID each with fresh execution count
-one, clean host and DOM prototypes, input/prior-reply/module-export isolation,
-and Promise-then poison survival. Cleanup success covered timeout, interval,
-immediate, listener, unresolved-promise, async-global survival, all five console
-methods, seven-source retention, and all six existing direct CJS paths (including
-both saved-main terminal forms). Dedicated cleanup-failure workers proved
-real fixture-DOM listener and synthetic timer removal exceptions are fatal before
-reply and that a later call, not the failing call, starts recovery. The worker
-wraps the VM-local `createDOM`, instruments every actual Element prototype once,
-observes nonzero real saved-main listeners, and proves their listener maps empty
-before reply; the raw-`createDOM` mutation fails this witness. Cleanup failure
-covered ordinary and
+one, exact A/poison/A run values, clean host and DOM prototypes,
+input/prior-reply/module-export isolation, and Promise-then poison survival.
+Cleanup success covered timeout, interval, immediate, listener,
+unresolved-promise, async-global survival, all five console methods,
+seven-source retention, and all six existing direct CJS paths (including both
+saved-main terminal forms). The worker wraps the VM-local `createDOM`, and its
+VM-only `trackElementClass` hook also wraps Fleet's actual custom Element class
+after declaration. Both saved-main and Fleet observe positive real-listener
+counts and zero after cleanup. A dedicated Fleet fault makes the actual removal
+method throw: the worker emits no reply, exits, and only a later request starts a
+new PID and again proves positive-to-zero cleanup. Synthetic timer removal is
+likewise fatal. The direct Fleet CLI sees no hook and remains unchanged. Cleanup
+failure covered ordinary and
 accessor-backed native Errors, hostile native accessors, poisoned Error/Reflect
 intrinsics, primitive, null, hostile object getters, Proxy, semantic business
 input, before/boundary/nested-final-timer rejection, a recursively built native
@@ -304,24 +306,31 @@ CJS programs remain direct CLIs and now expose the same scenario completion only
 when evaluated by the worker. Fleet's one-shot path still suppresses controlled
 bridge diagnostics, while worker replies pin one Watch error or ordered Start/
 Stop errors only in their expected scenarios. Group dev retains five ordered log
-diagnostics and one generated ID in positions two, three, and five. The two
-dialog scenarios still execute exactly `12 + 132 = 144` inner combinations.
+diagnostics with exact methods, generated/stale IDs, Forward/Back/Clear suffixes,
+rendered strings, and detached argument arrays on first and final A as well as the
+poison request. Internal wrong-suffix and empty-argument counterexamples are both
+rejected. The two dialog scenarios still execute exactly `12 + 132 = 144` inner
+combinations. Marker cleanup is no longer asserted by a fixture global: the host
+tracks actual contexts in a Set, releases before reply and again in `finally`,
+derives `retained_realms: 0` independently, and clears the Set at shutdown.
 
-The final healthy normal run passed all 165 Node rows in `21.24s` observation
-with exactly four process starts, one PID per family, request ordinal sets
-`1..62`, `1..65`, `1..17`, and `1..21`, zero cleanup, 14 direct fsyncs, and one
-19-fsync receipt for total 33. The four complete files passed all 205 rows in
-`24.79s` observation with the same four business PIDs, 43 direct fsyncs, and
-62 total production-case fsyncs. Their JUnit SHA-256 values are
-`f3352a2d93933be8e56bcf554eb7ecc94a7723b0c7ca55122967e19779c2322b`
-and `e40afd7cae3e08736edb539d73aef55a385cfcf632e32875ccbc9a514e18fe2b`.
+After the Task 4 review correction, a fresh healthy run passed all 165 Node rows
+in `23.95s` observation with exactly four process starts, one PID per family,
+request ordinal sets `1..62`, `1..65`, `1..17`, and `1..21`, zero cleanup, 14
+direct fsyncs, and one 19-fsync receipt for total 33. The four complete files
+passed all 205 rows in `42.92s` observation with the same four business PIDs, 43
+direct fsyncs, and 62 total production-case fsyncs. Their JUnit SHA-256 values
+are `5236ab51b121d6fc4833331a89e9110c37f334a3135d605e28e825b925f65578`
+and `b5a2c2d9890a7b9cc5b425189d904a58589a81f2956cb34e4b58c4e2797acd88`.
 
-Fresh reverse, seed-`20260926` shuffle, and cross-family round-robin runs each
-passed all 165 rows with the same four starts, exact request sets, zero cleanup,
-and 33 fsyncs. Their observations were `21.04s`, `21.04s`, and `22.29s`; their
-JUnit hashes are `1b34eb8e310df4d76c4c00ad1fe36e23cd7f5480dfd043f73c5f373cd896bcd7`,
-`f1a6b9c351023f056d48b6be37029660fbcc5c825b482512e6be439deebfd24c`,
-and `66e79821243117ecd33d2e13c349836cf8dbdfe80d03e02b267e6081fc6956a8`.
+Fresh normal, reverse, seed-`20260926` shuffle, and cross-family round-robin runs
+each passed all 165 rows with the same four starts, exact request sets, zero
+cleanup, and 33 fsyncs. Their observations were `37.76s`, `34.28s`, `22.15s`,
+and `21.42s`; their JUnit hashes are
+`8a92078311b9f4c5549f6bfd4b4a661d3098e261a8f7e910e582421844d1edd6`,
+`e11456eb1ba664934c640738c59f98cfe104246865ebace811d81d5369068b7b`,
+`49c337160dc12df67750b21bf6a26024ac3734551b675e23d8df00e2b6efd99f`,
+and `d236b52f2e2d4f4ab8af17c0227dd3e71e7f041d3dc38e2c81bb982c2e7933d9`.
 The final-newline argument-list hashes remain collected
 `60a253410671d0ac475c414940f007943ff96f4faebc30f0f1aaef9009e549fc`,
 reverse `2dff54f5b75dcc262527eedb319b5bf6a7d3def17dae212261b0696529caa718`,
@@ -345,11 +354,10 @@ corrected owner mappings and four restored-only IDs are pinned explicitly; exact
 saved-main `reversed` belongs to every Task 3 pytest restored command and every
 Task 4 pytest restoration unless it is already the selected owner, while the
 three helper IDs remain owned only by late-rejection restoration.
-After the synchronized Task 4 literal/probe correction, the deterministic
-registry manifest SHA-256 is
-`6cdaf58e982decaf9256246b34a3dc68ec75f611e254514a231f4a8bf8e92c44`.
+After the Task 4 review correction, the deterministic registry manifest SHA-256
+is `b4c00b009abd94e1cd1c44e1ccfa248b4ca36f85578cb91cbe92f2f20badcfed`.
 The regenerated recursive artifact manifest is
-`6460134c11c3d6b481ecbcf11cefcecfec5797d47118fa2a7119ae09548420b0`,
+`9a87d26c46d744238ac843e085cda3705c16d7ad0950c937f16a8e0913c7e7e1`,
 and the refreshed Task 2 identity-gate record is
 `7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
@@ -442,10 +450,14 @@ executions included and passed exact saved-main `reversed`; the external receipt
 probe supplied the sixteenth execution. The ordered result is
 `/tmp/stage-b-task3-mutations.json`, SHA-256
 `eb0e752901d09ef5e99601881f077169accdea6a19d162b6e88cf672c8cd2774`.
-Task 4 then validated and executed its exact 16 canonical recipes in declared
-order. The first six mutate real adapter selection/isolation, group source
-re-execution, marker root release, business-failure retention, and fatal
-no-replay boundaries. Four external fatal probes independently launch one bad
+Task 4's review correction then revalidated and executed its exact 16 canonical
+recipes in declared order. The first six mutate real saved adapter selection,
+Fleet prior-completion reuse, group source re-execution, the host marker-realm
+release helper, business-failure retention, and fatal no-replay boundaries. The
+Fleet mutation is caught by the real A-B-A fresh-output contract; the marker
+mutation leaves the actual context in the host Set and fails before reply. No
+fixture-only cached page or cleanup global remains. Four external fatal probes
+independently launch one bad
 process and one recovery process for malformed NDJSON, wrong family, unknown
 protocol, and unknown scenario; this overhead is not included in the permanent
 cleanup-failure property's exact value three. The final six pin Fleet diagnostic
@@ -456,8 +468,10 @@ realm row. All defects reached their unique sentinel without masking, then
 restored exact bytes, SHA-256, binary diff, and NUL-delimited status before their
 registered recovery probe. The ordered result is
 `/tmp/stage-b-task4-mutations.json`, SHA-256
-`c5668ea8a66769f191c62b50a5b417aa88e3199ee1421600b5dc527fd499f311`.
-Exactly 16 names and 16 results exist. The final Task 5 41-recipe slice and final
+`8b7cde0250aa0f3701e34018cf094315eee5bd91663e22e03c11ee8c5d3f3710`.
+Exactly 16 names and 16 results exist. Eleven pytest restorations run the saved
+`reversed` anti-mask either as owner or companion, and all 16 recipes report
+exact restoration. The final Task 5 41-recipe slice and final
 71-recipe aggregate remain pending.
 
 ## JUnit property ownership
@@ -488,8 +502,9 @@ Its existing target properties prove four business PIDs, request counts
 `62/65/17/21`, direct fsync sums 14 for the Node subset and 43 for all target
 rows, one receipt value 19, and totals 33/62. Qualification starts remain
 `1/1/1/1/1/3/0` and qualification fsync values remain `0/0/0/0/4/0/0`.
-Every property address is unique and helper rows own none. The JUnit SHA-256 is
-`cc3895d8b4b2010a77864f3b3666cee07a17dc2aa8d018a69a0e8114b65b5085`.
+Every property address is unique and helper rows own none. The latest Task 4
+review-correction JUnit SHA-256 is
+`3c901f2fcec5244946946c69001e6a6ca695eef7d7568a8badf9832413797de1`.
 
 ## Complete local endpoint
 
@@ -515,8 +530,11 @@ saved-function signature substitutions occurred. Task 4 again collected the
 relevant selection as exactly 225 unique IDs,
 byte-for-byte equal to the frozen Task 2 order with final-newline SHA-256
 `bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe`,
-and then passed all 225 in `31.39s` observation. Task 4 did not run or claim the
-complete 16,617-case outcome; that remains Task 5.
+and then passed all 225 in a fresh `50.56s` observation. Its raw JUnit SHA-256
+is `3c901f2fcec5244946946c69001e6a6ca695eef7d7568a8badf9832413797de1`.
+A fresh complete collection also remained exactly 16,617 IDs and byte-equal to
+the frozen Task 2 order; Task 4 did not execute or claim that complete-suite
+outcome, which remains Task 5.
 
 ## Reviews, final scope, and frozen heads
 
@@ -539,12 +557,20 @@ the bootstrap-only DOM to every actual fixture-created DOM. The three saved
 fixture files changed only at their CommonJS completion wrappers; their scenario
 bodies and assertions are unchanged. No production, web, workflow, dependency,
 lockfile, configuration, packaging, or `screenshot_dom.cjs` byte changed.
-Task 4 added only the three remaining business modules, their three CJS
-programs, the qualification module, and this ledger. The shared worker needed no
-new committed change: Fleet's fixture supplies its missing assertion fallbacks,
-and marker root release is proved inside the marker program. All 15 protected
-hashes from the plan remain exact. Final Stage B review, executable head, and
-evidence head remain pending.
+Task 4's initial conversion added only the three remaining business modules,
+their three CJS programs, the qualification module, and this ledger. Its review
+correction changes the shared worker, Fleet fixture, qualification module, plan,
+specification, and ledger: Fleet now supplies a real listener-removal method and
+uses the VM-only tracking hook; retained-realm ownership is host-observed; group
+diagnostics have exact persistent grammar; and the two circular fixture markers
+are removed. No production, web, workflow, dependency, lockfile, configuration,
+packaging, or `screenshot_dom.cjs` byte changed. The correction's current diff is
+exactly seven approved paths, the full range remains the approved 17 paths, and
+all 15 protected hashes remain exact. CJS syntax, Python compilation, global Ruff
+lint/format, seven documentation tests, structural signatures/decorators/bodies,
+diff whitespace, the 41 registry/restoration/manifest checks, and the external
+registry/manifests all passed. Final Stage B review, executable head, and evidence
+head remain pending.
 
 ## Publication stop and hosted evidence
 

@@ -2,9 +2,10 @@
 
 ## Status
 
-Approved for implementation, not yet implemented. This document records the
-bounded Stage B design and the disposable feasibility evidence used to qualify
-it. The implementation remains a later, separately reviewed change.
+Approved for implementation. Tasks 1–4 are implemented and locally verified;
+Task 5 completion and hosted acceptance remain pending. This document records
+the bounded Stage B design, disposable feasibility evidence, and approved Task 4
+review corrections.
 
 Stage B changes test architecture only. It replaces 165 one-shot Node launches
 in four Python test files with four family-local, session-scoped workers and
@@ -804,10 +805,13 @@ VM-owned CommonJS `module`/`exports`/limited `require` and minimal VM-owned
 `URLSearchParams`, console, and the fixture-specific DOM are VM-owned
 implementations. The limited `require('./screenshot_dom.cjs')` returns a wrapped
 VM-local `createDOM`; every DOM actually created by a fixture is registered and
-each distinct Element prototype is instrumented once. Synthetic bootstrap DOMs
-exist only for qualification/realm modes and cannot substitute for the real DOM
-listener witness. Production scripts execute in that same fresh realm; there is
-no nested host-created page context.
+each distinct Element prototype is instrumented once. Fleet Sharing's custom
+Element class calls the same VM-only `trackElementClass` hook after declaration,
+so its actual `addEventListener` and `removeEventListener` methods participate in
+the same ownership ledger. Direct one-shot execution has no hook and remains
+unchanged. Synthetic bootstrap DOMs exist only for qualification/realm modes and
+cannot substitute for the real DOM listener witness. Production scripts execute
+in that same fresh realm; there is no nested host-created page context.
 
 The initial VM bootstrap returns one VM-owned poll function to the host. The
 host calls it only with a primitive monotonic timestamp and primitive JSON for
@@ -841,8 +845,12 @@ published. The host poll sees completion only after:
    Element implementation, all real listener maps are verified empty, and
    callback/DOM registries are released; a removal failure is fatal before any
    reply;
-6. the reply is serialized with captured pristine intrinsics; and
-7. no host callback, timer handle, raw rejection, promise, or VM realm is
+6. the host removes the context from its retained-realm Set through one release
+   helper, independently derives `cleanup.retained_realms` from that Set, and
+   treats a nonzero count as fatal before reply; `finally` repeats release and
+   worker shutdown clears the Set;
+7. the reply is serialized with captured pristine intrinsics; and
+8. no host callback, timer handle, raw rejection, promise, or VM realm is
    retained by process state.
 
 Unresolved promises do not delay completion when the business program has
@@ -970,23 +978,30 @@ internal matrices remain in the existing program.
 
 The specialized select/focus/text behavior remains exact. Its `errors` capture
 becomes the common VM-local diagnostic collector, preserving and strengthening
-the current count assertion with stable method/message assertions.
+the current count assertion with stable method/message assertions. The fixture's
+real Element class implements both listener methods and registers through the
+VM-only hook. Qualification requires a positive real-listener count followed by
+zero; an injected removal exception emits no reply, terminates that worker, and
+permits recovery only in a newly started process.
 
 ### Group backward
 
 The session manifest uses `PageTree`; each request receives current
 `marker_choices()`. The dev source slices execute in one fresh VM realm so
 lexical fixture declarations remain shared inside that request but disappear
-before the next. All 17 scenario branches and internal focus/draft/crop matrices
-remain exact.
+before the next. Persistent diagnostics preserve the direct CLI's exact five-row
+grammar: ordered methods, generated/stale IDs, Forward/Back/Clear gesture
+suffixes, rendered text, and detached argument arrays. All 17 scenario branches
+and internal focus/draft/crop matrices remain exact.
 
 ### Label markers
 
 The session manifest uses `PageTree`; each request receives current
 `marker_choices()`. Conditional `panel.js` execution for `copy` and `reset-copy`
-remains scenario-owned. All 21 hydration, receipt, owner, retention, exclusion,
-refresh, navigation, screenshot, reset, capture-entry, and deferred branches
-remain exact.
+remains scenario-owned. Marker A-poison-A is the permanent retained-realm witness:
+its cleanup value comes from the host Set rather than a fixture-owned global. All
+21 hydration, receipt, owner, retention, exclusion, refresh, navigation,
+screenshot, reset, capture-entry, and deferred branches remain exact.
 
 ## One real saved-layout receipt
 
@@ -1166,8 +1181,12 @@ Object/Array/Promise/Error and DOM prototypes, `Promise.prototype.then`, decoded
 input, a returned nested object, console arguments, VM-owned `module.exports`,
 and a cached-result sentinel. The final A proves all poison absent—including
 fixture and `screenshot_dom.cjs` exports—the source execution counter is one in
-the new realm, the normal output/diagnostics are exact, and a Python-side
-mutation of the earlier reply did not return. Each row records one PID.
+the new realm, the request run labels are exactly A/poison/A, the normal
+output/diagnostics are fresh and exact, and a Python-side mutation of the earlier
+reply did not return. The group representative checks all five ordered methods,
+generated/stale IDs, Forward/Back/Clear suffixes, rendered text, and detached
+arguments on normal and final A; internal wrong-suffix and empty-argument
+counterexamples prove that grammar is active. Each row records one PID.
 
 `test_request_cleanup_after_success` registers timeout/interval/immediate
 callbacks, DOM/window listeners, and an unresolved promise, then returns
@@ -1244,7 +1263,7 @@ installed is not evidence.
 | CommonJS host retention | host-`require` a target and then delete its `require.cache` entry | structural receipt still finds the target in `module.children` or a retained export; restored startup reads all seven manifest entries as UTF-8 text and finds zero target cache/child modules or functions before and after requests |
 | VM module isolation | pass a host module/function through `require` or reuse VM exports | module-export poison reaches the host or final A; restored VM-owned wrappers and limited adapters leave the host pristine and final A clean |
 | Fresh realm | reuse one context for A-poison-A | each family realm ID/prototype assertion fails; restore fresh construction and the same A-poison-A passes |
-| Program execution | cache A output or skip second source evaluation | execution counter is not one/fresh and representative assertion fails; restored implementation passes normal, reverse, and A-B-A |
+| Program execution | reuse Fleet's prior worker completion or skip second source evaluation | A-B-A source/fresh-output checks fail without a fixture-owned cache marker; restored implementation passes normal, reverse, and A-B-A |
 | Input detachment | assign parsed host payload directly into VM | VM mutation changes host/Python-visible nested input or next request; restored stringify/fresh-parse preserves both originals |
 | Result detachment | retain/return a prior VM result object | Python mutation reappears or cached-result sentinel survives; restored JSON detachment passes |
 | Intrinsics | expose host constructors or use mutable global serializer | prototype poison reaches host or reply serialization changes; host cleanup assertion plus pristine serializer witness fail specifically |
@@ -1252,7 +1271,8 @@ installed is not evidence.
 | Error detachment | read `error.message`/`stack` naively | hostile getter/Proxy causes protocol crash; guarded per-field placeholders keep a business failure and same PID |
 | Thrown primitive | assume every rejection is Error-shaped | primitive failure loses message or crashes serializer; detached failure then clean request fails |
 | Timers | omit cancellation or expose native handles | callback fires after reply, cleanup receipt is nonzero, or next request observes it; restored run records zero |
-| Listeners | retain DOM/window root or callback outside VM | old callback fires/realm remains reachable after reply; restored cleanup and fresh-DOM witness pass |
+| Listeners | bypass Fleet's real Element hook or make real removal throw | positive-to-zero listener evidence fails, or failure must be fatal with no reply and a new-PID recovery; the direct CLI remains unaffected |
+| Retained realm | make the host release helper a no-op | the real context remains in the host Set, marker qualification fails before reply, and worker shutdown clears the Set; restored marker A-B-A reports zero |
 | Unresolved promises | await every created promise or retain its realm | success/failure cleanup times out or retained-realm count is nonzero; restored request completes and next stays clean |
 | Rejection ignored | discard a captured primitive rejection record | before/boundary rejection incorrectly succeeds; restored runner business-fails the owning request |
 | Rejection query too early | query before the request-owned timer turn | boundary rejection incorrectly succeeds; restored boundary witness fails before success completion |

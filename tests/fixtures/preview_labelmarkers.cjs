@@ -6,7 +6,6 @@ const {createDOM} = require('./screenshot_dom.cjs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const web = process.argv[3];
 const {document, Element} = createDOM(data.page);
-globalThis.__markerRoot = document;
 // Match the browser's focus loss when a render removes the focused subtree.
 let active = document.body;
 Object.defineProperty(document, 'activeElement', {
@@ -349,8 +348,6 @@ const scenarioCompletion = (async () => {
     window.WM.previewCropScreenshot(null);
     writes[2].resolve(ok('green')); await tick(); assert.equal(field('Bob').value, 'green');
   } else throw new Error('Unknown scenario ' + scenario);
-  delete globalThis.__markerRoot;
-  assert.equal(globalThis.__markerRoot, undefined, 'stage-b mutation adapter-marker-root-release');
   console.log('PASS marker page ' + scenario);
 })();
 if (require.main === module) {
