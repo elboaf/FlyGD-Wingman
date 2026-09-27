@@ -471,8 +471,47 @@ registered recovery probe. The ordered result is
 `8b7cde0250aa0f3701e34018cf094315eee5bd91663e22e03c11ee8c5d3f3710`.
 Exactly 16 names and 16 results exist. Eleven pytest restorations run the saved
 `reversed` anti-mask either as owner or companion, and all 16 recipes report
-exact restoration. The final Task 5 41-recipe slice and final
-71-recipe aggregate remain pending.
+exact restoration.
+
+Task 5 qualification found 18 registry edit loci superseded by final Task 2–4
+source: the four bool-ID recipes, `schema-bool-duration-discarded`,
+`schema-missing-fields-discarded`, both new family source-reexecution recipes,
+saved pristine-intrinsics, both failure-detachment recipes, all three
+cleanup-resource recipes, all three rejection-boundary/reference recipes,
+`cleanup-before-reply`, and `late-rejection-attribution`. Already-matching
+host/module/context/missing-field/fatal mutations were also corrected so their
+real defects reached the intended assertion rather than a timeout, undefined
+name, or another sentinel. The String-poison qualification required matching
+Task 3 saved-context/source attribution edits. No canonical recipe name, owner,
+sentinel, order, kind, restoration rule, or cardinality changed.
+
+All 41 Task 5 recipes then ran in declared order and produced 42 executions.
+Every defect reached exactly its canonical sentinel, rejected other sentinels
+and masking, restored exact bytes/hash/diff/status, and passed the registered
+restored probe. The ordered Task 5 result SHA-256 is
+`68f8b58c6a0e7a9127a2be7c4c2d56cf1ead0dd214a0698768414452ed32fa27`.
+The all-41 invocation observed `817.00s`; all result records were complete before
+a report-only representative-kind assertion rejected an incorrect expected
+`4/1/2` split. Correcting that report expectation to the actual registered
+`3 pytest / 1 external / 3 synthetic` split and rereading the unchanged results
+completed the summary.
+
+Because the final String poison changed executable source, Tasks 3 and 4 were
+also rerun from the current tree rather than relying only on their historical
+records. The current Task 3 and Task 4 result hashes are
+`3737878be46a510d9572b7c258a459881d0b30b96b7658374f3f94b1baff6140`
+and `b7e1a4665f34e361778ff12890c808e9471d3ab35cc7ec244eceb9b8ca38d588`;
+the combined rerun observed `695.58s`. The exact aggregate is therefore 71
+canonical recipes, partitioned `14/16/41`, and 74 actual executions. The seven
+bounded representative executions have SHA-256
+`55c9679bead562e7fbaec5db427fffcb54e137add0c085dcc00e69324855db7f`.
+The final deterministic registry, recursive artifact, and final-source manifest
+SHA-256 values are respectively
+`b20e6518e98f4e6d9e00808b6f9796b7992652750177e14e9a3d25eb922a415f`,
+`f98409f3d23fe2d822bc9b2a1fd2b86b690cd31475617d3925455d7c99187de2`,
+and `cd82362a69a378cba7c2ac577f2150c70dba84b2ca0b32c5fdf9d2eae0380b2a`.
+The final external tooling suites pass 60 checks; the manifest/registry subset
+passes 27 checks independently.
 
 ## JUnit property ownership
 
@@ -506,6 +545,15 @@ Every property address is unique and helper rows own none. The latest Task 4
 review-correction JUnit SHA-256 is
 `3c901f2fcec5244946946c69001e6a6ca695eef7d7568a8badf9832413797de1`.
 
+The final post-String 225-row run passed in `31.95s` (`35.59s` process elapsed)
+with raw JUnit SHA-256
+`2c1cad7f6c6b97da51f10fe13ad61b5ac1f01a44ec8b6f83c4288e424a253085`
+and testcase sum `26.630s`. The final auditor again found exactly four family
+PIDs, ordinals `1..62/65/17/21`, direct sums `14/43`, receipt value `19`, healthy
+totals `33/62`, qualification starts `1/1/1/1/1/3/0`, qualification fsyncs
+`0/0/0/0/4/0/0`, and no missing, duplicate, unexpected-owner, or extra
+`stage_b.*` property.
+
 ## Complete local endpoint
 
 Task 2 collected the actual relevant selection as exactly 225 unique IDs and the
@@ -534,7 +582,67 @@ and then passed all 225 in a fresh `50.56s` observation. Its raw JUnit SHA-256
 is `3c901f2fcec5244946946c69001e6a6ca695eef7d7568a8badf9832413797de1`.
 A fresh complete collection also remained exactly 16,617 IDs and byte-equal to
 the frozen Task 2 order; Task 4 did not execute or claim that complete-suite
-outcome, which remains Task 5.
+outcome, which remained Task 5.
+
+Task 5 reran all endpoint selections after the String-intrinsic correction. The
+exact observations were:
+
+| Selection/order | Outcome | Pytest time | Process elapsed | Raw JUnit SHA-256 |
+|---|---:|---:|---:|---|
+| Relevant | 225 passed | `31.95s` | `35.59s` | `2c1cad7f6c6b97da51f10fe13ad61b5ac1f01a44ec8b6f83c4288e424a253085` |
+| Node collected/normal | 165 passed | `20.99s` | `24.40s` | `ab001c1e3d491ca0e6fc6fdd3948b406bee5ebfea478f1d7f8d42ff0d8829ec5` |
+| Existing target | 205 passed | `21.38s` | `24.95s` | `1b7135878f02c8c6a56ee403ec0f01e2dfd64c878e23baa0d6897166ed39f3d1` |
+| Node reverse | 165 passed | `21.06s` | `24.50s` | `b2a96a94696ba6000fa3d7880c4ebf5ed9c6eed7cfae9e907ad8ebe69d4567de` |
+| Node seed-20260926 shuffle | 165 passed | `21.06s` | `24.46s` | `2deb68771b089c0ef53f8ea134a87e38ec010fd7b2d9e5b6bc63b7410f1276ef` |
+| Node cross-family | 165 passed | `21.12s` | `24.52s` | `f639699272faab6d2e5d46d569b946c3eb446c342b8b2272d18a9a0f0e83b14f` |
+
+The relevant and complete structured collection SHA-256 values are
+`6578618090ba75bd3ae672ba630f7f7786ff4de096d213737d2e5b2b5bebaa7c`
+and `2131c640d9377e3ccf86c331ea677d5f3afc38a964d3e58f142f28164e3f4408`.
+Their ID files are byte-identical to the frozen Task 2 orders and retain hashes
+`bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe`
+and `d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
+Every order had one PID per family, exact request sets, and the same 33-fsync
+healthy Node total; the 205 run had the same 62-fsync target total.
+
+The documented release prerequisite was built and installed before the complete
+suite: `uv sync --locked --extra dev`, Node `v26.5.0`, and release codec SHA-256
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+The exact 16,617-order complete suite passed as `16,603 passed + 14 skipped` in
+`452.25s` pytest time and `457.87s` process elapsed; testcase sum was `412.173s`.
+Raw JUnit and timing-summary SHA-256 values are
+`3b0ec2209ddb3340a60580229450e0c96c941084e17a33a5d7822baaa6ee2773`
+and `8b56d312a05d3958bf78ae6961fa24b3f405ab906fc82cbf23f92ab181597799`.
+The 14 normalized skips exactly match accepted Linux Stage A: one clip sharing
+rule, four profile-copy junction rows, two DPAPI/WinDLL rows, one real preview
+message-pump row, three Win32 binding rows, one pystray Windows backend row, one
+additional two-case UI-setup junction skip, and one Wanderer DPAPI row. No Node,
+codec, target, qualification, or unexpected native skip occurred.
+
+All ten JavaScript files passed `node --check`; the DOM suite passed 35 tests;
+the six-entrypoint direct CLI matrix passed; and the previous-worker selection
+passed 963 tests in `114.64s`. JS smoke passed directly and through all seven
+pytest wrappers. Cargo passed its one regression test. Global Ruff lint and
+format passed (`521` Python files format-clean).
+
+The final candidate executable hashes are:
+
+| Path | SHA-256 |
+|---|---|
+| `tests/test_preview_savedlayouts_page.py` | `aa609f34b95880a59875b6a8f29106dd137f55305f66035262968322b325eab3` |
+| `tests/test_fleetsharing_hydration.py` | `f79391237114b15a64829cae29f6e0733b037d6399e31d0db3408d6146e4c3ce` |
+| `tests/test_preview_group_backward.py` | `e904e5e6c2fa72fc5c3ab6655feacd5a19aa02bd84b27e9d2aba44299756f143` |
+| `tests/test_preview_labelmarkers_page.py` | `ad19bb7c978dccf08a0c3fb90e622f7ddd47d172ce687a505341709bb5f49bbb` |
+| `tests/fixtures/preview_savedlayouts.cjs` | `19c56f15b34ad9cd6c824456268c16d8f3900d68d13d2c3b8d5e128bd9bf15bf` |
+| `tests/fixtures/preview_capture_sessions.cjs` | `25f872cf26769681dbce85e2809883190b0d76fd1f02e8147c0d32fd1f2d9691` |
+| `tests/fixtures/preview_dev_capture.cjs` | `d1bb23f5d0dc4b1c33921819a5a12d6a6adb98f22f182ee58f1723530d36cdc5` |
+| `tests/fixtures/fleetsharing_page.cjs` | `512a5736f31ea0f483ffe5037ba670a4c65ac6db0b1f7bd52497df643cb6f78a` |
+| `tests/fixtures/preview_group_backward.cjs` | `2eddb4cb6d2aa7cbca3e5e304ebc74f4bbab7d40c4228bf28be7ef4e44a4be1b` |
+| `tests/fixtures/preview_labelmarkers.cjs` | `b98469ca8c1a208ec9e6104cfb3e05bc415e5bf6351f0ba7a4e0cb08ed7221ee` |
+| `tests/node_scenario_worker.py` | `d478a76f4c59f3a807fc56498f1c29269c5a7019f5b95eee6050751ff2bde0af` |
+| `tests/test_node_scenario_worker.py` | `154ff76e9b2a71d32c3e8214fc184b612b79db3021a1eee65fcc5788867f76fa` |
+| `tests/fixtures/page_scenario_worker.cjs` | `b05696fc1bda44e0699e6549e54188e224f9831a8e6d176c825940defa04c9b9` |
+| `tests/test_persistent_page_workers.py` | `6e21198189a37f597e896fccb83e64791181854e2fb9fcc3864c1646bdc0cf32` |
 
 ## Reviews, final scope, and frozen heads
 
@@ -566,11 +674,20 @@ diagnostics have exact persistent grammar; and the two circular fixture markers
 are removed. No production, web, workflow, dependency, lockfile, configuration,
 packaging, or `screenshot_dom.cjs` byte changed. The correction's current diff is
 exactly seven approved paths, the full range remains the approved 17 paths, and
-all 15 protected hashes remain exact. CJS syntax, Python compilation, global Ruff
-lint/format, seven documentation tests, structural signatures/decorators/bodies,
-diff whitespace, the 41 registry/restoration/manifest checks, and the external
-registry/manifests all passed. Final Stage B review, executable head, and evidence
-head remain pending.
+all 15 protected hashes remain exact.
+
+Task 5 added one narrowly scoped executable qualification correction: the poison
+request now mutates global `String`, and both manual array walks derive descriptor
+keys through the already captured pristine `safeString`. This closes the exact
+specification gap found by the pristine-intrinsics mutation; it does not alter a
+business program, protocol, identity, property, or production path. The final
+range remains exactly the approved 17 paths. The 15 protected hashes are still
+byte-exact, and no diff exists under production, web, workflow, dependency,
+lockfile, configuration, or packaging paths. CJS syntax, Python compilation,
+global Ruff lint/format, documentation, packaging/version, structural
+signature/decorator/body, diff-whitespace, restoration, registry, source, and
+recursive-manifest gates all pass. Task 6 independent review, frozen executable
+head, and evidence head remain pending.
 
 ## Publication stop and hosted evidence
 
@@ -591,9 +708,19 @@ Task 1 proves baseline identity, source, stream, launch, persistence, provenance
 artifact, and evidence-tooling contracts. Task 2 proves the strict helper,
 synthetic shared-worker foundation, detached receipt, qualification properties,
 and exact post-creation identity orders. Task 3 additionally proves real
-saved-family execution, one healthy saved PID,
-62 requests, and the saved `1,059 -> 33` fsync endpoint. Task 4 proves all four
-real families, four healthy business PIDs, 165 requests, the all-205 62-fsync
-endpoint, exact order independence, and its 16-recipe mutation slice. It does not
-claim the complete-suite outcome, Task 5's remaining mutations, final Stage B
-scope review, or hosted acceptance.
+saved-family execution, one healthy saved PID, 62 requests, and the saved
+`1,059 -> 33` fsync endpoint. Task 4 proves all four real families, four healthy
+business PIDs, 165 requests, the all-205 62-fsync endpoint, exact order
+independence, and its 16-recipe mutation slice. Task 5 proves the current-source
+71-recipe/74-execution mutation matrix, direct compatibility, exact local
+16,617 outcome and skips, final properties, protected hashes, and exact 17-path
+scope. It does not claim Task 6 independent review, frozen heads, publication,
+or Stage B hosted acceptance.
+
+**LOCAL CONCLUSION:** Stage B preserves all 205 existing target identities and
+all 12 existing helper identities, adds exactly eight approved identities,
+serves the healthy 165 Node-owning rows through four family processes, and
+reduces measured production-case persistence from 1,059 to 33 fsyncs for those
+rows and from 1,088 to 62 fsyncs for all 205 rows. Qualification overhead is
+reported separately. Timing values are observations only and establish no
+speedup or critical-path effect.

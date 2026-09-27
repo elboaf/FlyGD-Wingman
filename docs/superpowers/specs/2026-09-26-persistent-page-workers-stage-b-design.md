@@ -933,6 +933,11 @@ production code. Detachment must remain correct when request code:
 - returns an object with `toJSON`, getters, cycles, or poisoned prototypes; or
 - mutates a previously returned Python reply before the next request.
 
+Array-index descriptor keys are derived through the captured pristine `String`,
+never the request-mutable global. The poison request replaces global `String` as
+well as `JSON.stringify`; final A therefore pins this exact intrinsic boundary
+instead of merely naming it.
+
 Error detachment reads name/message/stack independently under guarded captured
 operations. A hostile field becomes a bounded placeholder rather than causing a
 second failure. Diagnostics have bounded rendering. Business reply data is
@@ -1256,6 +1261,22 @@ Every temporary mutation is applied in disposable space or a bounded context,
 is tied to the named assertion, has an explicit restoration check, and is
 followed by a clean anti-masking run. A failure caused only by leaving the probe
 installed is not evidence.
+
+The canonical registry remains exactly `14/16/41` recipes and 71 names with 74
+executions. Task 5 qualification corrected 18 edit loci whose Task 1 source
+bytes were superseded by the final Task 2–4 implementation: the four bool-ID
+recipes, `schema-bool-duration-discarded`, `schema-missing-fields-discarded`,
+both new family source-reexecution recipes, the saved pristine-intrinsics
+recipe, both failure-detachment recipes, all three cleanup-resource recipes,
+all three rejection-boundary/reference recipes, `cleanup-before-reply`, and
+`late-rejection-attribution`. It also made already-matching host, module,
+context, missing-field, fatal, and assertion-attribution edits execute the
+intended boundary rather than accepting a timeout, undefined-name failure, or a
+different sentinel. The String-poison correction requires the Task 3 saved
+context and source recipes to attribute the now-earlier hardened failure to
+their own canonical sentinels. These are registry repairs only: names, owners,
+sentinels, declared order, typed probe kinds, and restoration rules are
+unchanged.
 
 | Boundary | Temporary defect | Required witness and anti-masking check |
 |---|---|---|

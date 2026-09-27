@@ -521,6 +521,7 @@ if (data.mode === 'realm' && data.run === 'poison') {
   JSON.stringify = function() {
     return '{"ok":true,"output":"forged by JSON.stringify"}';
   };
+  globalThis.String = function() { return 'forged by String'; };
   if (globalThis.__wingmanElement) globalThis.__wingmanElement.prototype.__wingmanPoison = true;
   if (globalThis.__adapterInput && globalThis.__adapterInput.nested) {
     globalThis.__adapterInput.nested.value = 'poisoned';
@@ -658,7 +659,7 @@ const BOOTSTRAP = String.raw`
         if (value.length > 10000) throw new SafeError('JSON array exceeded item limit');
         for (let index = 0; index < value.length; index++) {
           let descriptor;
-          try { descriptor = safeGetOwnPropertyDescriptor(value, String(index)); }
+          try { descriptor = safeGetOwnPropertyDescriptor(value, safeString(index)); }
           catch (_error) { throw new SafeError('JSON array descriptor was unreadable'); }
           if (!descriptor || !safeHasOwn(descriptor, 'value')) {
             throw new SafeError('JSON array contained an accessor or hole');
@@ -704,7 +705,7 @@ const BOOTSTRAP = String.raw`
     if (safeArrayIsArray(value)) {
       const parts = [];
       for (let index = 0; index < value.length; index++) {
-        const descriptor = safeGetOwnPropertyDescriptor(value, String(index));
+        const descriptor = safeGetOwnPropertyDescriptor(value, safeString(index));
         if (!descriptor || !safeHasOwn(descriptor, 'value')) {
           throw new SafeError('detached array was not data-only');
         }

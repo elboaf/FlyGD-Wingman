@@ -3377,7 +3377,7 @@ git commit -m "test: track real family resources"
   local property audit, candidate hashes, protected hashes, and complete results
   ledger.
 
-- [ ] **Step 1: Materialize the final identity/JUnit/property auditor**
+- [x] **Step 1: Materialize the final identity/JUnit/property auditor**
 
 Create `/tmp/stage-b-final/audit.py`. Reuse the Task 1 longest-module-prefix
 parser. Preserve property elements as a list, never a dictionary:
@@ -3405,7 +3405,7 @@ sum direct fsync over those sets, then add the one receipt value. Keep
 qualification properties and starts out of those sums; marker/signature checks
 read only the paired structured collection reports.
 
-- [ ] **Step 2: Run all 225 implementation-relevant identities**
+- [x] **Step 2: Run all 225 implementation-relevant identities**
 
 ```bash
 FINAL_RELEVANT_REPORT=/tmp/stage-b-final/relevant-225.collection.json
@@ -3438,7 +3438,7 @@ order. Require the derived `relevant-225.ids.txt` bytes to equal the frozen actu
 insertion; then compare its ID-file hash with `task2-identity-gate.json`.
 Set/subsequence agreement alone is insufficient.
 
-- [ ] **Step 3: Run the complete restoration-safe mutation matrix**
+- [x] **Step 3: Run the complete restoration-safe mutation matrix**
 
 Use the complete, compiled, Ruff-clean Task 1 registry and runner unchanged.
 First audit all 71 recipes as one immutable set, compare its SHA-256 with the
@@ -3487,7 +3487,22 @@ witnesses. The four fatal variants remain Task 4 registry results with separatel
 reported overhead and cannot inflate the permanent cleanup-failure property's
 exact three starts.
 
-- [ ] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
+Qualification found 18 Task 1 edit literals superseded by the implemented
+Task 2–4 source: the four bool-ID recipes,
+`schema-bool-duration-discarded`, `schema-missing-fields-discarded`, both new
+family source-reexecution recipes, saved pristine-intrinsics, both
+failure-detachment recipes, all three cleanup-resource recipes, all three
+rejection-boundary/reference recipes, `cleanup-before-reply`, and
+`late-rejection-attribution`. The external registry was corrected at those
+literal loci, and already-matching host/module/context/missing-field/fatal edits
+were made to reach their named assertion instead of a timeout, undefined name,
+or another recipe's sentinel. The final String-poison qualification also adds
+exact attribution edits to Task 3's saved context/source recipes. The registry
+retains every approved name, owner, sentinel, order, kind, restoration rule, and
+`14/16/41 = 71` recipe cardinality; three internal variants retain the exact 74
+execution cardinality.
+
+- [x] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
 
 ```bash
 for file in \
@@ -3519,7 +3534,7 @@ Task 1's frozen representative records. Search for direct CJS callers and requir
 that the six original scripts remain executable paths; worker mode reads source
 text and does not become their CLI.
 
-- [ ] **Step 5: Build/install the release codec and run the complete suite**
+- [x] **Step 5: Build/install the release codec and run the complete suite**
 
 ```bash
 uv sync --locked --extra dev
@@ -3552,7 +3567,7 @@ subsequence and exact eight additions are supporting diagnostics, not a substitu
 for this full-order comparison. Require normalized Linux skip array equality to
 accepted Stage A and no Node/codec/target/qualification/unexpected native skip.
 
-- [ ] **Step 6: Run Cargo, smoke, global static, formatting, and docs gates**
+- [x] **Step 6: Run Cargo, smoke, global static, formatting, and docs gates**
 
 ```bash
 cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
@@ -3567,7 +3582,7 @@ Compile and Ruff-check every `/tmp/stage-b-baseline` and `/tmp/stage-b-final`
 Python script. Syntax-check every temporary CJS probe. No generated XML/JSON/list,
 archive, cache, wrapper, or mutation file may be tracked.
 
-- [ ] **Step 7: Audit exact 17-path scope, protected hashes, signatures, and leftovers**
+- [x] **Step 7: Audit exact 17-path scope, protected hashes, signatures, and leftovers**
 
 Require exact range equality with the 17-path set in this plan. Require no diff
 under production/web/workflow/dependency/configuration/packaging paths. Recompute
@@ -3597,7 +3612,7 @@ comments, disabled assertions, broad catches without why-comments, fallback
 skips, debug prints, unbounded diagnostics, mutable cross-request state,
 `require()`/cache eviction of targets, dead one-shot branches, and Stage C work.
 
-- [ ] **Step 8: Finish local results and commit**
+- [x] **Step 8: Finish local results and commit**
 
 Record literal RED/GREEN, order, mutation, JUnit property, receipt, fsync,
 worker-start, CLI, diagnostic, complete-suite, skip, hash, scope, and restoration
@@ -3607,10 +3622,15 @@ outputs. Include:
 LOCAL CONCLUSION: Stage B preserves all 205 existing target identities and all 12 existing helper identities, adds exactly eight approved identities, serves the healthy 165 Node-owning rows through four family processes, and reduces measured production-case persistence from 1,059 to 33 fsyncs for those rows and from 1,088 to 62 fsyncs for all 205 rows. Qualification overhead is reported separately. Timing values are observations only and establish no speedup or critical-path effect.
 ```
 
-Then:
+Then commit the results plus any Task 5 qualification corrections required to
+keep the approved plan/specification and executable worker consistent:
 
 ```bash
-git add docs/ci-persistent-page-workers-stage-b-results.md
+git add \
+  tests/fixtures/page_scenario_worker.cjs \
+  docs/superpowers/specs/2026-09-26-persistent-page-workers-stage-b-design.md \
+  docs/superpowers/plans/2026-09-26-persistent-page-workers-stage-b.md \
+  docs/ci-persistent-page-workers-stage-b-results.md
 git diff --cached --name-only
 git commit -m "docs: record persistent page worker verification"
 ```
