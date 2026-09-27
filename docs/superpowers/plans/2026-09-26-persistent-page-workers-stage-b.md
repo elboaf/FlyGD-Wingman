@@ -23,7 +23,7 @@
 - Every worker request owns a fresh VM realm, VM-created DOM, VM-owned CommonJS module and limited `require`, VM promises/errors/assertions/callbacks/listeners/timers, and freshly decoded input/markup. Only primitive source, markup, hashes, labels, and JSON text survive requests.
 - The persistent host must not `require()` or cache-evict any of the six target fixtures or `tests/fixtures/screenshot_dom.cjs`; no target path may occur in `require.cache` or `module.children` before or after requests.
 - Request cleanup completes before reply publication. A valid `ok:false` business result keeps the process; malformed startup/NDJSON/schema/family/protocol/scenario, timeout, process death, serialization failure, double completion, or failed cleanup emits no valid success and destroys the process.
-- `NodeScenarioWorker` changes only in `_validate_reply`: exact integer `id`; exact integer-or-float, finite, nonnegative `duration_ms`. All lifecycle, timeout, discard, restart, close, stderr-tail, and late-exit behavior remains unchanged.
+- `NodeScenarioWorker` changes only in `_validate_reply`: first prove every required key is present without indexing any field, then require exact integer `id` (never `bool`) and exact integer-or-float, finite, nonnegative `duration_ms` (never `bool`). Every missing/type/range/nonfinite violation raises `_ProtocolError`, so the existing `missing-fields` case and every numeric defect retain the same discard/restart path. All lifecycle, timeout, discard, restart, close, stderr-tail, and late-exit behavior remains unchanged.
 - Build the saved-layout receipt exactly once, through production `Api`/controller/store/settings/atomicio behavior. It has exactly 22 ordered values, costs exactly 19 fsync calls, is detached before restoration, and is decoded afresh for each of 55 main rows.
 - Healthy fsync acceptance is exact: Node-owning 165 rows `1,059 -> 33`, all 205 existing rows `1,088 -> 62`; qualification/helper/probe overhead is separate.
 - Raw JUnit properties, not terminal prints, are authoritative. Each `(exact node ID, property name)` has one owner and one value; duplicate identical values are still failures.
@@ -203,7 +203,7 @@ serializer and parses it afresh in the request realm.
 | Every one of 205 existing target rows | `stage_b.direct_fsync_calls` | nonnegative decimal direct count; sums are 14 for Node rows and 43 for all existing rows |
 | Only saved main `reversed` | `stage_b.receipt_build` | `saved-layout-main-v1` |
 | Only saved main `reversed` | `stage_b.receipt_fsync_calls` | `19` |
-| Every one of seven qualification IDs | `stage_b.qualification.worker_starts` | realm rows `1`; cleanup-success `1`; cleanup-failure `3`; receipt `0` |
+| Every one of seven qualification IDs | `stage_b.qualification.worker_starts` | realm rows `1`; cleanup-success `1`; cleanup-failure exactly `3` (missing-input fatal, late-exit process, recovery process); receipt `0`; independent fatal-variant probe starts are separate overhead |
 | Every one of seven qualification IDs | `stage_b.qualification.fsync_calls` | realm rows `0`; cleanup-success `4`; cleanup-failure `0`; receipt `0`; the separately owned shared receipt remains `19` |
 
 If direct-input setup proves a different qualification-only fsync decomposition,
@@ -217,7 +217,7 @@ fold the qualification `4` into 33 or 62.
 **Files:**
 - Create: `docs/ci-persistent-page-workers-stage-b-results.md`
 - Read: `/mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/**`
-- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
+- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
 
 **Interfaces:**
 - Consumes: merged base `203d2068787cb3457916db6005afda0a7ce7a43a`, approved spec, current source, and accepted Stage A run `36258907685` attempt `1`.
@@ -238,7 +238,7 @@ git diff --name-only origin/main...HEAD
 Expected before Task 1 implementation: only the approved Stage B spec and plan
 occur in the range; no executable path is dirty.
 
-- [ ] **Step 2: Materialize the exact collection/map/signature script**
+- [ ] **Step 2: Materialize the exact collection/map/signature and restoration/JUnit tooling**
 
 Create `/tmp/stage-b-baseline/collect.py` with these core checks; store complete
 records rather than terminal-only counts:
@@ -297,6 +297,143 @@ def shape(path: Path) -> dict[str, object]:
         }
     return result
 ```
+
+Before any RED mutation is run in a later task, also create the complete
+`/tmp/stage-b-baseline/restore.py`; no later task may invent or patch a runner.
+It owns these frozen interfaces:
+
+```python
+from __future__ import annotations
+
+import hashlib
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from types import TracebackType
+from typing import Callable
+
+
+@dataclass(frozen=True)
+class MutationRecipe:
+    name: str
+    path: Path
+    old: bytes
+    new: bytes
+    nodeid: str
+    failure_regex: str
+
+
+def git_bytes(worktree: Path, *args: str) -> bytes:
+    return subprocess.check_output(["git", "-C", str(worktree), *args])
+
+
+def validate_recipe(recipe: MutationRecipe, worktree: Path) -> None:
+    assert not recipe.path.is_absolute(), f"{recipe.name}: path was absolute"
+    source = (worktree / recipe.path).read_bytes()
+    assert recipe.old, f"{recipe.name}: empty old literal"
+    assert recipe.new, f"{recipe.name}: empty new literal"
+    assert recipe.old != recipe.new, f"{recipe.name}: unchanged recipe"
+    assert source.count(recipe.old) == 1, (
+        f"{recipe.name}: old literal cardinality was {source.count(recipe.old)}"
+    )
+    re.compile(recipe.failure_regex)
+
+
+def mutate_once(
+    worktree: Path,
+    recipe: MutationRecipe,
+    probe: Callable[[], None],
+) -> None:
+    path = worktree / recipe.path
+    validate_recipe(recipe, worktree)
+    original = path.read_bytes()
+    original_hash = hashlib.sha256(original).hexdigest()
+    before_diff = git_bytes(worktree, "diff", "--binary", "HEAD", "--", ".")
+    before_status = git_bytes(
+        worktree, "status", "--porcelain=v2", "--untracked-files=all", "-z"
+    )
+    probe_error: BaseException | None = None
+    probe_tb: TracebackType | None = None
+    restore_error: BaseException | None = None
+    try:
+        mutated = original.replace(recipe.old, recipe.new, 1)
+        assert mutated != original, f"{recipe.name}: mutation changed no bytes"
+        path.write_bytes(mutated)
+        assert path.read_bytes() == mutated
+        probe()
+    except BaseException as error:  # noqa: BLE001 -- restore before rethrow.
+        probe_error = error
+        probe_tb = error.__traceback__
+    finally:
+        try:
+            path.write_bytes(original)
+            checks = {
+                "file bytes": path.read_bytes() == original,
+                "SHA-256": hashlib.sha256(path.read_bytes()).hexdigest()
+                == original_hash,
+                "binary diff": git_bytes(
+                    worktree, "diff", "--binary", "HEAD", "--", "."
+                )
+                == before_diff,
+                "porcelain status": git_bytes(
+                    worktree,
+                    "status",
+                    "--porcelain=v2",
+                    "--untracked-files=all",
+                    "-z",
+                )
+                == before_status,
+            }
+            mismatches = [name for name, matched in checks.items() if not matched]
+            if mismatches:
+                raise AssertionError(
+                    "restoration bytes mismatch: " + ", ".join(mismatches)
+                )
+        except BaseException as error:  # noqa: BLE001 -- restoration wins.
+            restore_error = AssertionError(f"restoration bytes mismatch: {error}")
+    if restore_error is not None:
+        raise restore_error from probe_error
+    if probe_error is not None:
+        raise probe_error.with_traceback(probe_tb)
+```
+
+On top of that exact restoration primitive, `restore.py` must contain:
+
+- longest-existing-module-prefix reconstruction of exact pytest node IDs;
+- raw external JUnit parsing that preserves `<property>` elements as a list;
+- `run_expected_failure(recipe, command, xml_path)`, which runs a fresh external
+  pytest process, requires nonzero exit, exactly one selected testcase, exactly
+  one call-phase `<failure>` and no setup/teardown `<error>` or `<skipped>`, and
+  requires `recipe.failure_regex` in message plus traceback;
+- rejection of `ImportError`, `ModuleNotFoundError`, collection/fixture errors,
+  `NodeScenarioTimeout`, timeout text, and every other registered mutation
+  sentinel;
+- `run_restored_green(recipe, command, xml_path)`, which runs only after the
+  `finally` restoration checks and requires the exact node to pass once; and
+- `run_recipe()`, which validates the literal old/new recipe before mutation,
+  proves the mutated bytes differ, invokes the failure runner, restores exact
+  bytes/SHA-256/binary diff/NUL-delimited porcelain in `finally`, then invokes
+  the restored GREEN runner. A failure to restore any one of those surfaces
+  raises an error containing the exact sentinel `restoration bytes mismatch`.
+
+The runner never parses pytest terminal prose as an outcome and never imports a
+test module into its own process. Literal recipes are Python `bytes` values, not
+line numbers, ellipses, pseudocode, search-only descriptions, or regex
+substitutions. Each later mutation table row must name one `MutationRecipe`, one
+exact node or explicitly independent process probe, and one mode-specific
+compiled failure regex before the mutation is allowed to run. The only permitted
+shared regex is the required exact `stage_b property cardinality` sentinel for
+the separate missing-property and duplicate-identical-property recipes.
+
+Create `/tmp/stage-b-baseline/test_restore.py` and run it now in a disposable
+Git repository. Its external child pytest samples must prove: restoration after
+an intended probe failure; detection of zero-match and two-match literals;
+detection of bytes/hash/diff/status mismatch with the exact restoration
+sentinel; exact-node mismatch rejection; longest-prefix parsing of a real
+external pass, call failure, setup error, and parametrized node; duplicate JUnit
+property preservation; sentinel mismatch rejection; and restored GREEN parsing.
+Only after these self-tests pass may Tasks 3–5 use the runner.
 
 Add a `pytest_collection_finish` plugin in the same file that writes exact
 `item.nodeid` and sorted marker names to the path in
@@ -512,7 +649,8 @@ invented values.
 - [ ] **Step 8: Verify and commit Task 1**
 
 ```bash
-python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py
+python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py
+uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_restore.py -q
 uv run --no-sync ruff check /tmp/stage-b-baseline/*.py
 uv run --no-sync ruff format --check /tmp/stage-b-baseline/*.py
 uv run --no-sync python -m pytest tests/test_documentation.py -q
@@ -559,9 +697,10 @@ if (request.scenario === 'numeric-schema') {
     'positive-infinity': 'Infinity',
     'negative-infinity': '-Infinity'
   };
+  const duration = mode === 'bool-id' ? '0' : durations[mode];
   process.stdout.write('{"id":' + id
     + ',"scenario":"numeric-schema","ok":true,"duration_ms":'
-    + durations[mode] + ',"error":"","stack":""}\n');
+    + duration + ',"error":"","stack":""}\n');
   return;
 }
 ```
@@ -572,14 +711,50 @@ Add exactly one non-parametrized test:
 def test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration(
     node_worker: NodeScenarioWorker,
 ):
-    with pytest.raises(NodeScenarioCrash, match="reply field 'id' had the wrong type"):
-        node_worker.request("numeric-schema", {"mode": "bool-id"})
-    assert node_worker._proc is None
-    clean = node_worker.request("echo-after-restart", {"text": "after bool id"})
-    assert clean["id"] == 2
+    def rejected(mode: str, expected_error: str) -> None:
+        if node_worker._proc is None:
+            node_worker._ensure_started("numeric-schema")
+        process = node_worker._proc
+        request_id = node_worker._next_id
+        assert process is not None
+        try:
+            node_worker.request("numeric-schema", {"mode": mode})
+        except NodeScenarioCrash as crashed:
+            assert expected_error in str(crashed), (
+                f"numeric-schema {mode}: wrong protocol error"
+            )
+        else:
+            pytest.fail(f"numeric-schema {mode}: invalid reply was accepted")
+        process.wait(timeout=5)
+        assert process.poll() is not None, (
+            f"numeric-schema {mode}: rejected process was not terminated"
+        )
+        assert node_worker._proc is None, (
+            f"numeric-schema {mode}: process was not discarded"
+        )
+        recovered = node_worker.request("echo-after-restart", {"text": mode})
+        assert recovered["id"] == request_id + 1, (
+            f"numeric-schema {mode}: recovery request ID was not monotonic"
+        )
+        assert node_worker._proc is not None
+        assert node_worker._proc.pid != process.pid, (
+            f"numeric-schema {mode}: recovery reused discarded PID"
+        )
 
-    assert node_worker.request("numeric-schema", {"mode": "zero"})["duration_ms"] == 0
-    assert node_worker.request("numeric-schema", {"mode": "float"})["duration_ms"] == 1.5
+    rejected("bool-id", "reply field 'id' had the wrong type")
+
+    try:
+        zero = node_worker.request("numeric-schema", {"mode": "zero"})
+    except NodeScenarioCrash as error:
+        raise AssertionError("numeric-schema zero: valid duration rejected") from error
+    assert zero["duration_ms"] == 0, "numeric-schema zero: valid duration changed"
+    try:
+        floating = node_worker.request("numeric-schema", {"mode": "float"})
+    except NodeScenarioCrash as error:
+        raise AssertionError("numeric-schema float: valid duration rejected") from error
+    assert floating["duration_ms"] == 1.5, (
+        "numeric-schema float: valid duration changed"
+    )
 
     for mode in (
         "bool-duration",
@@ -588,30 +763,44 @@ def test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration
         "positive-infinity",
         "negative-infinity",
     ):
-        process = node_worker._proc
-        with pytest.raises(NodeScenarioCrash, match="duration_ms"):
-            node_worker.request("numeric-schema", {"mode": mode})
-        assert process is not None
-        process.wait(timeout=5)
-        assert process.poll() is not None
-        assert node_worker._proc is None
-        expected_id = node_worker._next_id
-        recovered = node_worker.request("echo-after-restart", {"text": mode})
-        assert recovered["id"] == expected_id
-        assert node_worker._proc is not None
-        assert node_worker._proc.pid != process.pid
+        rejected(mode, "duration_ms")
 ```
 
-Collect it with the existing 12 IDs first. Run only the new ID and require a
-call-phase failure because `id: true` is accepted as request ID 1 by the old
-validator. Reject import/collection/setup error or a failure caused by an absent
-scenario branch.
+The private `_ensure_started()` call creates process 1 without consuming request
+ID 1. Consequently the bool-ID reply is valid in every other field, including
+`duration_ms: 0`, and old `_validate_reply` accepts `true == 1`; RED is the exact
+call-phase sentinel `numeric-schema bool-id: invalid reply was accepted` rather
+than malformed JSON or ID mismatch. GREEN must reject and discard that process,
+restart with request ID 2 and a distinct PID, accept integer zero and float 1.5,
+and repeat the mode-qualified discard/restart proof for all five invalid
+durations.
+
+Also strengthen the unchanged existing `missing-fields` parameter case without
+adding an ID: require exact crash text `reply missing 'id'`, then use explicit
+`missing-fields reply did not use _ProtocolError` and
+`missing-fields process was not discarded` assertion messages before its clean
+ID-3/distinct-PID recovery. Collect it with the existing 12 IDs first. Run only
+the new ID against the old validator and require the bool-ID RED above. Reject
+import/collection/setup error or a failure caused by an absent scenario branch.
 
 - [ ] **Step 2: Harden only `_validate_reply` and run all 13 helper IDs**
 
-Add `import math` and replace only numeric type handling with:
+Add `import math` and replace only `_validate_reply` after its initial object
+check with this complete ordering:
 
 ```python
+        required = {
+            "id": int,
+            "scenario": str,
+            "ok": bool,
+            "duration_ms": (int, float),
+            "error": str,
+            "stack": str,
+        }
+        for key in required:
+            if key not in payload:
+                raise _ProtocolError(f"reply missing {key!r}")
+
         if type(payload["id"]) is not int:
             raise _ProtocolError("reply field 'id' had the wrong type")
         duration = payload["duration_ms"]
@@ -621,21 +810,17 @@ Add `import math` and replace only numeric type handling with:
             raise _ProtocolError(
                 "reply field 'duration_ms' was not finite and nonnegative"
             )
-        required = {
-            "scenario": str,
-            "ok": bool,
-            "error": str,
-            "stack": str,
-        }
-        for key, expected in required.items():
-            if key not in payload:
-                raise _ProtocolError(f"reply missing {key!r}")
-            if not isinstance(payload[key], expected):
+        for key in ("scenario", "ok", "error", "stack"):
+            if not isinstance(payload[key], required[key]):
                 raise _ProtocolError(f"reply field {key!r} had the wrong type")
+        return dict(payload)
 ```
 
-Keep the initial object check and final `return dict(payload)`. Do not cast a
-large integer to float. Run all 13 IDs and require the existing late-exit phases
+All six presence checks finish before any `payload[...]` access, so no missing
+field can escape as `KeyError`; every rejected value raises `_ProtocolError` and
+therefore reaches the existing discard path. Exact `type` checks exclude bool
+for ID and duration without casting a large integer to float. Run all 13 IDs and
+require the existing `missing-fields` discard/restart case plus late-exit phases
 `before the next request`, `before replying to the next request`, `while sending the next request`, and `before close` remain exact.
 
 - [ ] **Step 3: Add the receipt once-provider before wiring any page row**
@@ -1018,10 +1203,23 @@ PASS does not appear in diagnostics.
 hostile getters, throwing Proxy, invalid recognized business input, before
 settlement rejection, timer-boundary rejection, one fatal request, and one late
 post-success rejection. After every retainable failure, assert a clean request in
-the same PID. Fatal request is not replayed; only a separate call starts another
-PID. The late witness waits for old PID exit, makes `T` fail with `.scenario == T`
-and exact `before the next request` plus prior `S`/request `N`, proves `T` did not
-execute, and requires the third call to use ID `N+2` in a new PID.
+the same PID. This permanent identity exercises exactly one representative fatal request: a
+family-valid scenario whose payload object is missing the required `input` key.
+Process A (worker start 1) serves all retainable failures and dies on that fatal
+without replay; a separate call starts process B (start 2), whose
+successful `S` schedules the late exit; `T` observes B's exit, fails with
+`.scenario == T`, exact `before the next request`, and prior `S`/request `N`
+without starting or executing a replacement; only the following recovery call
+starts process C (start 3), uses ID `N+2`, and succeeds. Assert and publish
+`stage_b.qualification.worker_starts == 3` from these three observed PIDs—no
+other fatal variant runs inside this identity.
+
+Malformed NDJSON, wrong-family label, unknown protocol, and unknown scenario are
+qualified later by four independent `/tmp` variant probes. Each gets a fresh
+process, exact input bytes, exact no-valid-reply/nonzero-exit assertion, its own
+literal mutation and unique sentinel, and a separate clean-process recovery.
+Their process starts are mutation/probe overhead in the results ledger and are
+never added to, or described by, the permanent cleanup-failure value `3`.
 
 `test_saved_layout_receipt_is_durable_and_detached` consumes the private once-
 provider, asserts exact 22-key order, strict finite JSON, 19 fsyncs, durable JSON,
@@ -1201,7 +1399,8 @@ shuffle hash only after writing the exact final-newline list.
 
 - [ ] **Step 6: Run the saved/receipt/realm mutation slice**
 
-Use the Task 5 restoration/JUnit runner and exact witnesses:
+Use the already self-tested Task 1 restoration/JUnit runner and literal
+match-once `MutationRecipe` entries with these exact witnesses:
 
 | Temporary defect | Exact selected owner | Required call-phase regex |
 |---|---|---|
@@ -1380,13 +1579,29 @@ normal = node_ids
 reverse = list(reversed(node_ids))
 shuffle = node_ids.copy()
 random.Random(20260926).shuffle(shuffle)
+round_robin_families = (
+    "fleet-sharing",
+    "group-backward",
+    "label-markers",
+    "saved-layouts",
+)
 queues = {family: collections.deque(ids) for family, ids in by_family.items()}
 cross_family = []
 while any(queues.values()):
-    for family in ("saved-layouts", "fleet-sharing", "group-backward", "label-markers"):
+    for family in round_robin_families:
         if queues[family]:
             cross_family.append(queues[family].popleft())
+assert ordered_hash(cross_family) == (
+    "183ba77428ec2e3307d1b68716d3427aa75926fbcd1fbcc4b28682d0162131e1"
+)
 ```
+
+The generator script writes each list with one final newline, reads it back,
+recomputes its SHA-256 from those exact bytes, and refuses to invoke pytest if
+any count, uniqueness, set equality, family-prefix first cycle, or frozen hash
+self-check differs. The round-robin first cycle is exactly Fleet Sharing,
+group-backward, label-markers, saved-layouts; do not rotate it while retaining
+the old hash literal.
 
 For each list require exact set/uniqueness, 165 passes, four starts, one PID per
 family, exact request counts/ordinals, 33 fsyncs, zero cleanup, and one receipt.
@@ -1406,7 +1621,8 @@ cross-module IDs re-enter it.
 
 - [ ] **Step 7: Run per-family isolation, fatal-request, and business mutations**
 
-Apply one mutation at a time with exact selected JUnit owner and restoration:
+Apply one literal mutation recipe at a time with the self-tested Task 1 runner,
+exact selected JUnit owner, and restoration:
 
 | Family defect | Owner | Required regex |
 |---|---|---|
@@ -1415,11 +1631,11 @@ Apply one mutation at a time with exact selected JUnit owner and restoration:
 | group reuses lexical dev declarations | group realm qualification | `group-backward source execution count was not one` |
 | marker retains focused/listener DOM root | marker realm qualification | `label-markers retained listener or realm state` |
 | convert recognized business invalidity to fatal | cleanup-business-failure | `business failure changed the worker PID` |
-| return a reply for malformed NDJSON | cleanup-business-failure | `malformed NDJSON produced a valid reply` |
-| accept wrong family label | cleanup-business-failure | `wrong-family request did not terminate the worker` |
-| accept unknown protocol | cleanup-business-failure | `unknown protocol did not terminate the worker` |
-| accept unknown scenario | cleanup-business-failure | `unknown scenario did not terminate the worker` |
-| replay fatal request automatically | cleanup-business-failure | `fatal request executed more than once` |
+| replay the one permanent representative fatal automatically | cleanup-business-failure | `representative fatal request executed more than once` |
+| return a reply for malformed NDJSON | independent `/tmp` malformed-NDJSON variant | `fatal variant malformed-ndjson: valid reply observed` |
+| accept wrong family label | independent `/tmp` wrong-family variant | `fatal variant wrong-family: process survived` |
+| accept unknown protocol | independent `/tmp` unknown-protocol variant | `fatal variant unknown-protocol: process survived` |
+| accept unknown scenario | independent `/tmp` unknown-scenario variant | `fatal variant unknown-scenario: process survived` |
 | drop sharing reject diagnostic | sharing `reject` business ID | `fleet_sharing_watch controlled diagnostic count` |
 | reverse source-rejection diagnostics | sharing `bridge-source-rejection` business ID | `Start/Stop controlled diagnostic order` |
 | omit a group dialog owner | group `focus-dialog-owners` business ID | `dialog owner matrix count: expected 132` |
@@ -1427,8 +1643,13 @@ Apply one mutation at a time with exact selected JUnit owner and restoration:
 | remove marker deferred branch | marker `screenshot-deferred` business ID | the existing `snapshot retains deferred live roster` assertion |
 | map only 158 obvious page rows | 165 mapping audit | `expected 165 Node-owning identities` |
 
-Each restored run includes the selected business ID, its realm qualification,
-cleanup-success, and cleanup-business-failure.
+Each restored business-family run includes the selected business ID, its realm
+qualification, cleanup-success, and cleanup-business-failure. Each independent
+fatal variant instead launches and closes only its own mutated process and one
+fresh recovery process, records those starts under mutation overhead, restores
+bytes/hash/diff/status, and reruns its unmutated variant. It never runs inside the
+permanent cleanup-failure identity and never claims that its starts are part of
+that identity's exact value `3`.
 
 - [ ] **Step 8: Commit the independently green four-family conversion**
 
@@ -1487,7 +1708,10 @@ def properties(case):
 
 def unique_property(case, owner, name):
     matches = [value for key, value in properties(case) if key == name]
-    assert len(matches) == 1, (owner, name, matches)
+    assert len(matches) == 1, (
+        "stage_b property cardinality: "
+        f"owner={owner!r} property={name!r} values={matches!r}"
+    )
     return matches[0]
 ```
 
@@ -1518,56 +1742,17 @@ eight listed above.
 
 - [ ] **Step 3: Run the complete restoration-safe mutation matrix**
 
-Use this exact wrapper for every source/test mutation:
-
-```python
-from __future__ import annotations
-
-import hashlib
-import subprocess
-from pathlib import Path
-from types import TracebackType
-
-WORKTREE = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-persistent-page-workers-stage-b")
-
-
-def git_bytes(*args: str) -> bytes:
-    return subprocess.check_output(["git", "-C", str(WORKTREE), *args])
-
-
-def mutate_once(path: Path, old: bytes, new: bytes, probe) -> None:
-    original = path.read_bytes()
-    assert original.count(old) == 1, (path, original.count(old), old)
-    original_hash = hashlib.sha256(original).hexdigest()
-    before_diff = git_bytes("diff", "--binary", "HEAD", "--", ".")
-    before_status = git_bytes(
-        "status", "--porcelain=v2", "--untracked-files=all", "-z"
-    )
-    probe_error: BaseException | None = None
-    probe_tb: TracebackType | None = None
-    restore_error: BaseException | None = None
-    try:
-        path.write_bytes(original.replace(old, new, 1))
-        probe()
-    except BaseException as error:  # noqa: BLE001 -- restoration precedes rethrow.
-        probe_error = error
-        probe_tb = error.__traceback__
-    finally:
-        try:
-            path.write_bytes(original)
-            assert path.read_bytes() == original
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == original_hash
-            assert git_bytes("diff", "--binary", "HEAD", "--", ".") == before_diff
-            assert git_bytes(
-                "status", "--porcelain=v2", "--untracked-files=all", "-z"
-            ) == before_status
-        except BaseException as error:  # noqa: BLE001 -- restoration failure wins.
-            restore_error = error
-    if restore_error is not None:
-        raise restore_error from probe_error
-    if probe_error is not None:
-        raise probe_error.with_traceback(probe_tb)
-```
+Use the complete, compiled, Ruff-clean Task 1 `restore.py` runner unchanged.
+Before execution, materialize the final literal recipe tuple and call
+`validate_recipe()` for every row as one batch. Require unique recipe names and
+mode-specific failure regexes (except the two property-cardinality recipes,
+which deliberately share exact `stage_b property cardinality`); nonempty,
+different old/new `bytes`; exactly one old-literal
+match in the intended final file; exact node IDs or one explicitly named
+independent fatal-variant process; and no `TODO`, `TBD`, `<family>`, `<scenario>`,
+ellipsis, line-number-only, or pseudocode placeholder in a recipe. Store the
+literal recipe manifest and its SHA-256 under `/tmp/stage-b-final`; do not track
+it.
 
 For each mutation, run one exact node with JUnit; require one case, call-phase
 `failure`, the table's unique regex in message+traceback, and absence of
@@ -1579,15 +1764,37 @@ Execute every Task 3/4 row plus these runtime/helper rows:
 
 | Exact match-once defect | Exact owner | Required regex |
 |---|---|---|
-| restore `isinstance(payload['id'], int)` | numeric helper ID | `DID NOT RAISE.*NodeScenarioCrash` |
-| accept bool duration | numeric helper ID | `bool-duration.*was not discarded` |
-| remove float finite check | numeric helper ID | `nan.*was not discarded` |
-| remove duration nonnegative check | numeric helper ID | `negative.*was not discarded` |
-| inject host DOM and host Promise | each of four realm rows, separately | `<family> host realm was poisoned` |
+| accept bool ID while keeping its emitted duration `0` valid | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: invalid reply was accepted` |
+| leave the rejected bool-ID process alive | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: rejected process was not terminated` |
+| retain the process after bool-ID rejection | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: process was not discarded` |
+| reuse the rejected bool-ID PID on recovery | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: recovery reused discarded PID` |
+| accept bool duration | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-duration: invalid reply was accepted` |
+| retain the process after bool-duration rejection | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-duration: process was not discarded` |
+| accept negative duration | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema negative: invalid reply was accepted` |
+| accept raw `NaN` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema nan: invalid reply was accepted` |
+| accept raw positive `Infinity` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema positive-infinity: invalid reply was accepted` |
+| accept raw negative `Infinity` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema negative-infinity: invalid reply was accepted` |
+| reject valid integer zero | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema zero: valid duration rejected` |
+| reject valid float 1.5 | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema float: valid duration rejected` |
+| index `id` before completing required-key checks | existing `missing-fields` helper ID | `missing-fields reply did not use _ProtocolError` |
+| retain the process after missing-fields rejection | existing `missing-fields` helper ID | `missing-fields process was not discarded` |
+| inject host DOM and host Promise for saved layouts | saved realm row | `saved-layouts host realm was poisoned` |
+| inject host DOM and host Promise for Fleet Sharing | sharing realm row | `fleet-sharing host realm was poisoned` |
+| inject host DOM and host Promise for group backward | group realm row | `group-backward host realm was poisoned` |
+| inject host DOM and host Promise for label markers | marker realm row | `label-markers host realm was poisoned` |
 | host-require then cache-delete a target | cleanup-success | `target remained in module.children` |
-| reuse VM-owned module/export object | each realm row | `<family> module export escaped request realm` |
-| reuse one VM context | each realm row | `<family> realm poison crossed request boundary` |
-| skip second source evaluation | each realm row | `<family> source execution count was not one` |
+| reuse saved VM-owned module/export object | saved realm row | `saved-layouts module export escaped request realm` |
+| reuse sharing VM-owned module/export object | sharing realm row | `fleet-sharing module export escaped request realm` |
+| reuse group VM-owned module/export object | group realm row | `group-backward module export escaped request realm` |
+| reuse marker VM-owned module/export object | marker realm row | `label-markers module export escaped request realm` |
+| reuse one saved VM context | saved realm row | `saved-layouts realm poison crossed request boundary` |
+| reuse one sharing VM context | sharing realm row | `fleet-sharing realm poison crossed request boundary` |
+| reuse one group VM context | group realm row | `group-backward realm poison crossed request boundary` |
+| reuse one marker VM context | marker realm row | `label-markers realm poison crossed request boundary` |
+| skip second saved source evaluation | saved realm row | `saved-layouts source execution count was not one` |
+| skip second sharing source evaluation | sharing realm row | `fleet-sharing source execution count was not one` |
+| skip second group source evaluation | group realm row | `group-backward source execution count was not one` |
+| skip second marker source evaluation | marker realm row | `label-markers source execution count was not one` |
 | inject host-parsed payload object | saved realm row | `input mutation escaped detachment` |
 | retain prior VM result | saved realm row | `prior reply mutation returned` |
 | use mutable global JSON/String/Object/Reflect/Error | saved realm row | `pristine intrinsic serializer was not used` |
@@ -1601,12 +1808,26 @@ Execute every Task 3/4 row plus these runtime/helper rows:
 | query before zero-delay boundary | cleanup-business-failure | `boundary rejection was published as success` |
 | retain raw reason/promise/listener | cleanup-business-failure | `raw rejection or active listener remained` |
 | send success before cleanup | cleanup-success | `success reply preceded zero cleanup receipt` |
-| reply to malformed/invalid request | cleanup-business-failure | `fatal protocol request produced a valid reply` |
-| retry protocol failure | cleanup-business-failure | `fatal request executed more than once` |
+| reply to the one representative fatal request | cleanup-business-failure | `representative fatal request produced a valid reply` |
+| retry the representative fatal request | cleanup-business-failure | `representative fatal request executed more than once` |
+| make malformed NDJSON produce a reply | independent `/tmp` malformed-NDJSON variant | `fatal variant malformed-ndjson: valid reply observed` |
+| let wrong-family input survive | independent `/tmp` wrong-family variant | `fatal variant wrong-family: process survived` |
+| let unknown protocol survive | independent `/tmp` unknown-protocol variant | `fatal variant unknown-protocol: process survived` |
+| let unknown scenario survive | independent `/tmp` unknown-scenario variant | `fatal variant unknown-scenario: process survived` |
 | discard process on business failure | cleanup-business-failure | `business failure changed the worker PID` |
 | charge late rejection to T or execute T | cleanup-business-failure | `late rejection did not fail before T execution` |
-| omit/duplicate one JUnit property | `/tmp` synthetic property audit | `stage_b property cardinality` |
+| omit one JUnit property | `/tmp` synthetic property audit | `stage_b property cardinality` |
+| duplicate one JUnit property with the same value | `/tmp` synthetic property audit | `stage_b property cardinality` |
 | leave mutation installed after intended failure | disposable restoration self-test | `restoration bytes mismatch` |
+
+Every row above is backed by a literal match-once old/new byte recipe; rows that
+share an owner still have distinct mode-qualified sentinels, so one defect cannot
+masquerade as another. The four fatal-variant rows use the independent process
+runner, require exact mutated evidence plus unmutated recovery, and report their
+starts separately; they do not alter the permanent cleanup-failure property's
+exact three starts. The two property mutants exercise missing and duplicate-
+identical values separately and must both reach the exact
+`stage_b property cardinality` text from `unique_property()`.
 
 The late-rejection run additionally checks `.scenario == T`, prior `S`, request
 `N`, and exact `before the next request`. Rerun the unchanged helper wait-discovery
@@ -1927,18 +2148,31 @@ Fresh checks performed while authoring this plan:
 - the exact four target files plus the existing helper module passed all `217`
   baseline identities: `217 passed in 46.10s`; JUnit SHA-256
   `c2e57fb3ddf10f7b8a44267423d23160d0762b3fd7137cd4cc0d1b50c31d187f`;
-- the strict helper copy accepted integer `0` and float `1.5`, rejected boolean
-  ID/duration plus negative/NaN/positive-infinity/negative-infinity durations,
-  discarded each bad process, restarted distinctly, and printed
-  `PASS strict helper schema/discard/restart`;
+- a fresh disposable copy of the proposed helper test against the old validator
+  failed in the call phase at exactly `numeric-schema bool-id: invalid reply was
+  accepted`; the bool-ID reply contained valid `duration_ms: 0`, so malformed
+  JSON, a duration defect, and ID mismatch could not mask RED;
+- applying only the planned `_validate_reply` edit to that disposable copy made
+  all 13 helper identities pass (`13 passed in 3.61s`, repeated after Ruff
+  formatting as `13 passed in 3.65s`); integer `0` and float `1.5` were accepted,
+  boolean ID/duration plus negative/NaN/positive-infinity/negative-infinity were
+  rejected, every bad process was discarded, and every recovery used a distinct
+  PID with a monotonic ID;
 - all seven target sources were read as UTF-8, compiled under explicit VM
   CommonJS wrappers, left zero target cache/child entries, and kept export poison
   in its originating realm; the manifest hashes matched the approved spec;
 - rejection-before and timer-boundary ordering plus ignored-record/early-query
   counterexamples passed their disposable assertions;
-- malformed startup/NDJSON/schema/family/protocol/scenario probes emitted no
-  valid reply and exited, while recognized invalid business data returned
-  `ok:false` and retained the process;
+- the permanent cleanup-failure sequence was replayed disposably as exactly
+  three starts: process A died on one missing-`input` representative fatal,
+  process B published success then exited late, `T` caused no replacement start,
+  and process C recovered; malformed NDJSON, wrong family, unknown protocol, and
+  unknown scenario then ran as four independent bad+recovery process pairs,
+  producing `PASS permanent starts=3; fatal-variant overhead starts=8` with no
+  valid fatal reply;
+- malformed startup/schema probes likewise emitted no valid reply and exited,
+  while recognized invalid business data returned `ok:false` and retained the
+  process;
 - a late post-success rejection made the next call fail with prior request
   context and allowed only a following separate request to restart;
 - all six direct entrypoints passed representative success, missing-argv, and
@@ -1949,16 +2183,29 @@ Fresh checks performed while authoring this plan:
   UTF-8 JSON, restored environment/writer/legacy/reader state, 55 independent
   decodes, and 55 passing saved-main requests in one PID;
 - the source-compatible four-family overlay passed all 165 business rows in
-  normal, reverse, seed-`20260926` shuffle, and cross-family orders; every run
+  normal, reverse, seed-`20260926` shuffle, and cross-family orders; the
+  cross-family generator's exact first-cycle order was Fleet Sharing,
+  group-backward, label-markers, saved-layouts and its reread final-newline hash
+  was `183ba77428ec2e3307d1b68716d3427aa75926fbcd1fbcc4b28682d0162131e1`; every run
   had request counts `62/65/17/21`, one PID per family, successful A-B-A replay,
   and zero reported host timers;
 - four representative poison/pristine real-program runs passed in four PIDs;
 - measured components reproduce candidate arithmetic `19 + 10 + 4 = 33` and
   `33 + 29 = 62`; the executor still must obtain integrated raw-JUnit evidence
   from the final implementation before claiming acceptance;
-- disposable Python scripts compiled and CJS probes passed `node --check`; the
-  final Task 1 and Task 5 scripts deliberately require fresh Ruff formatting,
-  because exploratory predecessor scripts are not versioned acceptance artifacts.
+- the disposable plan checker compiled and passed Ruff check/format, found six
+  task headings, compiled 86 mutation-table regex cells, exercised valid,
+  missing, and duplicate-identical property lists with the exact
+  `stage_b property cardinality` sentinel, regenerated all 165 round-robin IDs
+  and the hash above, and rejected the removed runner forward reference; the
+  helper and fatal-variant disposable scripts also compiled, passed Ruff, and
+  their CJS passed `node --check`;
+- placeholder/count review found no unresolved implementation value presented as
+  fact: candidate full-suite hashes remain explicitly deferred, while IDs,
+  outcomes, process/fsync arithmetic, six tasks, literal-recipe requirements,
+  and exact 17-path scope are fixed. The final Task 1 and Task 5 scripts still
+  require their own fresh compile/Ruff/self-test runs because disposable plan
+  probes are not implementation acceptance artifacts.
 
 This evidence qualifies the literal sequence and witnesses, not the future
 repository implementation. Tasks 2–6 rerun every relevant check against the
