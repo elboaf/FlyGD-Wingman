@@ -32,11 +32,12 @@ decorators, collected markers, CJS argv/PASS sites, and the 15 protected
 read-only hashes from the plan. Its SHA-256 is
 `2930fc121405abab6c45048dde5da0bec3d661c262e55a2d2df0d40bab376dc7`.
 No executable or protected source byte was changed in Task 1. The corrected,
-recursive 56-file external evidence inventory is
+recursive 58-file external evidence inventory is
 `/tmp/stage-b-baseline/artifact-manifest.json` (SHA-256
-`eb5b832a73965e1d653c34ed881d42e3ef50a7f5eddd40ddd28b078dc82e4db5`).
-It includes the three canonical files under `scratch-fixtures/` by relative path
-and content hash. Manifest generation is an explicit freeze command; subsequent
+`7de6f9afc355e9f495ed9074b4d5248a639e0fc422be27ff34ef45a87b9af7a1`).
+It includes the five canonical files under `scratch-fixtures/` by relative path
+and content hash, including the worker-compatible fatal-probe program and request
+fixture. Manifest generation is an explicit freeze command; subsequent
 verification is read-only and byte-compares the existing JSON and hash authority.
 
 ## Accepted Stage A provenance and artifact hashes
@@ -151,7 +152,7 @@ were not run in this task.
 Task 1 executed no Stage B implementation RED or GREEN. The exact 217-row source
 baseline passed again (`217 passed`, no skip/failure/error); its refreshed JUnit
 SHA-256 is
-`8917e2a3b9a13bbefd2193616b6ab3e818b680b0b8d577bf9dfde9d7bdc6eb1d`.
+`008f257b0fe8e8e5b578c99b817e75c30a9ff4c965ea355da56af7ee0370e997`.
 Task 2 RED/GREEN remains **not run in this task**.
 
 ## Worker schema, VM, cleanup, and recovery qualification
@@ -179,16 +180,29 @@ owner, kind-specific masking rules, a literal edit with an explicit root, frozen
 mutated/restored expectations, and an explicit `available_from_task`. The six
 corrected owner mappings and three restored-only helper IDs are pinned explicitly.
 The deterministic registry manifest SHA-256 is
-`798f9d6e2fb91b7c1f4d8578e08b3477b21f43a82a4b246e2bcd21b7d9a6a7cb`.
+`4af640d5d4ec0439c848bddc0b699a05ced7b5fc9d0464dd7b768acc8251edf5`.
 
 Task 1 validates match-once cardinality only for the inputs available now:
 `inventory-node-165`, `junit-property-cardinality`, and
 `restoration-byte-integrity`. The inventory probe mutates and compares a real
-copy of the frozen 165-ID input. The property probe parses a real JUnit XML file
-through the shared unique-property auditor. The restoration probe checks exact
-fixture bytes. Generic dispatcher tests execute real scratch subprocesses or
-real JSON/XML parsing functions; no probe accepts a sentinel through argv or
-turns a synthetic on/off flag directly into the expected message.
+copy of the frozen 165-ID input. The property probe parses real JUnit XML through
+the shared unique-property auditor. Its one canonical recipe owns two ordered,
+independent edit/probe/restoration cycles: duplicate then missing, recording
+mutated cardinalities `[2, 0]` and restored cardinalities `[1, 1]` with exact
+owner/key/value checks. The restoration probe checks exact fixture bytes.
+
+External probe argv is a frozen template containing exactly one
+`{mutation_root}` token, substituted by the typed runner on every mutated and
+restored invocation. The receipt probe imports and calls the once-provider from
+that root 55 times through a measured builder. Fatal protocol probes launch that
+root's `page_scenario_worker.cjs`, inject the named invalid request, require a
+fatal close with no valid reply, then launch a distinct recovery process and
+require one valid reply. Task 1 countertests use a scratch worker with the same
+interface and prove each guard mutation yields `[mutated=1, restored=0]`; a
+static command independent of the mutation root is rejected. Generic dispatcher
+tests likewise execute real scratch subprocesses or real JSON/XML parsing
+functions. No probe accepts a sentinel through argv or turns a synthetic on/off
+flag directly into the expected message.
 
 Restored pytest validation now requires the complete registered restored-ID list
 in exact order—selected IDs plus any recipe-owned restored-only IDs—once each,
@@ -204,7 +218,7 @@ negative-infinity edit is isolated to accepting `-Infinity` while still rejectin
 finite negatives, NaN, and positive infinity; an in-memory validator mutant test
 pins that distinction.
 
-The corrected tooling suites pass 52 checks: 19 collector/identity checks, 31
+The corrected tooling suites pass 57 checks: 19 collector/identity checks, 36
 registry/restoration/dispatcher checks, and two recursive-manifest checks.
 
 This is dispatcher, parser, restoration, inventory, and manifest-integrity
