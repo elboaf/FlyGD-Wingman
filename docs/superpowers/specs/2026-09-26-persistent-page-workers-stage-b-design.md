@@ -2,15 +2,16 @@
 
 ## Status
 
-Approved design with the four final-review corrections. The current frozen
-executable head is `a5bcadf629755bd44863a8ed6471400f41727565`
-(`test: harden persistent worker scheduling`). Fresh Task 5/6 local verification,
-including all 71 canonical mutations and 86 internal executions, is complete.
-The evidence-only update is bound to a direct documentation child named
-`test: refreeze persistent page worker evidence`; its commit remains parent-owned.
-The earlier `a703f8d2` executable / `00a595c6` evidence freeze is historical,
-not evidence for this runtime. Scoped independent rereview and hosted acceptance
-remain pending. No publication is authorized.
+Approved design with the final-review corrections. The current frozen executable
+head is `a187a24b8729ef253e788ddbd06b3c2d61fe4c19`
+(`test: preserve assertions on older Node runtimes`). Fresh Task 5/6 local
+verification, including all 71 canonical mutations and 87 internal executions,
+is complete. The evidence-only update is bound to a direct documentation child
+named `test: refreeze cross-version worker evidence`; its commit remains
+parent-owned. The earlier executable/evidence freezes are historical, not
+evidence for this runtime. Independent evidence review approved the freeze; the
+whole-branch review's four findings and cross-version residual were corrected.
+Hosted acceptance remains pending. No publication is authorized.
 
 Stage B changes test architecture only. It replaces 165 one-shot Node launches
 in four Python test files with four family-local, session-scoped workers and
@@ -525,7 +526,10 @@ The limited assertion facade stays entirely inside the request VM. Its relevant
 Node process: `equal` uses captured `Object.is` (SameValue), and `deepEqual` uses
 SameValue for leaves, array length/index and enumerable extra own-key checks,
 prototype identity, own enumerable data descriptors (including symbol keys),
-Date values, RegExp source/flags/lastIndex, and the qualified self-cycle shapes.
+Date values, RegExp source/available flags/lastIndex, and the qualified self-cycle
+shapes. Because native invalid-Date equality differs across Node releases, the
+host derives that one decision using native `node:assert/strict` and injects only
+the resulting primitive boolean; absent RegExp flag getters are ignored.
 Non-enumerable ordinary-object properties are ignored. This is the fixture-used
 subset, not a replacement implementation of every Node assertion API or exotic
 object type.
@@ -1314,11 +1318,12 @@ followed by a clean anti-masking run. A failure caused only by leaving the probe
 installed is not evidence.
 
 The canonical registry remains exactly `14/16/41` recipes and 71 names. The
-current final-review matrix has **86 executions** (`16/17/53` by phase), all
-rerun against the current executable. Eleven internal executions extend the
+current final-review matrix has **87 executions** (`16/17/54` by phase), all
+rerun against the current executable. Twelve internal executions extend the
 historical 75: buffered fatal admission under `protocol-fatal-no-replay`; immediate
 and interval quiescence under `cleanup-timer-cancellation`; and batching plus
-seven strict assertion variants under `cleanup-before-reply`. The existing
+eight strict assertion variants under `cleanup-before-reply`, including native
+invalid-Date parity. The existing
 `rejection-boundary-turn` now batches callbacks substantively, while
 `rejection-final-timer-drain` shortens the actual completion allowance. Names,
 owner identities, canonical sentinels, partition and restoration rules are

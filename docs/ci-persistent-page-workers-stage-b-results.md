@@ -1,10 +1,10 @@
 # Persistent page workers — Stage B results
 
-**Current authority:** executable `a5bcadf629755bd44863a8ed6471400f41727565`.
+**Current authority:** executable `a187a24b8729ef253e788ddbd06b3c2d61fe4c19`.
 The **Final-review fix round — current local endpoint** section supersedes all
 prior local executable/evidence freezes below. Earlier Task 1–6 records and
-75-execution hashes remain historical. This evidence update is bound to the direct
-documentation child with subject `test: refreeze persistent page worker evidence`;
+75/86-execution hashes remain historical. This evidence update is bound to the
+direct documentation child with subject `test: refreeze cross-version worker evidence`;
 its literal SHA is recorded locally after parent-owned creation. Publication
 remains stopped.
 
@@ -833,20 +833,20 @@ this test-only change. No timing or overall hosted acceptance claim is made.
 
 ## Final-review fix round — current local endpoint
 
-**Frozen executable head:** `a5bcadf629755bd44863a8ed6471400f41727565`
-(`test: harden persistent worker scheduling`). Its parent is the historical
-evidence head `00a595c64b4c946697067fb0e69ec814b3dd2b74`. The parent agent
-created this authorized two-file fix commit after the subagent tool policy
-denied staging/commit. Its full SHA, subject, two paths and clean status were
-independently verified locally before the fresh runs below.
+**Frozen executable head:** `a187a24b8729ef253e788ddbd06b3c2d61fe4c19`
+(`test: preserve assertions on older Node runtimes`). It follows the four-boundary
+fix at `a5bcadf629755bd44863a8ed6471400f41727565`. A scoped independent
+rereview found that invalid-Date equality changed between Node 22/24 and Node
+26; the worker now derives that compatibility decision from native
+`node:assert/strict` and passes only the primitive boolean into each VM. RegExp
+flag access also ignores getters absent on older runtimes. The complete
+assertion differential passes on installed Node 18, 20, 22, 24, 25, and 26.
 
 **Evidence-only head binding:** the direct documentation-only child of that
-executable head with subject `test: refreeze persistent page worker evidence`
-(this evidence update). Its literal SHA is recorded in the local Task 6 report
-after parent-owned creation, avoiding a self-referential commit hash. At handoff,
-creation is pending and only the three authorized documents are modified; no
-clean-after-child claim is made. No executable edit followed the freeze or the
-verification below.
+executable head with subject `test: refreeze cross-version worker evidence`
+(this evidence update). Its literal SHA is recorded locally after parent-owned
+creation, avoiding a self-referential commit hash. No executable edit followed
+the freeze or the verification below.
 
 ### Four Important findings closed
 
@@ -906,13 +906,13 @@ No failed business, order, full-suite or mutation run was retried to obtain gree
 | Helper | 13 passed | `5.27s` | `7.88s` | `7dbadc71d6c78efbc62ba1d4b317735447245c0432493fc9e8bea2131e0f445f` |
 | Qualification | 7 passed | `10.52s` | `13.22s` | `fb8eab996450fe8837f4e1fee549185eeb0b92a8327d477fe5b5c276b1fe127d` |
 | Saved family | 62 passed | `7.19s` | `9.85s` | `43d87bdefca6fb547f134afa6423a6345dac870800f1d1218238490e2c9e9db1` |
-| Relevant | 225 passed | `38.44s` | `41.21s` | `f40618914651c858a18076c383ea85d8dbae2ea635f53dafbbdbc1aabbb7e4b0` |
+| Relevant | 225 passed | `37.89s` | not separately recorded | `a32feb784798e0e58aa9029f1bb2002e611f360d8e3494f4fcf0516376d8df94` |
 | Existing target | 205 passed | `25.00s` | `27.74s` | `e997dbf428741d5e3454ba7d6ccf4c3d574416e31ea02d7499ef2438e6421eda` |
 | Node normal | 165 passed | `21.31s` | `24.84s` | `3a723d19ee42316d9d35b9e2569e7b9d7a1eafe61a0d50227886cc743494f922` |
 | Node reverse | 165 passed | `21.26s` | `24.78s` | `854f544902cb06684821a2cb7f923457871c047a56a8dce5dbe942d3a0c06f28` |
 | Node seed-20260926 shuffle | 165 passed | `21.58s` | `25.12s` | `dc55f423b56fedbe3f017e3e6ae72e4aa5e09308d519b0ddbae8d3d300772695` |
 | Node cross-family | 165 passed | `21.35s` | `24.88s` | `72ed27dac7b817100d0c3d9b3829c3c150e391aa2aecbdba924128a17275c2bb` |
-| Complete Linux | 16603 passed, 14 skipped | `462.43s` | `468.32s` | `d6f89a8d8964b03f1a3c083a27748469abe09717ad16f6bebc073119c25308a3` |
+| Complete Linux | 16603 passed, 14 skipped | `458.84s` | not separately recorded | `c694a28f4e72882b5642e511a18b04b0cd0b65eb3401ecd1ca20de57972f5a28` |
 
 The relevant/full ordered ID hashes remain
 `bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe` and
@@ -926,8 +926,8 @@ Raw-property audits passed on the relevant, full, target and every Node order:
 four family PIDs, ordinal sets `1..62/65/17/21`, direct fsync sums `14/43`, one
 receipt owner/value `19`, healthy totals `33/62`, qualification starts
 `1/1/1/1/1/3/0`, qualification fsyncs `0/0/0/0/4/0/0`, and no duplicate,
-missing, unexpected-owner or extra property. Full testcase sum is `422.086s`;
-XML suite time is `462.190s`. Timing values are observations, not acceptance
+missing, unexpected-owner or extra property. The final cross-version-fix XML
+suite time is `458.616s`. Timing values are observations, not acceptance
 thresholds or speedup/critical-path claims.
 
 Supplementary fresh gates passed:
@@ -941,7 +941,8 @@ Supplementary fresh gates passed:
 - seven-case/six-entrypoint direct matrix, retaining all 21 success/missing-argv/
   corrupt-input subprocess streams and exact terminal/dev diagnostics;
 - locked uv sync, Node `v26.5.0`, locked release codec build/install and actual
-  bundled-path availability; installed/release SHA-256 remains
+  bundled-path availability; the assertion differential additionally passes on
+  installed Node 18, 20, 22, 24, 25, and 26; installed/release SHA-256 remains
   `4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`;
 - Cargo 1, DOM 35, JS smoke directly plus 7 pytest wrappers, previous-worker
   selection 963, packaging/version 110, global Ruff lint/format (521 files),
@@ -954,29 +955,29 @@ Supplementary fresh gates passed:
 ### Current mutation and manifest authority
 
 All 71 names were rerun in declared order, partitioned `14/16/41`, producing
-`16/17/53 = 86` executions. Every execution reached its exact registered
+`16/17/54 = 87` executions. Every execution reached its exact registered
 sentinel, rejected masking, restored bytes/SHA-256/binary diff/NUL status and
 passed its registered recovery command. The separate raw-result re-audit
-covered 154 XML files; the seven representative executions remain exact.
-The previous 75-execution evidence is historical, not reused for this runtime.
+covered 156 XML files; the seven representative executions remain exact.
+The previous 75/86-execution evidence is historical, not reused for this runtime.
 
 The existing final-drain recipe now shortens the real checkpoint allowance; the
-boundary-turn recipe batches real due callbacks. Eleven added internal variants
+boundary-turn recipe batches real due callbacks. Twelve added internal variants
 cover buffered fatal admission, immediate/interval quiescence, callback order,
-strict equal, primitive SameValue, Date, array extras, prototype identity, Proxy
-inspection and RegExp values. The canonical names, typed owners, partition,
+strict equal, primitive SameValue, Date values, runtime-native invalid-Date
+parity, array extras, prototype identity, Proxy inspection and RegExp values. The canonical names, typed owners, partition,
 anti-mask companions and restoration rules remain unchanged.
 
 | Authority | SHA-256 |
 |---|---|
 | Task 3 mutation results | `86d4420300d6c635e6dec1d395d58a32a112658be19b650647270106d4ec77b1` |
-| Task 4 mutation results | `87c7e7dd75a656441244d13f04e3373a793560ad08d72c81202e8cde2e6bf73a` |
-| Task 5 mutation results | `24b28eb44b9e109c682afa301a047538d87692607cf421219635dfcc2e5c75d1` |
-| Registry manifest | `b05a674ff5afe0884df896beede53981f9376d6dbd308ef0dda6a5faf6b0e945` |
-| Source manifest | `4e12ecea77d141014df3f7b95f46ede556a10b492884615b60df88e1ceb1ec74` |
-| Recursive artifact manifest | `fcba10c3c845734bb275cf15df7a24097e1aec2e9fd6bc30f2c8ef2e88ea6747` |
+| Task 4 mutation results | `799c658ff0a2142e3516a3357055c44279d63d1bd4469fd54a6a15c21a6e882a` |
+| Task 5 mutation results | `e721994749e093ed69d9d0aa77b0ce060a7ebecb8757b1df228360cbe467913a` |
+| Registry manifest | `38c981aeb3bc8fc1674e389649ae82ccf6d89a7e0f87afaf28e9b3b6c2c61181` |
+| Source manifest | `54449ec9547baeb543df3e2e321d2943b662443dac3cfe64dbda9a562fcaf01b` |
+| Recursive artifact manifest | `535d1336d73ca292c31849ec0e73d1dff7b35cdf52004eabb2ef8fc6e005da9c` |
 | Representative executions | `3e07d99705451c19989331841afb71f4e2f4240c084258747b59ce09a7f2ee47` |
-| Mutation summary / raw XML hashes | `3c19ac1b1a3b58098f16b64b6ce20ed5571efb3f1544dfd212c9410ca12eed06` |
+| Mutation summary / raw XML hashes | `a6e131c939e3b5f044f9af139d66afe4674a75758d96baab50857470dca274e1` |
 | Full timing summary | `3f15e324acb77057b3ef901ab5a1507cf27c2455b089b34f10c3bf9ab9ad93b3` |
 
 The final external collector/registry/restoration/manifest suites pass 61 checks.
@@ -992,7 +993,7 @@ alter repository executables or mask a failed runtime gate.
 | Path | SHA-256 |
 |---|---|
 | `tests/fixtures/fleetsharing_page.cjs` | `512a5736f31ea0f483ffe5037ba670a4c65ac6db0b1f7bd52497df643cb6f78a` |
-| `tests/fixtures/page_scenario_worker.cjs` | `71280b400c8c57fdfb8bcd47148bbda5bad6adfd99a9ff3e3dcb95164956e3a7` |
+| `tests/fixtures/page_scenario_worker.cjs` | `6d84b944f1540e1e76a9e2cc9339c1d92544768829b4dd79581ecfdc7f459463` |
 | `tests/fixtures/preview_capture_sessions.cjs` | `25f872cf26769681dbce85e2809883190b0d76fd1f02e8147c0d32fd1f2d9691` |
 | `tests/fixtures/preview_dev_capture.cjs` | `d1bb23f5d0dc4b1c33921819a5a12d6a6adb98f22f182ee58f1723530d36cdc5` |
 | `tests/fixtures/preview_group_backward.cjs` | `2eddb4cb6d2aa7cbca3e5e304ebc74f4bbab7d40c4228bf28be7ef4e44a4be1b` |
@@ -1015,13 +1016,16 @@ The work remains test-only and preserves the real fixture bodies, direct CLI
 contracts, existing Python worker lifecycle and canonical receipt ownership.
 No consolidation, retry, target host-import or production change was introduced.
 
-Reviewer focus is the one-callback yield, fourth-checkpoint/final-query cutoff,
+Reviewer focus was the one-callback yield, fourth-checkpoint/final-query cutoff,
 fatal admission fence versus buffered input, and assertion/proxy inspection.
-The four supplied Important findings are addressed; independent scoped rereview
-is still pending. This local self-review does not certify maintainer approval.
-Hosted Ubuntu/Windows acceptance, publication and timing attribution remain open.
-No subagents, remote/API operation, push, PR, dispatch/rerun, merge, release or
-installation into the user application was performed.
+An independent evidence review approved the freeze. Independent whole-branch
+review reproduced those four boundaries, then its scoped rereview identified the
+remaining Node-version-dependent invalid-Date behavior. That residual was
+corrected test-first and verified across installed Node 18, 20, 22, 24, 25, and
+26 before the complete suite and mutation matrix were rerun. Hosted Ubuntu/Windows
+acceptance, publication and timing attribution remain open. No remote/API
+operation, push, PR, dispatch/rerun, merge, release or installation into the user
+application was performed.
 
 ## Publication stop and hosted evidence
 
@@ -1048,9 +1052,9 @@ business PIDs, 165 requests, the all-205 62-fsync endpoint, exact order
 independence, and its 16-recipe mutation slice. The historical Task 5 record proves
 its then-current 71-recipe/75-execution mutation matrix, direct compatibility, exact local
 16,617 outcome and skips, final properties, protected hashes, and exact 17-path
-scope. Task 6 additionally records local polish, fresh verification and frozen-head
-separation. It does not claim independent maintainer approval, publication or
-Stage B hosted acceptance.
+scope. Task 6 additionally records local polish, fresh verification, independent
+evidence and whole-branch review, the resolved cross-version residual, and
+frozen-head separation. It does not claim publication or Stage B hosted acceptance.
 
 **LOCAL CONCLUSION:** Stage B preserves all 205 existing target identities and
 all 12 existing helper identities, adds exactly eight approved identities,

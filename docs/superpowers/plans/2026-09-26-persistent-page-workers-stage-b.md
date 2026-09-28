@@ -13,26 +13,29 @@
 ## Execution status — Task 6 local publication stop
 
 Tasks 1–5 and the repeated Task 6 local gates are complete at executable head
-`a5bcadf629755bd44863a8ed6471400f41727565`
-(`test: harden persistent worker scheduling`). The supplied final whole-branch
-review required four runtime corrections after the historical `a703f8d2` /
-`00a595c6` freeze: callback-level checkpoints, terminal fatal admission, bounded
-completion draining, and strict VM-owned assertion semantics. They are now
-implemented with internal witnesses in the existing seven qualification IDs.
+`a187a24b8729ef253e788ddbd06b3c2d61fe4c19`
+(`test: preserve assertions on older Node runtimes`). The supplied final
+whole-branch review required callback-level checkpoints, terminal fatal
+admission, bounded completion draining, and strict VM-owned assertion semantics.
+A scoped rereview then found version-dependent native invalid-Date equality;
+the worker now calibrates that decision from the current native assert behavior,
+and ignores RegExp flag getters absent on older Node versions. These contracts
+are covered by internal witnesses in the existing seven qualification IDs.
 
 Changed-diff `polish-core --fix` selected no additional executable fix. Every
-required Task 5/6 gate was run fresh on the new head, including all 71 canonical
-mutation recipes / 86 executions with exact restoration, full 16,603 passes plus
-14 expected Linux skips, all four orders and raw-property audits. Results and
-hashes are recorded in the results ledger and local Task 6 report.
+required Task 5/6 gate was run fresh on the final head, including all 71 canonical
+mutation recipes / 87 executions with exact restoration, full 16,603 passes plus
+14 expected Linux skips, raw-property audits, and the strict assertion differential
+on installed Node 18, 20, 22, 24, 25, and 26. Results and hashes are recorded in
+the results ledger and local Task 6 report.
 
 The three-document evidence update is bound to a direct child with subject
-`test: refreeze persistent page worker evidence`. Staging and commit remain
-parent-owned because this subagent policy denies Git mutations. The executable
-head is not the evidence head; its literal SHA is recorded locally after creation.
+`test: refreeze cross-version worker evidence`. The executable head is not the
+evidence head; its literal SHA is recorded locally after creation.
 
-Task 6 Step 3 remains open for scoped independent rereview of the supplied
-findings. Self-review is complete and does not certify independent approval.
+Task 6's independent evidence review approved the freeze. The independent
+whole-branch review's four findings and its cross-version residual have been
+resolved and rerun locally.
 Steps 7–10 remain unexecuted: no remote operation, push, PR, Actions run/rerun or
 candidate artifact collection is authorized. Historical task records below keep
 the original sequence; the current cutoff and final local evidence supersede the
@@ -91,14 +94,18 @@ Fatal output is single-write bounded stderr, with independent status-70 exit
 scheduled by a 100 ms fallback timer; it never waits for a following request or EOF.
 The strict assertion facade remains VM-owned; native differential and safe
 accessor/proxy witnesses extend cleanup-success without changing fixture assertions.
+Invalid-Date equality is calibrated from native `node:assert/strict` as one
+primitive boolean per process because Node 22/24 and Node 26 differ; RegExp flag
+getters are discovered from the active runtime.
 
-The canonical registry stays at `14/16/41 = 71` names and typed owners. Eleven
-internal variants extend the previous 75 to 86 executions: one buffered-admission,
-two recurring-timer cutoff, one callback-order, and seven strict assertion defects.
+The canonical registry stays at `14/16/41 = 71` names and typed owners. Twelve
+internal variants extend the previous 75 to 87 executions: one buffered-admission,
+two recurring-timer cutoff, one callback-order, and eight strict assertion defects,
+including native invalid-Date parity.
 `rejection-boundary-turn` now batches real due callbacks, and
 `rejection-final-timer-drain` shortens the real checkpoint allowance. Every recipe
 and variant retains exact sentinels, anti-masking checks and byte/hash/diff/status
-restoration. All phase records were rerun in declared order (`16/17/53`
+restoration. All phase records were rerun in declared order (`16/17/54`
 executions), not retained from the prior executable freeze.
 
 ## Exact File Structure and Ownership
@@ -3577,9 +3584,10 @@ results, made module isolation cumulative across every CommonJS execution,
 made the host-import recipe retain exact `screenshot_dom.cjs` cache/child paths,
 and split the String witness into `detachJson` and `encodeJson` variants. Four
 additional internal executions produced the historical 75-execution matrix.
-The final-review correction adds eleven internal executions and reruns all 71
-canonical recipes as 86 executions against `a5bcadf629755bd44863a8ed6471400f41727565`,
-as specified in the current cutoff/mutation section and results ledger.
+The final-review correction and cross-version residual add twelve internal
+executions and rerun all 71 canonical recipes as 87 executions against
+`a187a24b8729ef253e788ddbd06b3c2d61fe4c19`, as specified in the current
+cutoff/mutation section and results ledger.
 
 - [x] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
 
@@ -3792,7 +3800,7 @@ git add \
   docs/ci-persistent-page-workers-stage-b-results.md
 git diff --cached --name-only
 git diff --cached --check
-git commit -m "test: refreeze persistent page worker evidence"
+git commit -m "test: refreeze cross-version worker evidence"
 EVIDENCE_HEAD=$(git rev-parse HEAD)
 test "${#EVIDENCE_HEAD}" -eq 40
 test -z "$(git status --porcelain=v2 --untracked-files=all)"
