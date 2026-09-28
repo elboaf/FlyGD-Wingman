@@ -3,17 +3,152 @@
 import copy
 import inspect
 import json
-import subprocess
+import os
+import shutil
 import threading
 from pathlib import Path
 
 import pytest
 
+from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 from tests.test_api import make_api
 from tests.test_preview_host import _batch_hotkey_host, _FakeLibs, _FakeUser32
 from tests.test_preview_wiring import FakeHost
 from wingman import settings
 from wingman.preview import gestures, host
+
+ROOT = Path(__file__).resolve().parents[1]
+WEB = ROOT / "wingman/web"
+ZERO_CLEANUP = {
+    "host_timer_handles": 0,
+    "host_callbacks": 0,
+    "active_rejection_listeners": 0,
+    "pending_rejection_records": 0,
+    "retained_realms": 0,
+}
+GROUP_DEV_PREFIXES = (
+    "DEV api.create_preview_cycle_group( Backward test )",
+    "DEV api.set_preview_cycle_group_bind( ",
+    "DEV api.set_preview_cycle_group_prev_bind( ",
+    "DEV api.set_preview_cycle_group_prev_bind( stale Ctrl+F4 )",
+    "DEV api.set_preview_cycle_group_prev_bind( ",
+)
+GROUP_SOURCE_SENTINEL = "stage-b mutation realm-group-source-reexecution"
+GROUP_MATRIX_SENTINELS = (
+    "stage-b mutation group-dialog-owner-matrix",
+    "stage-b mutation group-own-dialog-matrix",
+)
+
+
+def _family_worker_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+    family: str,
+    pages: dict[str, object],
+):
+    manifest = tmp_path_factory.mktemp(f"{family}-page-worker") / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {"version": 1, "pages": pages},
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/page_scenario_worker.cjs"),
+            "--worker",
+            family,
+            str(WEB),
+            str(manifest),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+@pytest.fixture(scope="session")
+def group_backward_page_worker(tmp_path_factory: pytest.TempPathFactory):
+    tree = PageTree()
+    tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+    yield from _family_worker_fixture(
+        tmp_path_factory, "group-backward", {"structural": tree.root}
+    )
+
+
+@pytest.fixture(autouse=True)
+def _record_direct_fsync_calls(request: pytest.FixtureRequest):
+    real_fsync = os.fsync
+    calls = 0
+
+    def counting_fsync(fd: int) -> None:
+        nonlocal calls
+        calls += 1
+        real_fsync(fd)
+
+    os.fsync = counting_fsync
+    try:
+        yield
+    finally:
+        os.fsync = real_fsync
+        nodeid = request.node.nodeid
+        if "test_group_back_api_set_clear_rename_delete" in nodeid:
+            expected = 8
+        elif (
+            "test_group_back_api_refuses_invalid_boundary" in nodeid
+            or "test_group_back_api_save_failure" in nodeid
+        ):
+            expected = 1
+        elif "test_group_direction_writes_serialize" in nodeid:
+            expected = 3
+        elif "test_group_back_survives_unrelated_transaction" in nodeid:
+            expected = 2
+        else:
+            expected = 0
+        assert calls == expected
+        request.node.user_properties.append(("stage_b.direct_fsync_calls", str(calls)))
+
+
+def _record_group_worker(
+    request: pytest.FixtureRequest,
+    worker: NodeScenarioWorker,
+    reply: dict[str, object],
+) -> None:
+    process = worker._proc
+    assert process is not None and process.pid > 0
+    request.node.user_properties.extend(
+        (
+            ("stage_b.worker_family", "group-backward"),
+            ("stage_b.worker_pid", str(process.pid)),
+            ("stage_b.worker_request", str(reply["id"])),
+        )
+    )
+
+
+def _assert_group_diagnostics(
+    scenario: str, diagnostics: list[dict[str, object]]
+) -> None:
+    if scenario != "dev":
+        assert diagnostics == []
+        return
+    logs = [row for row in diagnostics if row["level"] == "log"]
+    assert len(diagnostics) == len(logs) == 5
+    rendered = [str(row["rendered"]) for row in logs]
+    assert rendered[0] == GROUP_DEV_PREFIXES[0]
+    assert rendered[3] == GROUP_DEV_PREFIXES[3]
+    ids = []
+    for index in (1, 2, 4):
+        assert rendered[index].startswith(GROUP_DEV_PREFIXES[index])
+        ids.append(rendered[index].split("( ", 1)[1].split(" ", 1)[0])
+    assert ids[0] == ids[1] == ids[2]
 
 
 @pytest.mark.parametrize(
@@ -416,34 +551,37 @@ def test_named_back_os_refusal_is_reported_without_dispatch():
         "focus-crop-direction",
     ],
 )
-def test_group_backward_page(tmp_path, scenario):
-    from tests.html_tree import PageTree
+def test_group_backward_page(group_backward_page_worker, request, scenario):
     from wingman.preview.labelmarkers import marker_choices
 
-    root = Path(__file__).resolve().parents[1]
-    tree = PageTree()
-    tree.feed((root / "wingman/web/index.html").read_text(encoding="utf-8"))
-    data = tmp_path / "group-backward.json"
-    data.write_text(
-        json.dumps(
-            {"page": tree.root, "choices": marker_choices(), "scenario": scenario}
-        ),
-        encoding="utf-8",
+    choices = json.loads(
+        json.dumps(marker_choices(), ensure_ascii=False, allow_nan=False)
     )
-    result = subprocess.run(
-        [
-            "node",
-            str(root / "tests/fixtures/preview_group_backward.cjs"),
-            str(data),
-            str(root / "wingman/web"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"PASS group backward {scenario}" in result.stdout
+    try:
+        reply = group_backward_page_worker.request(
+            f"preview-group-backward/page/{scenario}",
+            {
+                "protocol": "group-backward",
+                "input": {
+                    "scenario": scenario,
+                    "page": "structural",
+                    "choices": choices,
+                },
+            },
+            timeout=30.0,
+        )
+    except NodeScenarioFailure as error:
+        rendered = str(error)
+        if "business source did not export completion" in rendered:
+            raise AssertionError(GROUP_SOURCE_SENTINEL) from None
+        for sentinel in GROUP_MATRIX_SENTINELS:
+            if sentinel in rendered:
+                raise AssertionError(sentinel) from None
+        raise
+    assert reply["output"] == f"PASS group backward {scenario}"
+    _assert_group_diagnostics(scenario, reply["diagnostics"])
+    assert reply["cleanup"] == ZERO_CLEANUP
+    _record_group_worker(request, group_backward_page_worker, reply)
 
 
 def test_group_back_survives_unrelated_transaction_and_reload():

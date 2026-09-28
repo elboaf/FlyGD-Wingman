@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
 import subprocess
 import threading
@@ -453,14 +454,20 @@ class NodeScenarioWorker:
             "error": str,
             "stack": str,
         }
-        for key, expected in required.items():
+        for key in required:
             if key not in payload:
                 raise _ProtocolError(f"reply missing {key!r}")
-            value = payload[key]
-            if key == "duration_ms":
-                if isinstance(value, bool) or not isinstance(value, expected):
-                    raise _ProtocolError("reply field 'duration_ms' had the wrong type")
-                continue
-            if not isinstance(value, expected):
+
+        if type(payload["id"]) is not int:
+            raise _ProtocolError("reply field 'id' had the wrong type")
+        duration = payload["duration_ms"]
+        if type(duration) not in (int, float):
+            raise _ProtocolError("reply field 'duration_ms' had the wrong type")
+        if duration < 0 or (type(duration) is float and not math.isfinite(duration)):
+            raise _ProtocolError(
+                "reply field 'duration_ms' was not finite and nonnegative"
+            )
+        for key in ("scenario", "ok", "error", "stack"):
+            if not isinstance(payload[key], required[key]):
                 raise _ProtocolError(f"reply field {key!r} had the wrong type")
         return dict(payload)

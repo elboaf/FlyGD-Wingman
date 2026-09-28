@@ -18,7 +18,7 @@ for (const script of ['app.js', 'previews.js', 'fleetsharing.js', 'panel.js', 'd
   vm.runInContext(fs.readFileSync(web + '/' + script, 'utf8'), context);
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
-(async () => {
+const scenarioCompletion = (async () => {
   const api = window.pywebview.api;
   const initial = await api.get_preview_hotkey_state();
   window.onPreviewHotkeys(initial);
@@ -66,4 +66,12 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   reset.sizable.forEach(name => assert.deepEqual([...reset.sizes[name]], [480, 300]));
   assert.ok(reset.geometry_revision > beforeReset.geometry_revision);
   console.log('PASS dev');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+} else {
+  module.exports = scenarioCompletion;
+}

@@ -1,8 +1,8 @@
 """Actual missing-owner API replies through app.js and sharing's watch continuation."""
 
 import json
+import os
 import shutil
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,6 +10,7 @@ import pytest
 
 from tests.fleetsharing_capacity_helpers import maximal_state
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioWorker
 from tests.test_api import make_state
 from tests.test_api_fleetsharing import setup
 from tests.test_fleetsharing_worker import UUID, drive
@@ -18,12 +19,136 @@ from wingman.ui.api import Api
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman/web"
+ZERO_CLEANUP = {
+    "host_timer_handles": 0,
+    "host_callbacks": 0,
+    "active_rejection_listeners": 0,
+    "pending_rejection_records": 0,
+    "retained_realms": 0,
+}
+SHARING_DIAGNOSTIC_SENTINELS = {
+    "reject": "stage-b mutation diagnostics-sharing-reject",
+    "source": "stage-b mutation diagnostics-sharing-source-order",
+}
 
 
 class SharingPageTree(PageTree):
     def handle_data(self, data):
         node = self.stack[-1]
         node["text"] = node.get("text", "") + data
+
+
+def _family_worker_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+    family: str,
+    pages: dict[str, object],
+):
+    manifest = tmp_path_factory.mktemp(f"{family}-page-worker") / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {"version": 1, "pages": pages},
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/page_scenario_worker.cjs"),
+            "--worker",
+            family,
+            str(WEB),
+            str(manifest),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+@pytest.fixture(scope="session")
+def fleetsharing_page_worker(tmp_path_factory: pytest.TempPathFactory):
+    tree = SharingPageTree()
+    tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+    yield from _family_worker_fixture(
+        tmp_path_factory, "fleet-sharing", {"sharing": tree.root}
+    )
+
+
+@pytest.fixture(autouse=True)
+def _record_direct_fsync_calls(request: pytest.FixtureRequest):
+    real_fsync = os.fsync
+    calls = 0
+
+    def counting_fsync(fd: int) -> None:
+        nonlocal calls
+        calls += 1
+        real_fsync(fd)
+
+    os.fsync = counting_fsync
+    try:
+        yield
+    finally:
+        os.fsync = real_fsync
+        assert calls == 0
+        request.node.user_properties.append(("stage_b.direct_fsync_calls", "0"))
+
+
+def _record_fleetsharing_worker(
+    request: pytest.FixtureRequest,
+    worker: NodeScenarioWorker,
+    reply: dict[str, object],
+) -> None:
+    process = worker._proc
+    assert process is not None and process.pid > 0
+    request.node.user_properties.extend(
+        (
+            ("stage_b.worker_family", "fleet-sharing"),
+            ("stage_b.worker_pid", str(process.pid)),
+            ("stage_b.worker_request", str(reply["id"])),
+        )
+    )
+
+
+def _assert_fleetsharing_diagnostics(
+    scenario: str, diagnostics: list[dict[str, object]]
+) -> None:
+    controlled = [
+        row
+        for row in diagnostics
+        if row["level"] == "error"
+        and str(row["rendered"]).startswith("bridge: fleet_sharing_")
+    ]
+    if scenario == "reject":
+        valid = (
+            len(controlled) == 1
+            and str(controlled[0]["rendered"]).startswith(
+                "bridge: fleet_sharing_watch failed"
+            )
+            and controlled[0]["args"][1]["message"] == "controlled bridge failure"
+        )
+        assert valid, SHARING_DIAGNOSTIC_SENTINELS["reject"]
+    elif scenario == "bridge-source-rejection":
+        valid = (
+            len(controlled) == 2
+            and str(controlled[0]["rendered"]).startswith(
+                "bridge: fleet_sharing_start_source failed"
+            )
+            and controlled[0]["args"][1]["message"] == "controlled Start failure"
+            and str(controlled[1]["rendered"]).startswith(
+                "bridge: fleet_sharing_stop_source failed"
+            )
+            and controlled[1]["args"][1]["message"] == "controlled Stop failure"
+        )
+        assert valid, SHARING_DIAGNOSTIC_SENTINELS["source"]
+    else:
+        assert controlled == []
 
 
 def test_missing_worker_watch_returns_unavailable_without_startup(
@@ -119,8 +244,7 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "control-preference-feedback-screenshot",
     ],
 )
-def test_sharing_watch_runtime(tmp_path, scenario):
-    assert shutil.which("node"), "Node is mandatory for the sharing continuation tests"
+def test_sharing_watch_runtime(tmp_path, fleetsharing_page_worker, request, scenario):
     api = Api(make_state(tmp_path, **settings.load()))
     live_api, worker, _client, _store, mono, _timers = setup(tmp_path)
     try:
@@ -176,38 +300,26 @@ def test_sharing_watch_runtime(tmp_path, scenario):
                 "changed": changed,
                 "refusal": refusal,
             }
-        page = SharingPageTree()
-        page.feed((WEB / "index.html").read_text(encoding="utf-8"))
-        fixture = tmp_path / "sharing-page.json"
-        fixture.write_text(
-            json.dumps(
-                {
-                    "page": page.root,
+        reply = fleetsharing_page_worker.request(
+            f"fleet-sharing/page/{scenario}",
+            {
+                "protocol": "fleet-sharing",
+                "input": {
+                    "scenario": scenario,
+                    "page": "sharing",
                     "missing": api.fleet_sharing_watch(True),
                     "live": live_api.fleet_sharing_state(),
                     "older": older,
                     "rejected": rejected,
                     "preference_case": preference_case,
-                }
-            ),
-            encoding="utf-8",
+                },
+            },
+            timeout=20.0,
         )
-        result = subprocess.run(
-            [
-                "node",
-                str(ROOT / "tests/fixtures/fleetsharing_page.cjs"),
-                str(fixture),
-                scenario,
-                str(WEB),
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=20,
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert f"PASS {scenario}" in result.stdout
+        assert reply["output"] == f"PASS {scenario}"
+        _assert_fleetsharing_diagnostics(scenario, reply["diagnostics"])
+        assert reply["cleanup"] == ZERO_CLEANUP
+        _record_fleetsharing_worker(request, fleetsharing_page_worker, reply)
     finally:
         assert live_api.shutdown_fleet_sharing()
         assert api.shutdown_fleet_sharing()
