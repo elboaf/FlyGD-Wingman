@@ -176,6 +176,8 @@ const SCENARIOS_BY_PROTOCOL = Object.freeze({
   ])
 });
 const QUALIFICATION_MODES = new Set([
+  'callback-order', 'callback-rejection', 'recurring-immediate',
+  'overdue-interval', 'assertions',
   'realm', 'clean', 'resources', 'inventory', 'error', 'accessor-error',
   'hostile-native-error', 'long-stack-rejection',
   'hostile-oversized-serialization', 'primitive', 'null', 'hostile', 'proxy',
@@ -194,11 +196,27 @@ const TARGET_NAMES = Object.freeze([
   'screenshot_dom.cjs'
 ]);
 
+let admissionClosed = false;
+let inputLines = null;
+
 function fatalProtocol(message, error = null) {
-  const detail = error && isNativeError(error)
-    ? message + ': ' + hostString(error.stack || error.message)
-    : message;
-  process.stderr.write(detail.slice(0, 65536) + '\n', () => process.exit(70));
+  if (admissionClosed) return;
+  admissionClosed = true;
+  // Closing readline does not discard its async iterator queue. Every admission
+  // and publication path also checks the terminal flag, before doing any work.
+  if (inputLines !== null) inputLines.close();
+  process.stdin.pause();
+  // A blocked stderr pipe must not postpone process death or reopen admission.
+  setTimeout(() => process.exit(70), 100);
+  let detail = message;
+  try {
+    if (error && isNativeError(error)) {
+      detail += ': ' + hostString(error.stack || error.message);
+    }
+    process.stderr.write(detail.slice(0, 65536) + '\n', () => process.exit(70));
+  } catch (_error) {
+    process.exit(70);
+  }
 }
 
 function startupFailure(message, error = null) {
@@ -342,6 +360,53 @@ const result = {
     : null
 };
 let completion = Promise.resolve(result);
+if (data.mode === 'assertions') {
+  result.assertions = Function('assert', data.source)(require('node:assert/strict'));
+}
+if (data.mode === 'callback-order') {
+  const order = [];
+  setImmediate(() => {
+    order.push('first');
+    Promise.resolve().then(() => order.push('microtask'));
+  });
+  completion = new Promise(resolve => setImmediate(() => {
+    order.push('second');
+    result.order = order;
+    resolve(result);
+  }));
+}
+if (data.mode === 'callback-rejection') {
+  let rejected;
+  setImmediate(() => { rejected = Promise.reject(new Error('callback rejection')); });
+  completion = new Promise(resolve => setImmediate(() => {
+    rejected.catch(() => {});
+    resolve(result);
+  }));
+}
+if (data.mode === 'recurring-immediate' || data.mode === 'overdue-interval') {
+  let calls = 0;
+  let interval;
+  function recurring() {
+    console.info('recurring callback', ++calls);
+    // Bound the defective-scheduler witness too, so RED is not a hung child.
+    if (calls > 16) {
+      clearInterval(interval);
+      throw new Error('recurrence exceeded completion allowance');
+    }
+    if (data.mode === 'recurring-immediate') setImmediate(recurring);
+    else {
+      const until = Date.now() + 2;
+      while (Date.now() < until) { /* Make the next interval overdue. */ }
+    }
+  }
+  if (data.mode === 'recurring-immediate') setImmediate(recurring);
+  else {
+    interval = setInterval(recurring, 1);
+    // Ensure the interval is already due when the settled body is first polled.
+    const until = Date.now() + 2;
+    while (Date.now() < until) {}
+  }
+}
 if (data.mode === 'error') throw new Error('synthetic Error failure');
 if (data.mode === 'accessor-error') {
   const accessorError = new TypeError('unused accessor message');
@@ -572,6 +637,35 @@ const BOOTSTRAP = String.raw`
   const safeHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
   const safeIsPrototypeOf = Function.call.bind(Object.prototype.isPrototypeOf);
   const safeReflectGet = Reflect.get.bind(Reflect);
+  const safeOwnKeys = Reflect.ownKeys.bind(Reflect);
+  const safeObjectIs = Object.is.bind(Object);
+  const safeDateValue = Function.call.bind(Date.prototype.getTime);
+  const safeDatePrototype = Date.prototype;
+  const safeRegExpPrototype = RegExp.prototype;
+  const safeRegExpSource = Function.call.bind(
+    Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get
+  );
+  const safeRegExpFlags = [
+    'hasIndices', 'global', 'ignoreCase', 'multiline', 'dotAll',
+    'unicode', 'unicodeSets', 'sticky'
+  ].map(key => Function.call.bind(Object.getOwnPropertyDescriptor(RegExp.prototype, key).get));
+  const assertionProxies = new WeakSet();
+  const SafeProxy = Proxy;
+  const safeRevocable = Proxy.revocable.bind(Proxy);
+  // All request proxies originate here. Do not probe them through reflection:
+  // even a well-behaved trap can forge an assertion or run a getter.
+  globalThis.Proxy = function Proxy(target, handler) {
+    if (!new.target) throw new TypeError('Proxy requires new');
+    const proxy = new SafeProxy(target, handler);
+    safeWeakSetAdd(assertionProxies, proxy);
+    return proxy;
+  };
+  globalThis.Proxy.revocable = function(target, handler) {
+    const revocable = safeRevocable(target, handler);
+    safeWeakSetAdd(assertionProxies, revocable.proxy);
+    return revocable;
+  };
+
   const SafeError = Error;
   const FAILURE_NAME_LIMIT = 256;
   const FAILURE_MESSAGE_LIMIT = 8192;
@@ -627,6 +721,7 @@ const BOOTSTRAP = String.raw`
   const diagnostics = [];
   let domsWerePristine = true;
   let settled = false;
+  const COMPLETION_CHECKPOINTS = 4;
   let boundaryTurns = 0;
   let completionValue = null;
   let completionFailure = null;
@@ -905,31 +1000,82 @@ const BOOTSTRAP = String.raw`
     return runner.next(source).value;
   }
 
-  function deeplyEqual(actual, expected) {
-    if (actual === expected) return true;
-    if (safeArrayIsArray(actual) || safeArrayIsArray(expected)) {
-      if (!safeArrayIsArray(actual) || !safeArrayIsArray(expected)
-          || actual.length !== expected.length) return false;
-      for (let index = 0; index < actual.length; index++) {
-        if (!deeplyEqual(actual[index], expected[index])) return false;
-      }
-      return true;
+  function assertionData(value) {
+    if (safeWeakSetHas(assertionProxies, value)) {
+      throw new SafeError('assertion cannot inspect a Proxy');
     }
+    const keys = safeOwnKeys(value);
+    if (keys.length > 10000) throw new SafeError('assertion exceeded key limit');
+    const data = new Map();
+    for (const key of keys) {
+      const descriptor = safeGetOwnPropertyDescriptor(value, key);
+      if (!descriptor || !descriptor.enumerable) continue;
+      if (!safeHasOwn(descriptor, 'value')) {
+        throw new SafeError('assertion cannot inspect an accessor');
+      }
+      data.set(key, descriptor.value);
+    }
+    return data;
+  }
+
+  function assertionPrototype(value) {
+    const prototype = safeGetPrototypeOf(value);
+    let depth = 0;
+    for (let parent = prototype; parent !== null; parent = safeGetPrototypeOf(parent)) {
+      if (safeWeakSetHas(assertionProxies, parent) || ++depth > 64) {
+        throw new SafeError('assertion cannot inspect this prototype chain');
+      }
+    }
+    return prototype;
+  }
+
+  function deeplyEqual(actual, expected, left = [], right = []) {
+    if (left.length > 64) throw new SafeError('assertion exceeded depth limit');
+    if (safeWeakSetHas(assertionProxies, actual)
+        || safeWeakSetHas(assertionProxies, expected)) {
+      throw new SafeError('assertion cannot inspect a Proxy');
+    }
+    if (safeObjectIs(actual, expected)) return true;
     if (!actual || !expected || typeof actual !== 'object'
         || typeof expected !== 'object') return false;
-    const actualKeys = safeKeys(actual);
-    const expectedKeys = safeKeys(expected);
-    if (actualKeys.length !== expectedKeys.length) return false;
-    for (const key of actualKeys) {
-      if (!safeHasOwn(expected, key) || !deeplyEqual(actual[key], expected[key])) {
-        return false;
+    if (assertionPrototype(actual) !== assertionPrototype(expected)) return false;
+    const actualArray = safeArrayIsArray(actual);
+    if (actualArray !== safeArrayIsArray(expected)) return false;
+    if (actualArray && actual.length !== expected.length) return false;
+    if (safeIsPrototypeOf(safeDatePrototype, actual)) {
+      if (!safeObjectIs(safeDateValue(actual), safeDateValue(expected))) return false;
+    }
+    if (safeIsPrototypeOf(safeRegExpPrototype, actual)) {
+      if (safeRegExpSource(actual) !== safeRegExpSource(expected)) return false;
+      for (const flag of safeRegExpFlags) {
+        if (flag(actual) !== flag(expected)) return false;
+      }
+      if (!safeObjectIs(actual.lastIndex, expected.lastIndex)) return false;
+    }
+    const actualData = assertionData(actual);
+    const expectedData = assertionData(expected);
+    if (actualData.size !== expectedData.size) return false;
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] === actual || right[index] === expected) {
+        return left[index] === actual && right[index] === expected;
       }
     }
-    return true;
+    safeArrayPush(left, actual);
+    safeArrayPush(right, expected);
+    try {
+      for (const [key, value] of actualData) {
+        if (!expectedData.has(key)
+            || !deeplyEqual(value, expectedData.get(key), left, right)) return false;
+      }
+      return true;
+    } finally {
+      safeArrayPop(left);
+      safeArrayPop(right);
+    }
   }
   const assertFacade = Object.freeze({
     equal(actual, expected, message) {
-      if (actual !== expected) throw new SafeError(message || 'values were not equal');
+      if (!safeObjectIs(actual, expected)) throw new SafeError(message || 'values were not equal');
     },
     deepEqual(actual, expected, message) {
       if (!deeplyEqual(actual, expected)) {
@@ -1215,26 +1361,27 @@ const BOOTSTRAP = String.raw`
     virtualNow = now;
     const mailbox = safeParse(mailboxJson);
     if (mailbox.length && !completionFailure) completionFailure = mailbox[0];
-    const due = [];
-    for (const entry of timers.entries()) {
-      if (entry[1].due <= now) safeArrayPush(due, entry);
-    }
-    let dispatchedDueTimer = false;
-    for (const [id, timer] of due) {
-      if (!timers.has(id)) continue;
-      dispatchedDueTimer = true;
-      if (timer.interval) timer.due = now + timer.interval;
-      else timers.delete(id);
-      try { timer.callback(); }
-      catch (error) { completionFailure ||= failure(error); }
-    }
-    if (dispatchedDueTimer) {
-      boundaryTurns = 0;
+    // Settlement starts a fixed drain budget, not a quiescence wait. Each poll
+    // consumes the previous host checkpoint before choosing at most one callback.
+    // After four post-settlement yields, the next poll only queries and cleans up.
+    if (!settled || boundaryTurns < COMPLETION_CHECKPOINTS) {
+      if (settled) boundaryTurns += 1;
+      let next = null;
+      for (const entry of timers.entries()) {
+        if (entry[1].due <= now && (next === null || entry[1].due < next[1].due)) {
+          next = entry;
+        }
+      }
+      // Map insertion order breaks equal-deadline ties by registration ID.
+      if (next !== null) {
+        const [id, timer] = next;
+        if (timer.interval) timer.due = now + timer.interval;
+        else timers.delete(id);
+        try { timer.callback(); }
+        catch (error) { completionFailure ||= failure(error); }
+      }
       return null;
     }
-    if (!settled) return null;
-    boundaryTurns += 1;
-    if (boundaryTurns < 2) return null;
     const cleanupReceipt = cleanup();
     const failed = completionFailure !== null;
     const reply = safeCreate(null);
@@ -1368,6 +1515,7 @@ function argvFor(protocol, scenario) {
 }
 
 async function executeRequest(request) {
+  if (admissionClosed) return null;
   const started = performance.now();
   const input = request.payload.input;
   const protocol = request.payload.protocol;
@@ -1416,6 +1564,7 @@ async function executeRequest(request) {
   Object.assign(context, seedGlobals);
   const rejectionMailbox = [];
   const captureRejection = reason => {
+    if (admissionClosed) return;
     try {
       rejectionMailbox.push(
         serializeOpaqueVmFailure(context, failureSerializerSlot, reason)
@@ -1430,7 +1579,7 @@ async function executeRequest(request) {
     const poll = vm.runInContext(BOOTSTRAP, context, {
       filename: 'page-worker-bootstrap.vm.js'
     });
-    while (true) {
+    while (!admissionClosed) {
       let serialized;
       try {
         serialized = poll(
@@ -1441,6 +1590,7 @@ async function executeRequest(request) {
         fatalProtocol('request poll failed', error);
         return null;
       }
+      if (admissionClosed) return null;
       if (serialized !== null) {
         activeRequest = null;
         process.removeListener('unhandledRejection', captureRejection);
@@ -1504,6 +1654,7 @@ async function executeRequest(request) {
 }
 
 async function serveLine(line) {
+  if (admissionClosed) return;
   let request;
   try {
     request = hostJsonParse(line);
@@ -1518,7 +1669,7 @@ async function serveLine(line) {
     return;
   }
   const serialized = await executeRequest(request);
-  if (serialized === null) return;
+  if (admissionClosed || serialized === null) return;
   process.stdout.write(serialized + '\n', () => {
     if (request.payload.input.mode === 'late-success') {
       Promise.reject(new Error('late unhandled rejection after published success'));
@@ -1527,10 +1678,11 @@ async function serveLine(line) {
   await new Promise(resolve => hostSetImmediate(resolve));
 }
 
-const inputLines = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+inputLines = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
 (async () => {
   try {
     for await (const line of inputLines) {
+      if (admissionClosed) break;
       await serveLine(line);
     }
   } finally {

@@ -79,6 +79,12 @@ MUTATION_SENTINELS = {
     "marker-root": "stage-b mutation marker-retained-realm-release",
     "business-retention": "stage-b mutation business-failure-process-retention",
     "fatal-no-replay": "stage-b mutation protocol-fatal-no-replay",
+    "callback-order": "stage-b mutation callback-microtask-checkpoint",
+    "callback-rejection": "stage-b mutation callback-rejection-checkpoint",
+    "recurring-immediate": "stage-b mutation completion-immediate-cutoff",
+    "overdue-interval": "stage-b mutation completion-interval-cutoff",
+    "assertions": "stage-b mutation strict-assertion-semantics",
+    "fatal-admission": "stage-b mutation fatal-terminal-admission",
 }
 
 
@@ -864,6 +870,165 @@ def _run_direct_cli_matrix(inputs: QualificationInputs) -> None:
             assert corrupt_result.stderr
 
 
+# The native subprocess is an independent oracle, not a second facade.
+ASSERTION_DIFFERENTIAL_SOURCE = r"""
+const rows = [];
+function check(name, callback) {
+  try { callback(); rows.push([name, true]); }
+  catch (_) { rows.push([name, false]); }
+}
+check("equal-zero-sign", () => assert.equal(+0, -0));
+check("equal-nan", () => assert.equal(NaN, NaN));
+check("deep-zero-sign", () => assert.deepEqual({n: +0}, {n: -0}));
+check("deep-nan", () => assert.deepEqual([NaN], [NaN]));
+check("date-same", () => assert.deepEqual(new Date(1), new Date(1)));
+check("date-different", () => assert.deepEqual(new Date(1), new Date(2)));
+check("date-invalid", () => assert.deepEqual(new Date(NaN), new Date(NaN)));
+check("regexp-same", () => assert.deepEqual(/abc/gi, /abc/gi));
+check("regexp-source", () => assert.deepEqual(/abc/g, /abd/g));
+check("regexp-flags", () => assert.deepEqual(/abc/g, /abc/i));
+check("regexp-last-index", () => {
+  const a = /abc/g; a.lastIndex = 1; assert.deepEqual(a, /abc/g);
+});
+check("array-extra", () => assert.deepEqual(Object.assign([1], {x: 2}), [1]));
+check("array-extra-same", () => assert.deepEqual(
+  Object.assign([1], {x: {n: NaN}}), Object.assign([1], {x: {n: NaN}})
+));
+check("array-hole", () => assert.deepEqual([,], [undefined]));
+check("array-length", () => assert.deepEqual([], [,]));
+check("object-prototype", () => assert.deepEqual(Object.create(null), {}));
+check("array-prototype", () => {
+  const a = []; Object.setPrototypeOf(a, null); assert.deepEqual(a, []);
+});
+check("shared-prototype", () => {
+  const proto = {parent: true};
+  assert.deepEqual(Object.assign(Object.create(proto), {a: 1}),
+    Object.assign(Object.create(proto), {a: 1}));
+});
+check("enumerable-symbol", () => {
+  const key = Symbol("key"); assert.deepEqual({[key]: 1}, {});
+});
+check("non-enumerable", () => assert.deepEqual(
+  Object.defineProperty({}, "ignored", {value: 1}), {}
+));
+check("cycle-same", () => {
+  const a = {x: 1}; a.self = a; const b = {x: 1}; b.self = b;
+  assert.deepEqual(a, b);
+});
+check("cycle-different", () => {
+  const a = {x: 1}; a.self = a; const b = {x: 2}; b.self = b;
+  assert.deepEqual(a, b);
+});
+check("nested-fixture", () => assert.deepEqual(
+  {applied: true, persisted: true, error: null, rows: [["Alice", [480, 300]]]},
+  {applied: true, persisted: true, error: null, rows: [["Alice", [480, 300]]]}
+));
+check("nested-fixture-different", () => assert.deepEqual(
+  {rows: [["Alice", [480, 300]]]}, {rows: [["Alice", [481, 300]]]}
+));
+return rows;
+"""
+
+
+def _assert_strict_facade(worker: NodeScenarioWorker) -> None:
+    node = shutil.which("node")
+    assert node is not None
+    source = ASSERTION_DIFFERENTIAL_SOURCE
+    native = subprocess.run(
+        [
+            node,
+            "-e",
+            'const assert = require("node:assert/strict");'
+            + 'process.stdout.write(JSON.stringify(Function("assert", '
+            + json.dumps(source)
+            + ")(assert)));",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    expected = json.loads(native.stdout)
+    assert native.stderr == ""
+    assert [row for row in expected if row[0] == "equal-zero-sign"] == [
+        ["equal-zero-sign", False]
+    ]
+    assert [row for row in expected if row[0] == "equal-nan"] == [["equal-nan", True]]
+    actual = _qualification_request(
+        worker, "saved-layouts", "assertions", source=source
+    )
+    _assert_mutation(actual["output"]["assertions"] == expected, "assertions")
+    safety = _qualification_request(
+        worker,
+        "saved-layouts",
+        "assertions",
+        source=r"""
+let touched = 0;
+const accessor = Object.defineProperty({}, "value", {
+  enumerable: true, get() { touched++; return 1; }
+});
+const proxy = new Proxy({value: 1}, {
+  ownKeys() { touched++; return ["value"]; }
+});
+const revoked = Proxy.revocable({}, {}); revoked.revoke();
+const rejected = [];
+const inheritedProxy = Object.create(new Proxy({}, {
+  getPrototypeOf() { touched++; return null; }
+}));
+for (const value of [accessor, proxy, new Proxy({}, {}), revoked.proxy, inheritedProxy]) {
+  try { assert.deepEqual(value, {}); rejected.push(false); }
+  catch (_) { rejected.push(true); }
+}
+return {rejected, touched};
+""",
+    )
+    _assert_mutation(
+        safety["output"]["assertions"]
+        == {
+            "rejected": [True, True, True, True, True],
+            "touched": 0,
+        },
+        "assertions",
+    )
+
+
+def _assert_callback_order(worker: NodeScenarioWorker) -> None:
+    ordered = _qualification_request(worker, "saved-layouts", "callback-order")
+    _assert_mutation(
+        ordered["output"]["order"]
+        == [
+            "first",
+            "microtask",
+            "second",
+        ],
+        "callback-order",
+    )
+
+
+def _assert_bounded_completion(worker: NodeScenarioWorker) -> None:
+    process = worker._proc
+    for mode in ("recurring-immediate", "overdue-interval"):
+        try:
+            reply = _qualification_request(worker, "saved-layouts", mode)
+        except NodeScenarioFailure as error:
+            if "recurrence exceeded completion allowance" in str(error):
+                _fail_mutation(mode)
+            raise
+        _assert_mutation(reply["output"]["registered_timer_handles"] > 0, mode)
+        calls = reply["diagnostics"]
+        _assert_mutation(1 <= len(calls) <= 5, mode)
+        assert all(
+            row["args"] == ["recurring callback", index]
+            for index, row in enumerate(calls, 1)
+        )
+        assert reply["cleanup"] == ZERO_CLEANUP
+        assert process is not None and worker._proc is not None
+        assert worker._proc.pid == process.pid
+        clean = _qualification_request(worker, "saved-layouts", "clean")
+        assert clean["cleanup"] == ZERO_CLEANUP and clean["diagnostics"] == []
+        assert worker._proc is not None and worker._proc.pid == process.pid
+
+
 def test_request_cleanup_after_success(
     page_worker_factory, qualification_inputs, request
 ):
@@ -893,6 +1058,9 @@ def test_request_cleanup_after_success(
     assert resources["cleanup"] == ZERO_CLEANUP, (
         "stage-b qualification cleanup-success: retained resources"
     )
+    _assert_callback_order(worker)
+    _assert_bounded_completion(worker)
+    _assert_strict_facade(worker)
     asynchronous = _qualification_request(worker, "saved-layouts", "async-timer")
     assert asynchronous["output"]["async_globals"] is True
     assert asynchronous["diagnostics"] == [
@@ -1151,6 +1319,120 @@ def _request_invalid_payload(worker: NodeScenarioWorker) -> dict[str, object]:
     )
 
 
+def _assert_callback_rejection(worker: NodeScenarioWorker) -> None:
+    node = shutil.which("node")
+    assert node is not None
+    native = subprocess.run(
+        [
+            node,
+            "-e",
+            r"""
+const order = []; let rejected;
+process.on("unhandledRejection", () => order.push("unhandled"));
+process.on("rejectionHandled", () => {});
+setImmediate(() => {
+  order.push("first");
+  rejected = Promise.reject(new Error("callback rejection"));
+  Promise.resolve().then(() => order.push("microtask"));
+});
+setImmediate(() => {
+  order.push("second"); rejected.catch(() => {});
+  setImmediate(() => process.stdout.write(JSON.stringify(order)));
+});
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    assert json.loads(native.stdout) == ["first", "microtask", "unhandled", "second"]
+    assert native.stderr == ""
+    process = worker._proc
+    try:
+        _qualification_request(worker, "saved-layouts", "callback-rejection")
+    except NodeScenarioFailure as error:
+        _assert_mutation("callback rejection" in str(error), "callback-rejection")
+        assert error.reply is not None and error.reply["cleanup"] == ZERO_CLEANUP
+    else:
+        _fail_mutation("callback-rejection")
+    assert process is not None and worker._proc is not None
+    assert worker._proc.pid == process.pid
+    clean = _qualification_request(worker, "saved-layouts", "clean")
+    assert clean["cleanup"] == ZERO_CLEANUP
+    assert worker._proc is not None and worker._proc.pid == process.pid
+
+
+def _assert_fatal_buffered_admission(inputs: QualificationInputs) -> None:
+    node = shutil.which("node")
+    assert node is not None
+    for bad in ("{", _json_text({"id": 1, "scenario": "invalid", "payload": {}})):
+        for source in ("return true;", "while (true) {}"):
+            # A stuck body proves admission, even if death could beat its reply.
+            valid = _json_text(
+                {
+                    "id": 2,
+                    "scenario": "qualification/saved-layouts/assertions",
+                    "payload": {
+                        "protocol": "qualification",
+                        "input": {
+                            "mode": "assertions",
+                            "page": "text",
+                            "source": source,
+                        },
+                    },
+                }
+            )
+            process = subprocess.Popen(
+                [
+                    node,
+                    str(WORKER),
+                    "--worker",
+                    "saved-layouts",
+                    str(WEB),
+                    str(inputs.manifest_for("saved-layouts")),
+                ],
+                cwd=ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            exited = False
+            try:
+                assert process.stdin is not None
+                process.stdin.write(bad + "\n" + valid + "\n")
+                process.stdin.flush()
+                try:
+                    process.wait(timeout=2)
+                    exited = True
+                except subprocess.TimeoutExpired:
+                    pass
+                if not exited:
+                    process.kill()
+                    process.wait(timeout=2)
+                assert process.stdout is not None and process.stderr is not None
+                stdout = process.stdout.read()
+                stderr = process.stderr.read()
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=2)
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+            _assert_mutation(
+                exited and process.returncode == 70 and stdout == "", "fatal-admission"
+            )
+            assert (
+                stderr.count(
+                    "malformed request JSON" if bad == "{" else "invalid request"
+                )
+                == 1
+            )
+            assert len(stderr) <= 65537
+
+
 def test_request_cleanup_after_business_failure(
     page_worker_factory, qualification_inputs, request
 ):
@@ -1192,6 +1474,7 @@ def test_request_cleanup_after_business_failure(
             "stage-b qualification cleanup-failure: process retention violated"
         )
 
+    _assert_callback_rejection(worker)
     _assert_final_timer_failure(worker)
     assert worker._proc is not None and worker._proc.pid == process_a.pid
     _assert_long_stack_failure(worker)
@@ -1281,6 +1564,7 @@ def test_request_cleanup_after_business_failure(
     finally:
         oversized_worker.close()
 
+    _assert_fatal_buffered_admission(qualification_inputs)
     _record_qualification(request, worker_starts=3, fsync_calls=0)
 
 
