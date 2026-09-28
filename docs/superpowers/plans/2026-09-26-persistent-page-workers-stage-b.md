@@ -3488,7 +3488,7 @@ reported overhead and cannot inflate the permanent cleanup-failure property's
 exact three starts.
 
 Qualification found 18 Task 1 edit literals superseded by the implemented
-Task 2–4 source: the four bool-ID recipes,
+Task 2–4 source: the three unmatched bool-ID recipes,
 `schema-bool-duration-discarded`, `schema-missing-fields-discarded`, both new
 family source-reexecution recipes, saved pristine-intrinsics, both
 failure-detachment recipes, all three cleanup-resource recipes, all three
@@ -3499,8 +3499,12 @@ were made to reach their named assertion instead of a timeout, undefined name,
 or another recipe's sentinel. The final String-poison qualification also adds
 exact attribution edits to Task 3's saved context/source recipes. The registry
 retains every approved name, owner, sentinel, order, kind, restoration rule, and
-`14/16/41 = 71` recipe cardinality; three internal variants retain the exact 74
-execution cardinality.
+`14/16/41 = 71` recipe cardinality. Review replaced both counter-only source
+edits with real later-request completion reuse, removed forced module-witness
+results, made module isolation cumulative across every CommonJS execution,
+made the host-import recipe retain exact `screenshot_dom.cjs` cache/child paths,
+and split the String witness into `detachJson` and `encodeJson` variants. Four
+additional internal executions now produce the exact 75-execution matrix.
 
 - [x] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
 

@@ -2,10 +2,9 @@
 
 ## Status
 
-Approved for implementation. Tasks 1–4 are implemented and locally verified;
-Task 5 completion and hosted acceptance remain pending. This document records
-the bounded Stage B design, disposable feasibility evidence, and approved Task 4
-review corrections.
+Approved and locally verified through Task 5. Hosted acceptance remains pending.
+This document records the bounded Stage B design, disposable feasibility
+evidence, and approved Task 4 and Task 5 review corrections.
 
 Stage B changes test architecture only. It replaces 165 one-shot Node launches
 in four Python test files with four family-local, session-scoped workers and
@@ -1262,9 +1261,11 @@ is tied to the named assertion, has an explicit restoration check, and is
 followed by a clean anti-masking run. A failure caused only by leaving the probe
 installed is not evidence.
 
-The canonical registry remains exactly `14/16/41` recipes and 71 names with 74
-executions. Task 5 qualification corrected 18 edit loci whose Task 1 source
-bytes were superseded by the final Task 2–4 implementation: the four bool-ID
+The canonical registry remains exactly `14/16/41` recipes and 71 names. Its
+current review-qualified matrix has 75 executions because the pristine-String
+recipe owns separate `detachJson` and `encodeJson` array-index variants. Task 5
+qualification corrected 18 edit loci whose Task 1 source bytes were superseded
+by the final Task 2–4 implementation: the three unmatched bool-ID
 recipes, `schema-bool-duration-discarded`, `schema-missing-fields-discarded`,
 both new family source-reexecution recipes, the saved pristine-intrinsics
 recipe, both failure-detachment recipes, all three cleanup-resource recipes,
@@ -1276,7 +1277,17 @@ different sentinel. The String-poison correction requires the Task 3 saved
 context and source recipes to attribute the now-earlier hardened failure to
 their own canonical sentinels. These are registry repairs only: names, owners,
 sentinels, declared order, typed probe kinds, and restoration rules are
-unchanged.
+unchanged. Review then removed counter-only source recipes: Fleet Sharing and
+label markers now bypass real `runCommonJS` execution by reusing a prior cached
+completion on a later request, and the unchanged business PASS/source/freshness
+witnesses catch that defect. The three family module-isolation recipes now rely
+only on injecting the actual host `module` object into the business wrapper;
+`moduleWasIsolated` accumulates across every wrapper execution so the later
+qualification wrapper cannot erase earlier contamination. The host-import
+recipe reads all source text normally, then host-requires only
+`screenshot_dom.cjs`; the structural guard reports exact cache and module-child
+target paths, while an unrelated startup `ENOENT` counterprobe remains a
+`NodeScenarioCrash` rather than satisfying the sentinel.
 
 | Boundary | Temporary defect | Required witness and anti-masking check |
 |---|---|---|

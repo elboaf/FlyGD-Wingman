@@ -474,7 +474,7 @@ Exactly 16 names and 16 results exist. Eleven pytest restorations run the saved
 exact restoration.
 
 Task 5 qualification found 18 registry edit loci superseded by final Task 2–4
-source: the four bool-ID recipes, `schema-bool-duration-discarded`,
+source: the three unmatched bool-ID recipes, `schema-bool-duration-discarded`,
 `schema-missing-fields-discarded`, both new family source-reexecution recipes,
 saved pristine-intrinsics, both failure-detachment recipes, all three
 cleanup-resource recipes, all three rejection-boundary/reference recipes,
@@ -485,33 +485,40 @@ name, or another sentinel. The String-poison qualification required matching
 Task 3 saved-context/source attribution edits. No canonical recipe name, owner,
 sentinel, order, kind, restoration rule, or cardinality changed.
 
-All 41 Task 5 recipes then ran in declared order and produced 42 executions.
-Every defect reached exactly its canonical sentinel, rejected other sentinels
-and masking, restored exact bytes/hash/diff/status, and passed the registered
+Review then strengthened the affected witnesses. `moduleWasIsolated` now
+accumulates over every CommonJS execution; the three family module mutants inject
+the real host module into the business wrapper and no longer force the result.
+Fleet Sharing and label-marker source mutants now bypass actual later-request
+`runCommonJS` execution by reusing the prior cached completion. The host-import
+mutant still reads every source and continues startup, then host-requires only
+`screenshot_dom.cjs`; exact cache and `module.children` paths trigger the module
+sentinel, while an unrelated startup `ENOENT` counterprobe remains a crash. The
+poison completion now contains nested arrays, and two variants independently
+replace the captured array-index String operation in `detachJson` and
+`encodeJson`.
+
+All 41 Task 5 recipes reran in declared order and produced 43 executions. Every
+defect reached exactly its canonical sentinel, rejected other sentinels and
+masking, restored exact bytes/hash/diff/status, and passed the registered
 restored probe. The ordered Task 5 result SHA-256 is
-`68f8b58c6a0e7a9127a2be7c4c2d56cf1ead0dd214a0698768414452ed32fa27`.
-The all-41 invocation observed `817.00s`; all result records were complete before
-a report-only representative-kind assertion rejected an incorrect expected
-`4/1/2` split. Correcting that report expectation to the actual registered
-`3 pytest / 1 external / 3 synthetic` split and rereading the unchanged results
-completed the summary.
+`61c52d4dbae6d0cf9883685c4baec80404417e51945c2cb738456bffc613131f`.
+The all-41 review invocation observed `814.32s`.
 
 Because the final String poison changed executable source, Tasks 3 and 4 were
 also rerun from the current tree rather than relying only on their historical
 records. The current Task 3 and Task 4 result hashes are
 `3737878be46a510d9572b7c258a459881d0b30b96b7658374f3f94b1baff6140`
-and `b7e1a4665f34e361778ff12890c808e9471d3ab35cc7ec244eceb9b8ca38d588`;
-the combined rerun observed `695.58s`. The exact aggregate is therefore 71
-canonical recipes, partitioned `14/16/41`, and 74 actual executions. The seven
+and `097d53be5f8c362ee4041f3eecaf5d743af8db57e79a0a7b599ed77c81f5cb78`;
+the review rerun observed `634.98s`. The exact aggregate is therefore 71
+canonical recipes, partitioned `14/16/41`, and 75 actual executions. The seven
 bounded representative executions have SHA-256
-`55c9679bead562e7fbaec5db427fffcb54e137add0c085dcc00e69324855db7f`.
+`b8e6126e422e383d4aecd6d53a73322718820c7c0f972fb2cd6cc094bcbf619f`.
 The final deterministic registry, recursive artifact, and final-source manifest
 SHA-256 values are respectively
-`b20e6518e98f4e6d9e00808b6f9796b7992652750177e14e9a3d25eb922a415f`,
-`f98409f3d23fe2d822bc9b2a1fd2b86b690cd31475617d3925455d7c99187de2`,
-and `cd82362a69a378cba7c2ac577f2150c70dba84b2ca0b32c5fdf9d2eae0380b2a`.
-The final external tooling suites pass 60 checks; the manifest/registry subset
-passes 27 checks independently.
+`6896a03ba6c07d885117328dc9037d7440315ebf645b28d2924a6e3929350664`,
+`4df54b2b2d4a3d3b03e9598494035d43aebf8da65cfe58d2b651d37a83ab7d79`,
+and `f6ff96209f41b00c3c09a1f768d038569c44ecba170728fee0573b91b9b8429c`.
+The final external tooling suites pass 61 checks.
 
 ## JUnit property ownership
 
@@ -545,10 +552,10 @@ Every property address is unique and helper rows own none. The latest Task 4
 review-correction JUnit SHA-256 is
 `3c901f2fcec5244946946c69001e6a6ca695eef7d7568a8badf9832413797de1`.
 
-The final post-String 225-row run passed in `31.95s` (`35.59s` process elapsed)
+The review-final 225-row run passed in `31.70s` (`35.58s` process elapsed)
 with raw JUnit SHA-256
-`2c1cad7f6c6b97da51f10fe13ad61b5ac1f01a44ec8b6f83c4288e424a253085`
-and testcase sum `26.630s`. The final auditor again found exactly four family
+`9bddfc33829928cc264e9e38da75e2bac10dbc9abe9b0d49d2ac45b1ad56eafd`
+and testcase sum `26.757s`. The final auditor again found exactly four family
 PIDs, ordinals `1..62/65/17/21`, direct sums `14/43`, receipt value `19`, healthy
 totals `33/62`, qualification starts `1/1/1/1/1/3/0`, qualification fsyncs
 `0/0/0/0/4/0/0`, and no missing, duplicate, unexpected-owner, or extra
@@ -589,12 +596,12 @@ exact observations were:
 
 | Selection/order | Outcome | Pytest time | Process elapsed | Raw JUnit SHA-256 |
 |---|---:|---:|---:|---|
-| Relevant | 225 passed | `31.95s` | `35.59s` | `2c1cad7f6c6b97da51f10fe13ad61b5ac1f01a44ec8b6f83c4288e424a253085` |
-| Node collected/normal | 165 passed | `20.99s` | `24.40s` | `ab001c1e3d491ca0e6fc6fdd3948b406bee5ebfea478f1d7f8d42ff0d8829ec5` |
-| Existing target | 205 passed | `21.38s` | `24.95s` | `1b7135878f02c8c6a56ee403ec0f01e2dfd64c878e23baa0d6897166ed39f3d1` |
-| Node reverse | 165 passed | `21.06s` | `24.50s` | `b2a96a94696ba6000fa3d7880c4ebf5ed9c6eed7cfae9e907ad8ebe69d4567de` |
-| Node seed-20260926 shuffle | 165 passed | `21.06s` | `24.46s` | `2deb68771b089c0ef53f8ea134a87e38ec010fd7b2d9e5b6bc63b7410f1276ef` |
-| Node cross-family | 165 passed | `21.12s` | `24.52s` | `f639699272faab6d2e5d46d569b946c3eb446c342b8b2272d18a9a0f0e83b14f` |
+| Relevant | 225 passed | `31.70s` | `35.58s` | `9bddfc33829928cc264e9e38da75e2bac10dbc9abe9b0d49d2ac45b1ad56eafd` |
+| Node collected/normal | 165 passed | `21.77s` | `25.28s` | `e751a3a2df8aca7065b9bf6397abbe640b3709e980e17c4626ac944a19895345` |
+| Existing target | 205 passed | `22.09s` | `25.83s` | `837fc897bba28a8d48dc515acaa930454f0ae1f95ad011d08b63edb16239da1e` |
+| Node reverse | 165 passed | `21.34s` | `24.83s` | `11c4e9800631b601cfce07befb56fd9df4a289ec5a7d89932c88fe0385ba78da` |
+| Node seed-20260926 shuffle | 165 passed | `21.51s` | `25.08s` | `db6374565bea5f654e3fb58b98b673e7507b76581ad2c3dd7831b205784ab0b8` |
+| Node cross-family | 165 passed | `21.72s` | `25.26s` | `e2876b0bd691996fc6f993c45ea45bae36d46c37c5939e9c39350915c8675827` |
 
 The relevant and complete structured collection SHA-256 values are
 `6578618090ba75bd3ae672ba630f7f7786ff4de096d213737d2e5b2b5bebaa7c`
@@ -608,13 +615,13 @@ healthy Node total; the 205 run had the same 62-fsync target total.
 The documented release prerequisite was built and installed before the complete
 suite: `uv sync --locked --extra dev`, Node `v26.5.0`, and release codec SHA-256
 `4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
-The exact 16,617-order complete suite passed as `16,603 passed + 14 skipped` in
-`452.25s` pytest time and `457.87s` process elapsed; testcase sum was `412.173s`.
-Raw JUnit and timing-summary SHA-256 values are
-`3b0ec2209ddb3340a60580229450e0c96c941084e17a33a5d7822baaa6ee2773`
-and `8b56d312a05d3958bf78ae6961fa24b3f405ab906fc82cbf23f92ab181597799`.
+The review-final exact 16,617-order complete suite passed as
+`16,603 passed + 14 skipped` in `463.80s` pytest time and `469.73s` process
+elapsed; testcase sum was `422.512s`. Raw JUnit and timing-summary SHA-256 values
+are `40bc4e7d3dd502185f2620bd14b43713d58ce561076f0949f3b640606a88fec2`
+and `04f289869f7bdb59476801e2207790b61a59e4b344bbdc6af6d7efe0e6c29b63`.
 The 14 normalized skips exactly match accepted Linux Stage A: one clip sharing
-rule, four profile-copy junction rows, two DPAPI/WinDLL rows, one real preview
+rule, three profile-copy junction rows, two DPAPI/WinDLL rows, one real preview
 message-pump row, three Win32 binding rows, one pystray Windows backend row, one
 additional two-case UI-setup junction skip, and one Wanderer DPAPI row. No Node,
 codec, target, qualification, or unexpected native skip occurred.
@@ -641,8 +648,8 @@ The final candidate executable hashes are:
 | `tests/fixtures/preview_labelmarkers.cjs` | `b98469ca8c1a208ec9e6104cfb3e05bc415e5bf6351f0ba7a4e0cb08ed7221ee` |
 | `tests/node_scenario_worker.py` | `d478a76f4c59f3a807fc56498f1c29269c5a7019f5b95eee6050751ff2bde0af` |
 | `tests/test_node_scenario_worker.py` | `154ff76e9b2a71d32c3e8214fc184b612b79db3021a1eee65fcc5788867f76fa` |
-| `tests/fixtures/page_scenario_worker.cjs` | `b05696fc1bda44e0699e6549e54188e224f9831a8e6d176c825940defa04c9b9` |
-| `tests/test_persistent_page_workers.py` | `6e21198189a37f597e896fccb83e64791181854e2fb9fcc3864c1646bdc0cf32` |
+| `tests/fixtures/page_scenario_worker.cjs` | `f4743bed1a64c9a83fdf6a9056f732d6afdcdfda15878df2c273a807583eb44a` |
+| `tests/test_persistent_page_workers.py` | `d42deb08c0719101784416f0cb8fe5b39614bf1b291e8a4161a6dedcec052f32` |
 
 ## Reviews, final scope, and frozen heads
 
@@ -712,7 +719,7 @@ saved-family execution, one healthy saved PID, 62 requests, and the saved
 `1,059 -> 33` fsync endpoint. Task 4 proves all four real families, four healthy
 business PIDs, 165 requests, the all-205 62-fsync endpoint, exact order
 independence, and its 16-recipe mutation slice. Task 5 proves the current-source
-71-recipe/74-execution mutation matrix, direct compatibility, exact local
+71-recipe/75-execution mutation matrix, direct compatibility, exact local
 16,617 outcome and skips, final properties, protected hashes, and exact 17-path
 scope. It does not claim Task 6 independent review, frozen heads, publication,
 or Stage B hosted acceptance.

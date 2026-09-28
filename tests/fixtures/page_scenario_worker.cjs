@@ -336,7 +336,10 @@ const result = {
   promise_completion: true,
   mode: data.mode,
   run: data.run || '',
-  async_globals: null
+  async_globals: null,
+  array_after_poison: data.mode === 'realm' && data.run === 'poison'
+    ? ['outer', ['inner', 7]]
+    : null
 };
 let completion = Promise.resolve(result);
 if (data.mode === 'error') throw new Error('synthetic Error failure');
@@ -957,7 +960,9 @@ const BOOTSTRAP = String.raw`
   });
   function runCommonJS(source, filename, requireFn) {
     const localModule = {exports: {}};
-    moduleWasIsolated = injectedHostModule === null || localModule !== injectedHostModule;
+    moduleWasIsolated = moduleWasIsolated && (
+      injectedHostModule === null || localModule !== injectedHostModule
+    );
     if (filename === localFixtureFilename) {
       globalThis.__wingmanSourceExecutions =
         (globalThis.__wingmanSourceExecutions || 0) + 1;
@@ -1463,9 +1468,17 @@ async function executeRequest(request) {
           fatalProtocol('request poisoned host prototypes');
           return null;
         }
-        if (targetPaths.some(file => require.cache[file]) ||
-            module.children.some(child => targetPathSet.has(child.filename))) {
-          fatalProtocol('request retained a target module');
+        const requireCacheTargets = targetPaths.filter(file => require.cache[file]);
+        const moduleChildTargets = module.children
+          .map(child => child.filename)
+          .filter(file => targetPathSet.has(file));
+        if (requireCacheTargets.length || moduleChildTargets.length) {
+          fatalProtocol(
+            'request retained a target module ' + hostJsonStringify({
+              require_cache_targets: requireCacheTargets,
+              module_child_targets: moduleChildTargets
+            })
+          );
           return null;
         }
         if (detached.ok && detached.output && typeof detached.output === 'object') {

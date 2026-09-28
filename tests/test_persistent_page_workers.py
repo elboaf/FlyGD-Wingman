@@ -524,6 +524,22 @@ def _fail_mutation(key: str) -> None:
     raise AssertionError(MUTATION_SENTINELS[key]) from None
 
 
+def _is_exact_target_module_retention(error: NodeScenarioCrash) -> bool:
+    rendered = str(error)
+    return (
+        "request retained a target module" in rendered
+        and '"require_cache_targets":[' in rendered
+        and '"module_child_targets":[' in rendered
+        and rendered.count("screenshot_dom.cjs") >= 2
+    )
+
+
+def _raise_target_module_mutation_or_original(error: NodeScenarioCrash) -> None:
+    if _is_exact_target_module_retention(error):
+        _fail_mutation("module")
+    raise error
+
+
 def _load_bare_saved_layout_module() -> tuple[object, bool]:
     existing = sys.modules.get("test_preview_savedlayouts_page")
     if existing is not None:
@@ -601,7 +617,7 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     try:
         first = _realm_request(worker, family, qualification_inputs, "A")
     except NodeScenarioCrash as error:
-        if "retained a target module" in str(error):
+        if _is_exact_target_module_retention(error):
             _fail_mutation("module")
         if family == "label-markers" and "retained a VM realm" in str(error):
             _fail_mutation("marker-root")
@@ -622,7 +638,7 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         poison = _realm_request(worker, family, qualification_inputs, "poison")
         final = _realm_request(worker, family, qualification_inputs, "A")
     except NodeScenarioCrash as error:
-        if "retained a target module" in str(error):
+        if _is_exact_target_module_retention(error):
             _fail_mutation("module")
         if family == "label-markers" and "retained a VM realm" in str(error):
             _fail_mutation("marker-root")
@@ -641,6 +657,8 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
             _fail_mutation("sharing-source")
         if family == "group-backward" and "business source" in rendered:
             _fail_mutation("group-source")
+        if family == "label-markers" and "business source" in rendered:
+            _fail_mutation("source")
         if "poisoned" in rendered:
             _fail_mutation("context")
         raise
@@ -698,6 +716,9 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     _assert_mutation(poison["output"]["promise_completion"] is True, "promise")
     assert poison["output"]["serialization_safe"] is True
     assert poison["output"]["mode"] == "realm"
+    assert poison["output"]["array_after_poison"] == ["outer", ["inner", 7]]
+    assert first["output"]["array_after_poison"] is None
+    assert final["output"]["array_after_poison"] is None
     expected_business_output = {
         "saved-layouts": "PASS reversed",
         "fleet-sharing": "PASS missing-worker",
@@ -855,6 +876,13 @@ def test_request_cleanup_after_success(
         + SAVED_DIRECT_FSYNC_TOTAL
         == 37
     )
+    unrelated_startup = NodeScenarioCrash(
+        "qualification/saved-layouts/resources", "worker startup ENOENT"
+    )
+    assert not _is_exact_target_module_retention(unrelated_startup)
+    with pytest.raises(NodeScenarioCrash, match="ENOENT"):
+        _raise_target_module_mutation_or_original(unrelated_startup)
+
     worker = page_worker_factory("saved-layouts")
     resources = _qualification_request(worker, "saved-layouts", "resources")
     process = worker._proc
