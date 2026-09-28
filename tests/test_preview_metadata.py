@@ -544,3 +544,47 @@ def test_close_clears_visible_metadata_and_refuses_late_publications(runtime):
     h._apply_metadata()
     assert runtime.made[0]._system_name is None
     assert not h.metadata_available()
+
+
+def test_focused_session_resolves_the_foreground_client(runtime):
+    """The Set Root window's session (#296): the focused key is the preview
+    stable key (the character name past character-select), resolved through
+    the admitted metadata roster -- the same admission the Wanderer worker's
+    snapshot join keys on."""
+    r, h = runtime, runtime.host
+    alice, bob = client("Alice", 16), client("Bob", 17)
+    r.roster(1, alice, bob)
+    h._focused_key = "Alice"
+    assert h.focused_session() == alice.session
+
+
+def test_focused_session_follows_focus_changes(runtime):
+    r, h = runtime, runtime.host
+    alice, bob = client("Alice", 16), client("Bob", 17)
+    r.roster(1, alice, bob)
+    h._focused_key = "Alice"
+    assert h.focused_session() == alice.session
+    h._focused_key = "Bob"
+    assert h.focused_session() == bob.session
+
+
+def test_focused_session_is_none_off_eve_and_for_unnamed_clients(runtime):
+    r, h = runtime, runtime.host
+    # Never admitted: no roster, no session.
+    h._focused_key = "Alice"
+    assert h.focused_session() is None
+    # Admitted roster, but the foreground window is at character-select.
+    unnamed = client(None, 18)
+    r.roster(1, client("Alice", 16), unnamed)
+    h._focused_key = unnamed.character or f"hwnd:0x{unnamed.hwnd:x}"
+    assert h.focused_session() is None
+
+
+def test_focused_session_is_none_for_a_departed_client(runtime):
+    r, h = runtime, runtime.host
+    alice = client("Alice", 16)
+    r.roster(1, alice)
+    h._focused_key = "Alice"
+    assert h.focused_session() == alice.session
+    r.roster(2, client("Bob", 17))
+    assert h.focused_session() is None

@@ -5204,6 +5204,32 @@ class Api:
     def wanderer_state(self) -> dict:
         return self._wanderer.state()
 
+    def _wanderer_prime_identity(self):
+        """The focused client's map identity, or None (#296, #297's input).
+
+        The whole join the staging slice consumes: the preview host
+        answers WHICH client ran Set Root (the foreground one), the
+        Wanderer controller answers what the map knows about it (EVE
+        character ID + current solar system, freshness-checked). Every
+        half can be absent -- previews off, no focused EVE client, the
+        map not tracking that character, a location gone stale -- and
+        None is the answer in every one of them. The caller stages no
+        prime rather than a half-identified one. A raising focus read is
+        degraded the same way: identity must never cost the Set Root
+        flow an exception.
+        """
+        host = self._preview_host
+        if host is None:
+            return None
+        try:
+            session = host.focused_session()
+        except Exception:
+            logger.debug("Could not read the focused preview session", exc_info=True)
+            return None
+        if session is None:
+            return None
+        return self._wanderer.prime_identity(session)
+
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 

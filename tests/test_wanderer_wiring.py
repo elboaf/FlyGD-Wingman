@@ -263,3 +263,92 @@ def test_failure_copy_never_echoes_external_errors(code):
     assert formatter is not None
     assert formatter("error", code)
     assert "private-exception" not in formatter("error", "private-exception")
+
+
+# --- Prime identity join (#296) ---------------------------------------------
+
+
+def _identity_api(tmp_path, prime_identity=None, focused_session=None):
+    """An Api whose host and Wanderer runtime answer fixed identity values.
+
+    The two collaborators are fakes because this seam's contract is the
+    JOIN, not either join's halves (those have their own tests): the
+    focused session from the preview host, the identity from the
+    Wanderer controller.
+    """
+    from types import SimpleNamespace
+
+    api = make_api(tmp_path)
+
+    def build(section):
+        return SimpleNamespace(
+            state=lambda: {"status": "stopped"},
+            start=lambda: True,
+            set_previews_enabled=lambda enabled: None,
+            stop=lambda timeout=1.0: True,
+            close_admission=lambda: None,
+            test_connection=lambda *a: {"applied": False},
+            set_enabled=lambda enabled: {"applied": True},
+            remove_connection=lambda revision: {"applied": True},
+            prime_identity=prime_identity,
+        )
+
+    api._build_wanderer_controller = build
+    api._wanderer = build(None)
+    api._preview_host = SimpleNamespace(
+        focused_session=focused_session,
+    )
+    return api
+
+
+def test_prime_identity_joins_focused_session_to_the_wanderer_snapshot(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    identity = PrimeIdentity(character_id=90000001, solar_system_id=30000142)
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: identity if s == session else None,
+        focused_session=lambda: session,
+    )
+    assert api._wanderer_prime_identity() == identity
+
+
+def test_prime_identity_is_none_without_a_focused_client(tmp_path):
+    from wingman.wanderer.model import PrimeIdentity
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: PrimeIdentity(character_id=1, solar_system_id=2),
+        focused_session=lambda: None,
+    )
+    assert api._wanderer_prime_identity() is None
+
+
+def test_prime_identity_is_none_when_the_map_does_not_know_the_character(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: None,
+        focused_session=lambda: ClientSessionId(16, 101, "Alice", 1),
+    )
+    assert api._wanderer_prime_identity() is None
+
+
+def test_prime_identity_survives_a_raising_focus_read(tmp_path):
+    """The focus read is a native-adjacent read on a host that may be
+    tearing down. A failure there must answer None, never raise out of
+    the staging slice."""
+    from wingman.wanderer.model import PrimeIdentity
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: PrimeIdentity(character_id=1, solar_system_id=2),
+        focused_session=lambda: (_ for _ in ()).throw(RuntimeError("tearing down")),
+    )
+    assert api._wanderer_prime_identity() is None
+    # A missing host (previews never built) is the same closed answer.
+    api._preview_host = None
+    assert api._wanderer_prime_identity() is None

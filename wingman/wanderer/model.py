@@ -153,6 +153,21 @@ def normalize_character_name(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class PrimeIdentity:
+    """The scoped identity of one character on this map (#292/#296).
+
+    Joined from the map's own tracked-location record, so it exists only
+    for characters the map tracks -- exactly the characters that can
+    consume a prime. `solar_system_id` is the expected source system at
+    consume time; None means the record is online but unmapped, and no
+    prime may bind an unknown source.
+    """
+
+    character_id: int
+    solar_system_id: int | None
+
+
+@dataclass(frozen=True)
 class LocationRecord:
     character_id: int
     character_name: str

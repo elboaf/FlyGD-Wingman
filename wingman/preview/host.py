@@ -124,6 +124,17 @@ def _roster_stable_key(entry) -> str:
     return entry.character or f"hwnd:0x{entry.hwnd:x}"
 
 
+def _roster_stable_key_from_session(session: ClientSessionId) -> str:
+    """The preview stable key for a session's character, or its hwnd tag.
+
+    The inverse of discovery's fallback: named characters file under their
+    name, exactly as `RosterClient` records would. Sessions are always
+    named by construction, so the tag branch is unreachable defensive
+    symmetry, kept so a key comparison can never raise.
+    """
+    return session.character or f"hwnd:0x{session.hwnd:x}"
+
+
 def _preview_client(entry) -> discovery.Client:
     """A shared-roster record in the shape preview state already speaks.
 
@@ -2207,6 +2218,39 @@ class PreviewHost:
         """Named, successfully created primary sessions still admitted by discovery."""
         with self._lock:
             return self._metadata_sessions
+
+    def focused_session(self) -> ClientSessionId | None:
+        """The admitted session of the client that owns the foreground.
+
+        The identity half of the pre-jump prime join (#296): the window
+        that ran Set Root is the foreground client, and the prime must
+        bind the character that window was flying. `_focused_key` answers
+        "are you looking at this client right now" (see _apply_selection);
+        resolving it through the ADMITTED metadata roster -- not the raw
+        pump roster -- keys the answer to the same sessions the Wanderer
+        worker's snapshot join accepts, so a preview that was never
+        created, or a client that departed, primes nothing. None is the
+        answer whenever any step cannot be proven, and the staging slice
+        treats None as "no identity, no prime".
+
+        Safe from any thread; `focused_character` records why this reads
+        without _lock, but the admitted-session set is only swapped under
+        it, so this one takes the lock.
+        """
+        key = self._focused_key
+        if not key or key.startswith("hwnd:"):
+            # A client at character-select names nothing a character can
+            # be flying; its stable key is a synthetic hwnd tag.
+            return None
+        with self._lock:
+            return next(
+                (
+                    session
+                    for session in self._metadata_sessions
+                    if _roster_stable_key_from_session(session) == key
+                ),
+                None,
+            )
 
     def metadata_available(self) -> bool:
         with self._lock:

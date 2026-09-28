@@ -17,7 +17,7 @@ from ..settings import validated_wanderer
 from ..telemetry.model import ClientSessionId
 from .client import WandererClient
 from .credentials import CredentialStore, validate_token
-from .model import parse_map_url
+from .model import PrimeIdentity, parse_map_url
 from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
 MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool, int], None]
@@ -276,6 +276,16 @@ class WandererController:
             except Exception:  # noqa: BLE001, S112 — a missing/closed page must not terminate runtime or expose payload context.
                 continue
             previous = payload
+
+    def prime_identity(self, session) -> PrimeIdentity | None:
+        """The map's identity for this client session, or None (#296).
+
+        One-line facade over the worker's snapshot join. Read-only: it
+        never configures, publishes or admits anything, so it is safe on
+        any thread the staging slice calls it from, and a closed runtime
+        answers None rather than raising.
+        """
+        return self._worker.prime_identity(session)
 
     def _result(self, applied: bool, error: str | None = None) -> dict:
         with self._condition:

@@ -657,3 +657,51 @@ def test_unexpected_transport_exception_is_safe_and_does_not_kill_expiry(rig, ca
     rig.advance(114)
     rig.mailbox.expect({FIRST: None})
     assert "private-token" not in repr(rig.worker.state()) + caplog.text
+
+
+# --- Prime identity (#296) --------------------------------------------------
+
+from wingman.wanderer.model import PrimeIdentity  # noqa: E402
+
+
+def test_a_tracked_online_session_joins_to_character_and_system(rig):
+    start_snapshot(rig)
+    assert rig.worker.prime_identity(FIRST) == PrimeIdentity(
+        character_id=90000001, solar_system_id=30000142
+    )
+
+
+def test_identity_is_none_for_a_session_without_a_fresh_location(rig):
+    start_snapshot(rig)
+    rig.advance(114)  # the fixture's 15s deadline: location no longer fresh
+    assert rig.worker.prime_identity(FIRST) is None
+
+
+def test_identity_is_none_for_an_untracked_or_offline_session(rig):
+    start_snapshot(rig)
+    assert (
+        rig.worker.prime_identity(ClientSessionId(103, 203, "Offline Pilot", 1)) is None
+    )
+    assert (
+        rig.worker.prime_identity(ClientSessionId(104, 204, "Untracked Pilot", 1))
+        is None
+    )
+
+
+def test_identity_joins_by_normalized_character_name(rig):
+    start_snapshot(rig)
+    assert rig.worker.prime_identity(
+        ClientSessionId(FIRST.hwnd, FIRST.pid, "  FIRST PILOT  ", 1)
+    ) == PrimeIdentity(character_id=90000001, solar_system_id=30000142)
+
+
+def test_identity_is_none_without_a_snapshot(rig):
+    rig.worker.set_sessions((FIRST,))
+    assert rig.configure()
+    assert rig.worker.prime_identity(FIRST) is None
+
+
+def test_identity_is_none_after_close(rig):
+    start_snapshot(rig)
+    rig.worker.close_admission()
+    assert rig.worker.prime_identity(FIRST) is None

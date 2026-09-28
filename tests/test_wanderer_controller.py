@@ -771,3 +771,43 @@ def test_partial_owner_start_failure_is_terminal_and_safe(tmp_path):
         assert rig.host.closed and rig.host.callback is None
     finally:
         rig.close()
+
+
+# --- Prime identity (#296) --------------------------------------------------
+
+
+def test_prime_identity_joins_through_the_worker_snapshot(rig):
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    rig.start()
+    call = rig.client.call(1)
+    call.reply(success())
+    rig.wait(lambda s: s["status"] == "connected")
+    session = ClientSessionId(101, 201, "First Pilot", 1)
+    assert rig.controller.prime_identity(session) == PrimeIdentity(
+        character_id=90000001, solar_system_id=30000142
+    )
+
+
+def test_prime_identity_is_none_without_a_connection(rig):
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(101, 201, "First Pilot", 1)
+    assert rig.controller.prime_identity(session) is None
+
+
+def test_prime_identity_survives_a_shut_page(rig):
+    """A closed page must not take the identity lane with it: staging is
+    read-only against the worker, never an admission boundary."""
+    from wingman.telemetry.model import ClientSessionId
+
+    rig.start()
+    rig.client.call(1).reply(success())
+    rig.wait(lambda s: s["status"] == "connected")
+    session = ClientSessionId(101, 201, "First Pilot", 1)
+    with rig.delivery_cv:
+        pass
+    assert rig.controller.prime_identity(session) is not None
+    rig.controller.close_admission()
+    assert rig.controller.prime_identity(session) is None
