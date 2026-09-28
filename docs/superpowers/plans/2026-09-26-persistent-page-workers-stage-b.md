@@ -10,6 +10,25 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-26-persistent-page-workers-stage-b-design.md`
 
+## Execution status — Task 6 local publication stop
+
+Tasks 1–5 are complete with their task-review corrections and recorded evidence.
+Task 6 local polish, self-review, fresh verification, explanation and head freeze
+are complete. No executable correction was selected by `polish-core --fix` over
+`203d2068..a703f8d2b987a769979cd22d6daa680ab6e791ce`. Frozen executable head:
+`a703f8d2b987a769979cd22d6daa680ab6e791ce`. The evidence-only head is the
+subsequent documentation commit identified in the results ledger, not a new
+executable candidate.
+
+Task 6 Step 3 remains partially open: self-review is complete, but no independent
+review was commissioned because the execution request expressly forbids subagents.
+Maintainer review is required; this is not self-certification of independent
+approval. Steps 7–10 are not executed. Do not push, open/update a PR, dispatch or
+rerun Actions, or collect candidate hosted artifacts without separate explicit
+authorization. Hosted Ubuntu/Windows acceptance and any performance claim remain
+unestablished. Historical task instructions below retain their execution sequence;
+this status and the results ledger describe the final local endpoint.
+
 ## Global Constraints
 
 - The source baseline is merged `main` commit `203d2068787cb3457916db6005afda0a7ce7a43a` (`Remove deterministic waste from Windows CI tests (#291)`).
@@ -3654,7 +3673,7 @@ git commit -m "docs: record persistent page worker verification"
 - Consumes: fully green Task 5 tree and `/tmp/stage-b-final` evidence.
 - Produces: polished executable head, independently reviewed result, evidence-only head, clean tree, publication STOP, and a fully specified later hosted audit.
 
-- [ ] **Step 1: Run `polish-core --fix` and inspect every edit**
+- [x] **Step 1: Run `polish-core --fix` and inspect every edit**
 
 Review `203d2068..HEAD`. Accept only high-confidence corrections within the exact
 17 paths. Reject source movement, production/workflow/config/dependency changes,
@@ -3662,7 +3681,7 @@ new identities, changed business assertions, new retries, target `require()`,
 weaker cleanup, receipt reconstruction, and Stage C consolidation. Inspect the
 actual diff after the tool; do not trust a summary.
 
-- [ ] **Step 2: Re-run fresh verification after polish**
+- [x] **Step 2: Re-run fresh verification after polish**
 
 Rerun exact 13 helper, seven qualification, 62 saved, 165 Node, 205 target, 225
 relevant, all four order lists, A-B-A/repeat/single cases, one-shot matrix, fsync
@@ -3687,7 +3706,7 @@ one-shot streams; 144 group dialog combinations; one 19-fsync receipt and
 restoration; exact IDs/signatures/properties/starts/fsyncs; full skips; and exact
 17-path scope.
 
-- [ ] **Step 4: Run `change-explainer` and update reviewer-facing results**
+- [x] **Step 4: Run `change-explainer` and update reviewer-facing results**
 
 Record what changed, request lifecycle, adapter boundaries, why module-local
 session fixtures survive cross-module re-entry, why private test coupling is
@@ -3695,7 +3714,7 @@ bounded, direct CLI behavior, failure semantics, receipt lifetime, mutation
 proof, exact verification, deviations, remaining risks, and reviewer focus. Do
 not reference local scratch paths in a future PR description.
 
-- [ ] **Step 5: Freeze executable head and commit evidence only**
+- [x] **Step 5: Freeze executable head and commit evidence only**
 
 If review required executable corrections, commit them with a narrowly accurate
 message and rerun Step 2. Then freeze:
@@ -3726,7 +3745,7 @@ printf 'FROZEN_EXECUTABLE_HEAD=%s\nEVIDENCE_HEAD=%s\n' "$FROZEN_EXECUTABLE_HEAD"
 
 Require every executable path byte-identical between frozen and evidence heads.
 
-- [ ] **Step 6: STOP**
+- [x] **Step 6: STOP**
 
 Return frozen/evidence SHAs, exact commits, checks, structural counts, scope,
 restoration, and concerns. Do not push, open/update a PR, dispatch/rerun Actions,

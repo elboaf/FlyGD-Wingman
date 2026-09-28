@@ -2,8 +2,11 @@
 
 ## Status
 
-Approved and locally verified through Task 5. Hosted acceptance remains pending.
-This document records the bounded Stage B design, disposable feasibility
+Approved design; Task 6 local polish and fresh verification are complete at frozen
+executable head `a703f8d2b987a769979cd22d6daa680ab6e791ce`. Independent
+maintainer review and hosted acceptance remain pending. The documentation-only
+evidence head is identified separately in the results ledger. No publication is
+authorized. This document retains the bounded design, disposable feasibility
 evidence, and approved Task 4 and Task 5 review corrections.
 
 Stage B changes test architecture only. It replaces 165 one-shot Node launches
@@ -1620,9 +1623,10 @@ docs/superpowers/plans/2026-09-26-persistent-page-workers-stage-b.md
 docs/ci-persistent-page-workers-stage-b-results.md
 ```
 
-The current documentation-only commit contains only the specification path.
-The plan and results paths are future separately reviewed artifacts covered by
-the user's external authorization.
+The implemented local range contains exactly these 17 paths. Task 6 changes only
+the three authorized documentation paths; all 14 executable paths remain byte-
+identical to the frozen executable head. Generated probes and review reports
+remain unversioned local evidence.
 
 ## Rejected alternatives
 
@@ -1737,5 +1741,7 @@ Stage B is complete only when the exact scoped implementation, seven Stage B
 qualification IDs, one helper-contract ID, full local suite, mutation/order
 matrix, one-shot compatibility, worker/fsync instrumentation, and hosted
 provenance/outcome/skip evidence all pass, and the results ledger reports
-concerns without timing causation. Until then this document is an approved
-design, not evidence that the implementation exists or performs faster.
+concerns without timing causation. The results ledger now records the verified
+local implementation and its exact evidence. Independent maintainer review and
+hosted acceptance are still required for overall Stage B completion; no timing
+observation establishes that the implementation performs faster.

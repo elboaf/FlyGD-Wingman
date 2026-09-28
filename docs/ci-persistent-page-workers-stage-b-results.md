@@ -693,8 +693,135 @@ byte-exact, and no diff exists under production, web, workflow, dependency,
 lockfile, configuration, or packaging paths. CJS syntax, Python compilation,
 global Ruff lint/format, documentation, packaging/version, structural
 signature/decorator/body, diff-whitespace, restoration, registry, source, and
-recursive-manifest gates all pass. Task 6 independent review, frozen executable
-head, and evidence head remain pending.
+recursive-manifest gates all pass. The Task 6 local freeze and fresh evidence are
+recorded below; independent maintainer review remains pending.
+
+### Task 6 polish, fresh verification, and local freeze
+
+**Frozen executable head:** `a703f8d2b987a769979cd22d6daa680ab6e791ce`
+(`test: strengthen persistent worker mutation witnesses`). The worktree was
+clean when this head was frozen. All 14 executable files retain the SHA-256
+values in the table above; Task 6 makes no executable or mutation-literal edit.
+
+**Evidence-only head:** the direct documentation-only child of that frozen head
+with subject `test: finalize persistent page workers Stage B` (this evidence
+commit). Its full SHA is recorded literally in the local Task 6 completion report
+after commit. A commit cannot embed its own content-addressed SHA; this exact
+parent/subject binding avoids a fabricated hash or a self-referential evidence
+amendment. The executable and evidence heads must not be conflated. Independent
+review of this final range remains pending; the evidence commit does not claim
+reviewed-head or hosted-candidate status.
+
+`polish-core --fix` read every current file and the full 17-path cumulative diff,
+loaded Python and JavaScript/CommonJS rules, and checked general quality, silent
+failure, comments and interfaces locally. No high-confidence executable fix was
+selected. CommonJS/direct CLI behavior, module-local fixture ownership, literal
+mutation seams and cleanup ordering were intentionally retained. The only safe
+corrections are documentation status: remove stale claims that the range is still
+specification-only and distinguish completed local verification from pending
+independent/hosted acceptance. No source movement, new identity, business-assertion
+change, retry, target import, weakened cleanup, new receipt construction or Stage C
+consolidation was introduced.
+
+Fresh commands used `uv run --no-sync python -m pytest ... -q -rs` with raw JUnit;
+the complete run additionally used `--durations=50`. Collections used the retained
+`collect` plugin and explicit `ids-from-collection` conversion. Order commands
+loaded only validated `.ids.txt` bytes through the same `validate_id_bytes` path
+(shell array expansion was unavailable in this harness). Every run was a fresh
+process; no failed test/order was retried to obtain green.
+
+| Selection/order | Outcome | Pytest time | Process elapsed | Raw JUnit SHA-256 |
+|---|---:|---:|---:|---|
+| Helper | 13 passed | `9.09s` | `14.19s` | `fff4e2d13b8d35170c6a7d61ed863cb631f8d1c1a829bcbec5644cef5b862a9f` |
+| Qualification | 7 passed | `12.16s` | `17.17s` | `675a0a33d7c15dba68af04e38cbf04bf62cdc51ed9a929bb760fda7d5bf9e83f` |
+| Saved family | 62 passed | `9.03s` | `12.50s` | `85353045964ba5a2c3ed464bb6fa68d8821c01e4b476f8e8d0f00b1385c926bc` |
+| Relevant | 225 passed | `55.16s` | `60.39s` | `a92f6781668b5d709b249a25ca5097de1ee2b9951ad6b7e28548ee8c438192ea` |
+| Existing target | 205 passed | `43.50s` | `48.31s` | `f08e328b75594f1a3fe5ca41b63e2338fe7e7ab657c41e6ea8906ea7f644bf43` |
+| Node normal | 165 passed | `39.52s` | `44.43s` | `166fe15fa5077050f79486c24576f6941ecd949e45ab3b5f3de1bede441b8015` |
+| Node reverse | 165 passed | `33.90s` | `40.41s` | `3e7c51ea319d88b2d0e0c95de476b4ae1e94798afeac7ac7ff2c7637a30b698d` |
+| Node seed-20260926 shuffle | 165 passed | `23.19s` | `26.88s` | `ac13d2bb1c088a7c073b39c42d8ea5b5f4a93b0291fc6b1e3dbc4f95a1a708b1` |
+| Node cross-family | 165 passed | `23.06s` | `26.97s` | `a147529866467636fa1bd09ae926ca456b744782a4109a0ebbbda7055b470999` |
+| Complete Linux | 16603 passed, 14 skipped | `471.10s` | `477.32s` | `93af14458a39a89ad436c408c94eba68b398087e7a7d5c336dc416d78e91f447` |
+
+The fresh relevant/full collection bytes equal the frozen Task 2 reports and ID
+files exactly: 225/16,617 unique IDs, unchanged ordered 217/16,609 subsequences,
+and exactly eight approved additions. All 14 normalized Linux skips match Stage A;
+no Node, codec, target, qualification or unexpected native skip occurred. Full
+suite testcase sum is `428.904s`, XML suite time `470.847s`; these are distinct
+from pytest time and process elapsed and remain observations only.
+
+Raw-property audits passed on relevant, target, full and all four Node orders:
+one positive PID per family, exact ordinal sets `1..62/65/17/21`, direct fsync
+sums `14/43`, one receipt owner/value `19`, healthy totals `33/62`, qualification
+starts `1/1/1/1/1/3/0`, qualification fsyncs `0/0/0/0/4/0/0`, and no missing,
+duplicate, unexpected-owner or extra `stage_b.*` property. Supplementary fresh
+runs passed saved reverse/shuffle (62 each), the other families alone (65/17/21),
+both saved/qualification orders (69 each), and the qualification-first helper
+aggregate (82); both 69-row orders and the 82-row run had exactly `14+19+4=37`
+fsyncs. Seven representative single-ID processes each passed with ordinal one.
+Four real family A-A-B-A sequences and the saved main/owner/capture/dev/main
+sequence stayed in their family PID with source execution one and zero cleanup.
+The seven-case/six-entrypoint direct CLI matrix retained all 21 success/missing-
+argv/corrupt-input subprocess streams; exact terminal/dev/controlled diagnostic
+checks passed. These disposable probes add no repository test identity.
+
+The retained mutation authority was verified rather than relabeled as a fresh
+mutation execution: all 71 names in the exact `14/16/41` partition, 75 executions,
+seven representative executions, and 132 raw mutated/restored XML files passed
+re-audit of owners, phase/outcomes, canonical sentinels, forbidden masking and
+restored companions. All current match-once literals, 14 executable hashes,
+registry/source/recursive manifests and prior result hashes are unchanged. The
+61 collector/registry/restoration/manifest tooling tests passed fresh. Since no
+executable byte or literal changed, the complete Task 5 mutation run remains the
+applicable evidence; no replacement authority was generated.
+
+Fresh additional gates: locked uv sync; Node `v26.5.0`; locked release codec
+build/install/actual bundled-path availability and matching release/installed
+SHA-256 `4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`;
+Cargo `1 passed`; ten CJS syntax checks; DOM `35 passed`; direct JS smoke and
+`7 passed` smoke wrappers; previous-worker selection `963 passed in 117.28s`;
+packaging/version `110 passed`; global Ruff and format (`521` files); documentation
+`7 passed`; Python compilation and external-tooling Ruff/format; exact six
+signature substitutions and unchanged decorators; unchanged ASTs for the 12
+nonconverted test functions (40 collected rows); byte-equivalent saved CJS bodies
+outside their wrappers; numeric-validator-only helper change; exact 17-path scope
+and all 15 protected hashes; final whitespace and leftover scans.
+
+A local codec-path assertion initially called `.resolve()` on the documented
+string return of `paths.codec_exe()`; wrapping it in `Path` corrected only the
+probe and the unchanged installed binary passed. New local evidence scripts also
+needed import-order/format cleanup. These local tooling corrections did not edit
+repository executables or turn a failed business/order/full-suite run green.
+
+### Reviewer-facing explanation and remaining boundary
+
+The Python fixture retains the family process until pytest Session teardown,
+including cross-module re-entry. Startup retains primitive source/markup text;
+requests get fresh VM-owned wrappers, production script evaluation, DOMs,
+intrinsics and decoded input. Polling carries primitive mailbox/completion data,
+drains dispatched timer/rejection turns, removes real listeners and timers, then
+releases the host-tracked realm before publication. Business failures detach and
+retain the process; fatal protocol/cleanup failures emit no reply and require a
+later separate restart. Late rejection preserves the attempted next-scenario
+attribution and prior successful request context without replay.
+
+The shared saved receipt is owned by the canonical pytest Session, not either
+module-import identity. One real 19-fsync production sequence detaches immutable
+bytes and restores environment, writer, legacy flag and reader ownership; every
+main case decodes independently. Private coupling is limited to test process
+observations and the existing production receipt seams; no public product API,
+settings format or shipped runtime changes. Family-local duplication deliberately
+avoids Stage C consolidation.
+
+Self-review covered every specification invariant and stop condition. Prior
+Task 1–5 review corrections are retained; no new independent Task 6 review is
+claimed because subagents were explicitly prohibited. Maintainer review should
+concentrate on the VM/rejection publication boundary, mutation-to-real-defect
+binding, duplicate-import receipt ownership, direct CLI parity and raw-property
+cardinality. Local verification is complete, but independent review and the
+separately authorized logs-primary, rerun-aware Ubuntu/Windows hosted audit are
+still open. No live browser or Windows smoke run was required or performed for
+this test-only change. No timing or overall hosted acceptance claim is made.
 
 ## Publication stop and hosted evidence
 
@@ -721,8 +848,9 @@ business PIDs, 165 requests, the all-205 62-fsync endpoint, exact order
 independence, and its 16-recipe mutation slice. Task 5 proves the current-source
 71-recipe/75-execution mutation matrix, direct compatibility, exact local
 16,617 outcome and skips, final properties, protected hashes, and exact 17-path
-scope. It does not claim Task 6 independent review, frozen heads, publication,
-or Stage B hosted acceptance.
+scope. Task 6 additionally records local polish, fresh verification and frozen-head
+separation. It does not claim independent maintainer approval, publication or
+Stage B hosted acceptance.
 
 **LOCAL CONCLUSION:** Stage B preserves all 205 existing target identities and
 all 12 existing helper identities, adds exactly eight approved identities,
