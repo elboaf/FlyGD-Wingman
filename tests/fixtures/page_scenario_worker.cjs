@@ -28,6 +28,14 @@ const FAILURE_ENCODED_ENVELOPE_LIMIT = 6 * (
 ) + FAILURE_ENVELOPE_SYNTAX_LENGTH;
 assert.equal(FAILURE_ENVELOPE_SYNTAX_LENGTH, 35);
 assert.equal(FAILURE_ENCODED_ENVELOPE_LIMIT, 247331);
+const hostInvalidDatesEqual = (() => {
+  try {
+    assert.deepEqual(new Date(NaN), new Date(NaN));
+    return true;
+  } catch (_error) {
+    return false;
+  }
+})();
 
 function hostJsonStringify(value) {
   const seen = new Set();
@@ -634,6 +642,7 @@ const BOOTSTRAP = String.raw`
   const safeWeakSetAdd = Function.call.bind(WeakSet.prototype.add);
   const safeWeakSetHas = Function.call.bind(WeakSet.prototype.has);
   const safeNumberIsFinite = Number.isFinite.bind(Number);
+  const safeNumberIsNaN = Number.isNaN.bind(Number);
   const safeHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
   const safeIsPrototypeOf = Function.call.bind(Object.prototype.isPrototypeOf);
   const safeReflectGet = Reflect.get.bind(Reflect);
@@ -699,6 +708,7 @@ const BOOTSTRAP = String.raw`
   const localRequestToken = requestToken;
   const localStartTime = startTime;
   const localFailureSerializerSlot = failureSerializerSlot;
+  const localInvalidDatesEqual = invalidDatesEqual;
   const cachedFixtureOutput = safeParse(cachedFixtureOutputJson);
   const sourceByBasename = safeParse(sourceRegistryJson);
   const webByBasename = safeParse(webSourcesJson);
@@ -730,7 +740,7 @@ const BOOTSTRAP = String.raw`
   for (const key of [
     'argvJson', 'cachedFixtureOutputJson', 'domFactoryFilename', 'domFactorySource',
     'failureSerializerSlot', 'fixtureFilename', 'hostModule', 'hostParsedInput',
-    'inputJson', 'manifestJson',
+    'inputJson', 'invalidDatesEqual', 'manifestJson',
     'pageSelector', 'previousReplyJson', 'programSource', 'protocol',
     'qualificationSource', 'replyJson', 'requestId',
     'requestScenario', 'requestToken', 'sourceRegistryJson', 'startTime',
@@ -1043,7 +1053,12 @@ const BOOTSTRAP = String.raw`
     if (actualArray !== safeArrayIsArray(expected)) return false;
     if (actualArray && actual.length !== expected.length) return false;
     if (safeIsPrototypeOf(safeDatePrototype, actual)) {
-      if (!safeObjectIs(safeDateValue(actual), safeDateValue(expected))) return false;
+      const actualTime = safeDateValue(actual);
+      const expectedTime = safeDateValue(expected);
+      const bothInvalid = safeNumberIsNaN(actualTime) && safeNumberIsNaN(expectedTime);
+      if (bothInvalid) {
+        if (!localInvalidDatesEqual) return false;
+      } else if (!safeObjectIs(actualTime, expectedTime)) return false;
     }
     if (safeIsPrototypeOf(safeRegExpPrototype, actual)) {
       if (safeRegExpSource(actual) !== safeRegExpSource(expected)) return false;
@@ -1547,6 +1562,7 @@ async function executeRequest(request) {
     failureSerializerSlot,
     fixtureFilename,
     inputJson,
+    invalidDatesEqual: hostInvalidDatesEqual,
     manifestJson: manifestText,
     pageSelector,
     previousReplyJson,
