@@ -1063,3 +1063,62 @@ reduces measured production-case persistence from 1,059 to 33 fsyncs for those
 rows and from 1,088 to 62 fsyncs for all 205 rows. Qualification overhead is
 reported separately. Timing values are observations only and establish no
 speedup or critical-path effect.
+
+## Hosted PR #299 evidence — run 36420713792
+
+The reviewed and pushed head is
+`e18644a09aa662e30c8153e109466b2079361099`. Run `36420713792` checked out
+synthetic merge `d3bba2968370169319c925fac79e9534b73c806a`, whose parents are
+exactly base `fd6eea6db0bec41248d9bbfd7c48957eb4dd99c8` and the reviewed head.
+Checks, Ubuntu, and both Windows attempts logged that same checkout. The
+synthetic base diff is exactly the approved 17 paths, and all 14 executable
+files are byte-identical to the reviewed head.
+
+Attempt 1 is retained and classified **INCONCLUSIVE**, not overwritten. Checks
+passed in 13 seconds and Ubuntu passed. Windows executed all 16,617 identities
+but failed the unchanged, out-of-scope Fleet worker timing identity
+`test_preserved_real_thread_mailbox_publishes_latest_after_held_publication`:
+16,549 passed, 67 expected skips, and one failure. Its Stage B identities,
+properties, four family processes, request ordinals, and 33/62 fsync totals all
+passed. The user authorized a failed-job rerun after this diagnosis.
+
+Attempt 2 reran Windows as job `108943005156` and passed. The accepted hosted
+set is therefore attempt-1 checks/Ubuntu plus attempt-2 Windows:
+
+| Platform | Outcome | Test step | Pytest/XML observation | Testcase sum | JUnit SHA-256 |
+|---|---:|---:|---:|---:|---|
+| Ubuntu attempt 1 | 16,603 passed, 14 expected skips | 4m04s | XML suite `240.605s` | `218.312s` | `9444817a19044cbd5afa3717f682f68aad9e7c66164612a69c58fbd41a200a4c` |
+| Windows attempt 2 | 16,550 passed, 67 expected skips | 10m26s | pytest `622.50s`; XML suite `620.468s` | `588.074s` | `d507bdaa15a31dcb6b889729826f0e9b2f529b005cca3ed3db552dcd17e90ff6` |
+
+Both artifacts contain exactly `pytest-result.xml` and `pytest-timing.json`, are
+unexpired, belong to run `36420713792` and the reviewed head, and were created
+inside their owning job windows. API/archive digests match:
+
+- Ubuntu artifact `10969307343`:
+  `a5303c02b363f31b61511a1b1293c1ea5da58d741d33214aad2147a1281c8a83`;
+- Windows attempt-1 artifact `10970176585`:
+  `a45507b4d3054733dcdf2f493a99a928e6eff956967e698b3b03c9946e0128a4`;
+- Windows attempt-2 artifact `10972676564`:
+  `cf0767abae347cb8b21e7b338d06300abbd11e67abf4b3cc740afebc317a85a4`.
+
+Raw JUnit parsing proves on both accepted platforms:
+
+- exactly 16,617 unique identities in the frozen Task 2 order, with the unchanged
+  16,609-identity subsequence and exact eight additions;
+- no failure/error or Node, codec, target, qualification, or unexpected-native
+  skip;
+- four distinct family processes and request counts `62/65/17/21`;
+- direct fsync sums `14/43`, one 19-fsync receipt owner, and healthy totals
+  `33/62`;
+- exact qualification starts `1/1/1/1/1/3/0` and fsyncs
+  `0/0/0/0/4/0/0`, with no duplicate or extra `stage_b.*` property.
+
+Observed target testcase sums were Ubuntu `15.505s` for 205 / `15.442s` for 165
+and Windows attempt 2 `29.845s` for 205 / `29.432s` for 165. Complete testcase
+sums were `218.312s` and `588.074s`. These are single-run observations only;
+they do not establish speedup, p95, runner efficiency, or critical-path
+causation.
+
+**HOSTED CONCLUSION: PASS.** Exact provenance, artifact binding, identities,
+outcomes, accepted skips, raw properties, scope, executable bytes, and protected
+contracts pass using the retained rerun-aware evidence above.
