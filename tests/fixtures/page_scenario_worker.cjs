@@ -654,10 +654,14 @@ const BOOTSTRAP = String.raw`
   const safeRegExpSource = Function.call.bind(
     Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get
   );
-  const safeRegExpFlags = [
+  const safeRegExpFlags = [];
+  for (const key of [
     'hasIndices', 'global', 'ignoreCase', 'multiline', 'dotAll',
     'unicode', 'unicodeSets', 'sticky'
-  ].map(key => Function.call.bind(Object.getOwnPropertyDescriptor(RegExp.prototype, key).get));
+  ]) {
+    const descriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, key);
+    if (descriptor) safeArrayPush(safeRegExpFlags, Function.call.bind(descriptor.get));
+  }
   const assertionProxies = new WeakSet();
   const SafeProxy = Proxy;
   const safeRevocable = Proxy.revocable.bind(Proxy);
