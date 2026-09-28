@@ -328,6 +328,7 @@ def test_nothing_sends_the_engine_commands(source, lowered):
         "next_num",
         "next_alpha",
         "failed_binds",
+        "prime",
         "written",
     }, published
 

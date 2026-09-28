@@ -4217,6 +4217,19 @@ class Api:
                 "next_num": status.next_num,
                 "next_alpha": status.next_alpha,
                 "failed_binds": status.failed_binds,
+                # Bounded, strictly validated upstream (#295). Absent
+                # whenever the engine primed nothing, which is every Set
+                # Root path except a single selected bookmark.
+                "prime": (
+                    None
+                    if status.prime is None
+                    else {
+                        "jcode": status.prime.jcode,
+                        "flags": list(status.prime.flags),
+                        "event": status.prime.event,
+                        "captured": status.prime.captured,
+                    }
+                ),
                 # A failed start is otherwise invisible: this is the one
                 # actionable thing the user can be told ("the engine is
                 # missing, reinstall").
