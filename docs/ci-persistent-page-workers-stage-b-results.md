@@ -1,5 +1,13 @@
 # Persistent page workers — Stage B results
 
+**Current authority:** executable `a5bcadf629755bd44863a8ed6471400f41727565`.
+The **Final-review fix round — current local endpoint** section supersedes all
+prior local executable/evidence freezes below. Earlier Task 1–6 records and
+75-execution hashes remain historical. This evidence update is bound to the direct
+documentation child with subject `test: refreeze persistent page worker evidence`;
+its literal SHA is recorded locally after parent-owned creation. Publication
+remains stopped.
+
 ## Authority and exact source baseline
 
 Task 1 froze the merged PR #291 source at base
@@ -632,7 +640,7 @@ passed 963 tests in `114.64s`. JS smoke passed directly and through all seven
 pytest wrappers. Cargo passed its one regression test. Global Ruff lint and
 format passed (`521` Python files format-clean).
 
-The final candidate executable hashes are:
+The historical Task 5 candidate executable hashes are:
 
 | Path | SHA-256 |
 |---|---|
@@ -696,7 +704,7 @@ signature/decorator/body, diff-whitespace, restoration, registry, source, and
 recursive-manifest gates all pass. The Task 6 local freeze and fresh evidence are
 recorded below; independent maintainer review remains pending.
 
-### Task 6 polish, fresh verification, and local freeze
+### Historical Task 6 polish, fresh verification, and local freeze
 
 **Frozen executable head:** `a703f8d2b987a769979cd22d6daa680ab6e791ce`
 (`test: strengthen persistent worker mutation witnesses`). The worktree was
@@ -823,6 +831,198 @@ separately authorized logs-primary, rerun-aware Ubuntu/Windows hosted audit are
 still open. No live browser or Windows smoke run was required or performed for
 this test-only change. No timing or overall hosted acceptance claim is made.
 
+## Final-review fix round — current local endpoint
+
+**Frozen executable head:** `a5bcadf629755bd44863a8ed6471400f41727565`
+(`test: harden persistent worker scheduling`). Its parent is the historical
+evidence head `00a595c64b4c946697067fb0e69ec814b3dd2b74`. The parent agent
+created this authorized two-file fix commit after the subagent tool policy
+denied staging/commit. Its full SHA, subject, two paths and clean status were
+independently verified locally before the fresh runs below.
+
+**Evidence-only head binding:** the direct documentation-only child of that
+executable head with subject `test: refreeze persistent page worker evidence`
+(this evidence update). Its literal SHA is recorded in the local Task 6 report
+after parent-owned creation, avoiding a self-referential commit hash. At handoff,
+creation is pending and only the three authorized documents are modified; no
+clean-after-child claim is made. No executable edit followed the freeze or the
+verification below.
+
+### Four Important findings closed
+
+- **Callback checkpoint:** the scheduler selects one earliest-due callback, with
+  registration-order ties, then yields before another callback. The exact
+  `first, microtask, second` witness passes. A rejection created by the first
+  callback and caught only in the next is attributed to the current request,
+  business-fails it, and recovers in the same PID. A native Node subprocess
+  independently observes `first, microtask, unhandled, second`.
+- **Fatal terminal admission:** the first fatal synchronously closes admission,
+  closes readline and pauses stdin. Buffered lines, execution, and publication
+  check that state. Fatal stderr is bounded and single-write; an independent
+  100 ms timer exits 70 if the write callback stalls. Malformed and invalid lines
+  followed in the same buffered write by valid return/non-returning bodies emit
+  no reply, do not launch the stuck body, and terminate/reap with status 70 while
+  stdin remains open. No subsequent request is needed to exit.
+- **Bounded completion:** after settlement, four polls each query the mailbox,
+  advance the allowance, dispatch at most one callback and yield. The following
+  poll consumes the final mailbox and cleans up without dispatching. Dispatch
+  never resets the allowance. The nested rejection remains a current-request
+  failure; recurring immediates and overdue intervals finish with positive
+  pre-cleanup handles, zero cleanup and same-PID clean recovery. The defective
+  recurrence witness stops itself after 16 callbacks so mutation RED is a
+  specific failure rather than a process timeout.
+- **Strict assertions:** VM-owned `equal` uses SameValue; the relevant deep
+  comparisons check primitive SameValue, arrays/own enumerable keys/prototypes,
+  object data descriptors, Date and RegExp values, and qualified cycles. The
+  24-case native differential covers signed zero, NaN, Date, RegExp, extra array
+  properties, holes, prototypes, symbols, cycles and nested fixture shapes.
+  Accessor, Proxy, revoked Proxy and proxy-prototype controls prove no getter or
+  trap is invoked. Host assertion functions/objects are never injected. All
+  actual fixture assertions remain unchanged and execute under the stricter
+  facade; the original direct entrypoints still use native assertions.
+
+These are internal subcases in the existing seven qualifications. There are no
+new pytest IDs, changed business assertions, timeouts, public interfaces or
+production paths. The initial two qualification RED failures reached the exact
+callback-order and callback-rejection assertions. Independent disposable RED
+subcases also reproduced unbounded immediate/interval draining, weak strict
+assertions and buffered fatal admission. Their restored qualifications passed.
+The retained RED files are `/tmp/stage-b-final-fix-red.xml` and
+`/tmp/stage-b-fix/red-subcases.json`; all fresh final records are under
+`/tmp/stage-b-fix/`.
+
+### Fresh Task 5/6 verification
+
+Every run below was a fresh process on the frozen executable. Pytest commands
+used `uv run --no-sync python -m pytest`, `-q -rs`, and raw JUnit; the complete
+suite added `--durations=50`. Collection used the retained structured collector,
+explicit ID conversion and byte equality with the frozen Task 2 files. Ordered
+runs validated the canonical ID lists before passing them to pytest. Exact argv,
+exit status, process elapsed and outputs are paired command JSON/log artifacts.
+No failed business, order, full-suite or mutation run was retried to obtain green.
+
+| Selection/order | Outcome | Pytest time | Process elapsed | Raw JUnit SHA-256 |
+|---|---:|---:|---:|---|
+| Helper | 13 passed | `5.27s` | `7.88s` | `7dbadc71d6c78efbc62ba1d4b317735447245c0432493fc9e8bea2131e0f445f` |
+| Qualification | 7 passed | `10.52s` | `13.22s` | `fb8eab996450fe8837f4e1fee549185eeb0b92a8327d477fe5b5c276b1fe127d` |
+| Saved family | 62 passed | `7.19s` | `9.85s` | `43d87bdefca6fb547f134afa6423a6345dac870800f1d1218238490e2c9e9db1` |
+| Relevant | 225 passed | `38.44s` | `41.21s` | `f40618914651c858a18076c383ea85d8dbae2ea635f53dafbbdbc1aabbb7e4b0` |
+| Existing target | 205 passed | `25.00s` | `27.74s` | `e997dbf428741d5e3454ba7d6ccf4c3d574416e31ea02d7499ef2438e6421eda` |
+| Node normal | 165 passed | `21.31s` | `24.84s` | `3a723d19ee42316d9d35b9e2569e7b9d7a1eafe61a0d50227886cc743494f922` |
+| Node reverse | 165 passed | `21.26s` | `24.78s` | `854f544902cb06684821a2cb7f923457871c047a56a8dce5dbe942d3a0c06f28` |
+| Node seed-20260926 shuffle | 165 passed | `21.58s` | `25.12s` | `dc55f423b56fedbe3f017e3e6ae72e4aa5e09308d519b0ddbae8d3d300772695` |
+| Node cross-family | 165 passed | `21.35s` | `24.88s` | `72ed27dac7b817100d0c3d9b3829c3c150e391aa2aecbdba924128a17275c2bb` |
+| Complete Linux | 16603 passed, 14 skipped | `462.43s` | `468.32s` | `d6f89a8d8964b03f1a3c083a27748469abe09717ad16f6bebc073119c25308a3` |
+
+The relevant/full ordered ID hashes remain
+`bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe` and
+`d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
+Their structured reports and ID files are byte-equal to the frozen Task 2
+225/16,617 orders; the 217/16,609 baseline subsequences and eight additions remain
+exact. All 14 normalized Linux skips equal accepted Stage A. No Node, codec,
+target, qualification or unexpected native skip occurred.
+
+Raw-property audits passed on the relevant, full, target and every Node order:
+four family PIDs, ordinal sets `1..62/65/17/21`, direct fsync sums `14/43`, one
+receipt owner/value `19`, healthy totals `33/62`, qualification starts
+`1/1/1/1/1/3/0`, qualification fsyncs `0/0/0/0/4/0/0`, and no duplicate,
+missing, unexpected-owner or extra property. Full testcase sum is `422.086s`;
+XML suite time is `462.190s`. Timing values are observations, not acceptance
+thresholds or speedup/critical-path claims.
+
+Supplementary fresh gates passed:
+
+- saved reverse/shuffle (62 each), standalone sharing/group/marker (65/17/21),
+  both saved/qualification orders (69 each), and qualification-first with helper
+  (82); the latter three runs prove exactly `14+19+4=37` fsyncs;
+- seven representative single-ID runs with request ordinal one; four family
+  A-A-B-A sequences and saved main/owner/capture/dev/main, with one family PID,
+  fresh source execution one and zero cleanup;
+- seven-case/six-entrypoint direct matrix, retaining all 21 success/missing-argv/
+  corrupt-input subprocess streams and exact terminal/dev diagnostics;
+- locked uv sync, Node `v26.5.0`, locked release codec build/install and actual
+  bundled-path availability; installed/release SHA-256 remains
+  `4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`;
+- Cargo 1, DOM 35, JS smoke directly plus 7 pytest wrappers, previous-worker
+  selection 963, packaging/version 110, global Ruff lint/format (521 files),
+  documentation 7, ten CJS syntax checks, Python compilation and ID-loader checks;
+- exact six signature substitutions, unchanged decorators, unchanged ASTs for
+  the 12 nonconverted test functions / 40 rows, saved CJS bodies unchanged
+  outside wrappers, numeric-validator-only helper change, all 15 protected
+  hashes and exact 17-path cumulative scope.
+
+### Current mutation and manifest authority
+
+All 71 names were rerun in declared order, partitioned `14/16/41`, producing
+`16/17/53 = 86` executions. Every execution reached its exact registered
+sentinel, rejected masking, restored bytes/SHA-256/binary diff/NUL status and
+passed its registered recovery command. The separate raw-result re-audit
+covered 154 XML files; the seven representative executions remain exact.
+The previous 75-execution evidence is historical, not reused for this runtime.
+
+The existing final-drain recipe now shortens the real checkpoint allowance; the
+boundary-turn recipe batches real due callbacks. Eleven added internal variants
+cover buffered fatal admission, immediate/interval quiescence, callback order,
+strict equal, primitive SameValue, Date, array extras, prototype identity, Proxy
+inspection and RegExp values. The canonical names, typed owners, partition,
+anti-mask companions and restoration rules remain unchanged.
+
+| Authority | SHA-256 |
+|---|---|
+| Task 3 mutation results | `86d4420300d6c635e6dec1d395d58a32a112658be19b650647270106d4ec77b1` |
+| Task 4 mutation results | `87c7e7dd75a656441244d13f04e3373a793560ad08d72c81202e8cde2e6bf73a` |
+| Task 5 mutation results | `24b28eb44b9e109c682afa301a047538d87692607cf421219635dfcc2e5c75d1` |
+| Registry manifest | `b05a674ff5afe0884df896beede53981f9376d6dbd308ef0dda6a5faf6b0e945` |
+| Source manifest | `4e12ecea77d141014df3f7b95f46ede556a10b492884615b60df88e1ceb1ec74` |
+| Recursive artifact manifest | `fcba10c3c845734bb275cf15df7a24097e1aec2e9fd6bc30f2c8ef2e88ea6747` |
+| Representative executions | `3e07d99705451c19989331841afb71f4e2f4240c084258747b59ce09a7f2ee47` |
+| Mutation summary / raw XML hashes | `3c19ac1b1a3b58098f16b64b6ce20ed5571efb3f1544dfd212c9410ca12eed06` |
+| Full timing summary | `3f15e324acb77057b3ef901ab5a1507cf27c2455b089b34f10c3bf9ab9ad93b3` |
+
+The final external collector/registry/restoration/manifest suites pass 61 checks.
+The prior authorities are retained separately before the explicit manifest
+regeneration. The attempted regex-containing registry command was denied without
+execution; the implemented array-key recipe instead uses a numeric-key predicate,
+not an encoded blocked character. Local script import ordering/formatting needed
+cleanup, recorded in its failing lint log; these tooling-only changes did not
+alter repository executables or mask a failed runtime gate.
+
+### Current executable hashes
+
+| Path | SHA-256 |
+|---|---|
+| `tests/fixtures/fleetsharing_page.cjs` | `512a5736f31ea0f483ffe5037ba670a4c65ac6db0b1f7bd52497df643cb6f78a` |
+| `tests/fixtures/page_scenario_worker.cjs` | `71280b400c8c57fdfb8bcd47148bbda5bad6adfd99a9ff3e3dcb95164956e3a7` |
+| `tests/fixtures/preview_capture_sessions.cjs` | `25f872cf26769681dbce85e2809883190b0d76fd1f02e8147c0d32fd1f2d9691` |
+| `tests/fixtures/preview_dev_capture.cjs` | `d1bb23f5d0dc4b1c33921819a5a12d6a6adb98f22f182ee58f1723530d36cdc5` |
+| `tests/fixtures/preview_group_backward.cjs` | `2eddb4cb6d2aa7cbca3e5e304ebc74f4bbab7d40c4228bf28be7ef4e44a4be1b` |
+| `tests/fixtures/preview_labelmarkers.cjs` | `b98469ca8c1a208ec9e6104cfb3e05bc415e5bf6351f0ba7a4e0cb08ed7221ee` |
+| `tests/fixtures/preview_savedlayouts.cjs` | `19c56f15b34ad9cd6c824456268c16d8f3900d68d13d2c3b8d5e128bd9bf15bf` |
+| `tests/node_scenario_worker.py` | `d478a76f4c59f3a807fc56498f1c29269c5a7019f5b95eee6050751ff2bde0af` |
+| `tests/test_fleetsharing_hydration.py` | `f79391237114b15a64829cae29f6e0733b037d6399e31d0db3408d6146e4c3ce` |
+| `tests/test_node_scenario_worker.py` | `154ff76e9b2a71d32c3e8214fc184b612b79db3021a1eee65fcc5788867f76fa` |
+| `tests/test_persistent_page_workers.py` | `a4882080ece4baa17df46f006023ecdd06ed2146c510556b861d13ee0a93d34f` |
+| `tests/test_preview_group_backward.py` | `e904e5e6c2fa72fc5c3ab6655feacd5a19aa02bd84b27e9d2aba44299756f143` |
+| `tests/test_preview_labelmarkers_page.py` | `ad19bb7c978dccf08a0c3fb90e622f7ddd47d172ce687a505341709bb5f49bbb` |
+| `tests/test_preview_savedlayouts_page.py` | `aa609f34b95880a59875b6a8f29106dd137f55305f66035262968322b325eab3` |
+
+### Polish, explanation and remaining boundary
+
+Changed-diff `polish-core --fix` examined the full worker and qualifications,
+relevant helper/lifecycle code, current plan/spec/results and mutation ownership,
+with Python and CommonJS rules. No additional safe executable fix was selected.
+The work remains test-only and preserves the real fixture bodies, direct CLI
+contracts, existing Python worker lifecycle and canonical receipt ownership.
+No consolidation, retry, target host-import or production change was introduced.
+
+Reviewer focus is the one-callback yield, fourth-checkpoint/final-query cutoff,
+fatal admission fence versus buffered input, and assertion/proxy inspection.
+The four supplied Important findings are addressed; independent scoped rereview
+is still pending. This local self-review does not certify maintainer approval.
+Hosted Ubuntu/Windows acceptance, publication and timing attribution remain open.
+No subagents, remote/API operation, push, PR, dispatch/rerun, merge, release or
+installation into the user application was performed.
+
 ## Publication stop and hosted evidence
 
 The accepted Stage A hosted evidence was re-audited read-only and classified
@@ -845,8 +1045,8 @@ and exact post-creation identity orders. Task 3 additionally proves real
 saved-family execution, one healthy saved PID, 62 requests, and the saved
 `1,059 -> 33` fsync endpoint. Task 4 proves all four real families, four healthy
 business PIDs, 165 requests, the all-205 62-fsync endpoint, exact order
-independence, and its 16-recipe mutation slice. Task 5 proves the current-source
-71-recipe/75-execution mutation matrix, direct compatibility, exact local
+independence, and its 16-recipe mutation slice. The historical Task 5 record proves
+its then-current 71-recipe/75-execution mutation matrix, direct compatibility, exact local
 16,617 outcome and skips, final properties, protected hashes, and exact 17-path
 scope. Task 6 additionally records local polish, fresh verification and frozen-head
 separation. It does not claim independent maintainer approval, publication or

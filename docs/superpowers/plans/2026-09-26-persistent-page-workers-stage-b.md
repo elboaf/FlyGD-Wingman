@@ -12,22 +12,31 @@
 
 ## Execution status — Task 6 local publication stop
 
-Tasks 1–5 are complete with their task-review corrections and recorded evidence.
-Task 6 local polish, self-review, fresh verification, explanation and head freeze
-are complete. No executable correction was selected by `polish-core --fix` over
-`203d2068..a703f8d2b987a769979cd22d6daa680ab6e791ce`. Frozen executable head:
-`a703f8d2b987a769979cd22d6daa680ab6e791ce`. The evidence-only head is the
-subsequent documentation commit identified in the results ledger, not a new
-executable candidate.
+Tasks 1–5 and the repeated Task 6 local gates are complete at executable head
+`a5bcadf629755bd44863a8ed6471400f41727565`
+(`test: harden persistent worker scheduling`). The supplied final whole-branch
+review required four runtime corrections after the historical `a703f8d2` /
+`00a595c6` freeze: callback-level checkpoints, terminal fatal admission, bounded
+completion draining, and strict VM-owned assertion semantics. They are now
+implemented with internal witnesses in the existing seven qualification IDs.
 
-Task 6 Step 3 remains partially open: self-review is complete, but no independent
-review was commissioned because the execution request expressly forbids subagents.
-Maintainer review is required; this is not self-certification of independent
-approval. Steps 7–10 are not executed. Do not push, open/update a PR, dispatch or
-rerun Actions, or collect candidate hosted artifacts without separate explicit
-authorization. Hosted Ubuntu/Windows acceptance and any performance claim remain
-unestablished. Historical task instructions below retain their execution sequence;
-this status and the results ledger describe the final local endpoint.
+Changed-diff `polish-core --fix` selected no additional executable fix. Every
+required Task 5/6 gate was run fresh on the new head, including all 71 canonical
+mutation recipes / 86 executions with exact restoration, full 16,603 passes plus
+14 expected Linux skips, all four orders and raw-property audits. Results and
+hashes are recorded in the results ledger and local Task 6 report.
+
+The three-document evidence update is bound to a direct child with subject
+`test: refreeze persistent page worker evidence`. Staging and commit remain
+parent-owned because this subagent policy denies Git mutations. The executable
+head is not the evidence head; its literal SHA is recorded locally after creation.
+
+Task 6 Step 3 remains open for scoped independent rereview of the supplied
+findings. Self-review is complete and does not certify independent approval.
+Steps 7–10 remain unexecuted: no remote operation, push, PR, Actions run/rerun or
+candidate artifact collection is authorized. Historical task records below keep
+the original sequence; the current cutoff and final local evidence supersede the
+earlier freeze rather than reusing its runtime evidence.
 
 ## Global Constraints
 
@@ -58,6 +67,39 @@ this status and the results ledger describe the final local endpoint.
 - Every intermediate implementation commit is green for its changed component and all already-converted consumers.
 
 ---
+
+## Final-review cutoff and mutation correction
+
+The current scheduler consumes mailbox records before each poll, dispatches no
+more than one due callback (earliest deadline, registration-order ties), then
+yields for microtasks and native unhandled-rejection delivery. The qualification
+orders are exact: `first, microtask, second`; a rejection created in the first
+callback and handled in the second still business-fails the current request and
+recovers in the same PID.
+
+Once business completion settles, four polls each consume the previous mailbox,
+advance the completion budget even if idle, dispatch at most one due callback,
+and yield. The next poll consumes the fourth checkpoint mailbox and cleans up
+without dispatching again. Dispatch never resets the budget. Recurring and future
+timers are canceled even when still due; no quiescence wait is permitted. The
+three-level nested rejection remains covered. Immediate/overdue-interval
+witnesses require positive pre-cleanup handles, zero cleanup and healthy recovery.
+
+The first fatal synchronously closes admission, closes readline and pauses stdin.
+Queued iterator lines, request execution and publication all check that state.
+Fatal output is single-write bounded stderr, with independent status-70 exit
+scheduled by a 100 ms fallback timer; it never waits for a following request or EOF.
+The strict assertion facade remains VM-owned; native differential and safe
+accessor/proxy witnesses extend cleanup-success without changing fixture assertions.
+
+The canonical registry stays at `14/16/41 = 71` names and typed owners. Eleven
+internal variants extend the previous 75 to 86 executions: one buffered-admission,
+two recurring-timer cutoff, one callback-order, and seven strict assertion defects.
+`rejection-boundary-turn` now batches real due callbacks, and
+`rejection-final-timer-drain` shortens the real checkpoint allowance. Every recipe
+and variant retains exact sentinels, anti-masking checks and byte/hash/diff/status
+restoration. All phase records were rerun in declared order (`16/17/53`
+executions), not retained from the prior executable freeze.
 
 ## Exact File Structure and Ownership
 
@@ -2187,11 +2229,27 @@ non-plain objects, and prototype-pollution keys before host reserialization.
 Malformed NDJSON and validation failures call:
 
 ```javascript
+let admissionClosed = false;
+let inputLines = null;
+
 function fatalProtocol(message, error = null) {
-  const detail = error && isNativeError(error)
-    ? message + ': ' + String(error.stack || error.message)
-    : message;
-  process.stderr.write(detail.slice(0, 65536) + '\n', () => process.exit(70));
+  if (admissionClosed) return;
+  admissionClosed = true;
+  // Closing readline does not discard its async iterator queue. Every admission
+  // and publication path also checks the terminal flag, before doing any work.
+  if (inputLines !== null) inputLines.close();
+  process.stdin.pause();
+  // A blocked stderr pipe must not postpone process death or reopen admission.
+  setTimeout(() => process.exit(70), 100);
+  let detail = message;
+  try {
+    if (error && isNativeError(error)) {
+      detail += ': ' + hostString(error.stack || error.message);
+    }
+    process.stderr.write(detail.slice(0, 65536) + '\n', () => process.exit(70));
+  } catch (_error) {
+    process.exit(70);
+  }
 }
 ```
 
@@ -2298,18 +2356,13 @@ strings; it exposes no stdout, stderr, environment, native handles, or exit
 function.
 
 The bootstrap returns one VM-owned `poll(now, mailboxJson)` function. No host
-function remains in the VM after bootstrap. `poll` first consumes primitive
-rejection/dispatch records and dispatches due virtual timers inside the VM. If
-it dispatches any due callback, it resets the completion boundary and returns
-`null` for that poll; the host then yields one `setImmediate` turn so a rejection
-from that callback reaches the active request mailbox, and the next poll consumes
-that mailbox before publication. Future timers that are not due do not hold the
-request open and remain subject to ordinary cleanup. Only a poll that dispatched
-no due callback may advance the post-business boundary, cancel all virtual
-handles/listeners, serialize with captured intrinsics, and return one primitive
-reply JSON string. The host calls it with `performance.now()` and primitive
-mailbox JSON; it never receives a VM callback and never injects a native timer
-handle.
+function remains in the VM after bootstrap. Follow the explicit final-review
+cutoff above: consume the mailbox, select at most one due callback, return `null`
+and yield before another callback. After settlement, allow four such checkpoints;
+the next poll consumes the final mailbox and cleans up without another dispatch.
+Never reset the completion budget on dispatch or require timer quiescence. The
+host passes only `performance.now()` and primitive mailbox JSON, and receives
+only `null` or primitive reply JSON; no VM callback or native timer handle crosses.
 
 - [ ] **Step 8: Implement rejection ownership and defensive detachment**
 
@@ -2430,12 +2483,12 @@ three-level nested final-timer `Promise.reject`. It also recursively constructs 
 native TypeError with an over-limit escaped message and escaped/newline/control-
 heavy stack, rejects it before completion, and requires the detached message and
 stack to reach their respective 8192/32768 limits while retaining a real frame.
-The next clean request must use the same PID. Any poll that dispatches a due timer
-must return `null` and reset its completion boundary; the next host turn captures
-the rejection and the next poll consumes it before publication. The nested
-rejection is therefore an `ok:false` business failure followed by clean same-PID
-recovery. One fatal request and the separate late post-success rejection retain
-their existing process-crash ownership. After every retainable failure, assert a
+The next clean request must use the same PID. Every dispatch returns `null` and
+yields before any further callback. The next poll consumes its rejection mailbox;
+the four post-settlement checkpoints and final no-dispatch query preserve the
+nested rejection as an `ok:false` business failure with clean same-PID recovery.
+A callback must never reset the completion budget. One fatal request and the
+separate late post-success rejection retain their existing process-crash ownership. After every retainable failure, assert a
 clean request in the same PID. This permanent identity exercises exactly one
 representative fatal request on its property-counted worker: a family-valid
 scenario whose payload object is missing the required `input` key. Process A
@@ -3523,7 +3576,10 @@ edits with real later-request completion reuse, removed forced module-witness
 results, made module isolation cumulative across every CommonJS execution,
 made the host-import recipe retain exact `screenshot_dom.cjs` cache/child paths,
 and split the String witness into `detachJson` and `encodeJson` variants. Four
-additional internal executions now produce the exact 75-execution matrix.
+additional internal executions produced the historical 75-execution matrix.
+The final-review correction adds eleven internal executions and reruns all 71
+canonical recipes as 86 executions against `a5bcadf629755bd44863a8ed6471400f41727565`,
+as specified in the current cutoff/mutation section and results ledger.
 
 - [x] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
 
@@ -3714,7 +3770,7 @@ bounded, direct CLI behavior, failure semantics, receipt lifetime, mutation
 proof, exact verification, deviations, remaining risks, and reviewer focus. Do
 not reference local scratch paths in a future PR description.
 
-- [x] **Step 5: Freeze executable head and commit evidence only**
+- [ ] **Step 5: Freeze executable head and commit evidence only**
 
 If review required executable corrections, commit them with a narrowly accurate
 message and rerun Step 2. Then freeze:
@@ -3736,7 +3792,7 @@ git add \
   docs/ci-persistent-page-workers-stage-b-results.md
 git diff --cached --name-only
 git diff --cached --check
-git commit -m "test: finalize persistent page workers Stage B"
+git commit -m "test: refreeze persistent page worker evidence"
 EVIDENCE_HEAD=$(git rev-parse HEAD)
 test "${#EVIDENCE_HEAD}" -eq 40
 test -z "$(git status --porcelain=v2 --untracked-files=all)"

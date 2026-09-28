@@ -2,12 +2,15 @@
 
 ## Status
 
-Approved design; Task 6 local polish and fresh verification are complete at frozen
-executable head `a703f8d2b987a769979cd22d6daa680ab6e791ce`. Independent
-maintainer review and hosted acceptance remain pending. The documentation-only
-evidence head is identified separately in the results ledger. No publication is
-authorized. This document retains the bounded design, disposable feasibility
-evidence, and approved Task 4 and Task 5 review corrections.
+Approved design with the four final-review corrections. The current frozen
+executable head is `a5bcadf629755bd44863a8ed6471400f41727565`
+(`test: harden persistent worker scheduling`). Fresh Task 5/6 local verification,
+including all 71 canonical mutations and 86 internal executions, is complete.
+The evidence-only update is bound to a direct documentation child named
+`test: refreeze persistent page worker evidence`; its commit remains parent-owned.
+The earlier `a703f8d2` executable / `00a595c6` evidence freeze is historical,
+not evidence for this runtime. Scoped independent rereview and hosted acceptance
+remain pending. No publication is authorized.
 
 Stage B changes test architecture only. It replaces 165 one-shot Node launches
 in four Python test files with four family-local, session-scoped workers and
@@ -515,6 +518,28 @@ VM. The family selection and production source unions remain:
 | group backward | group backward | `app.js`, `previews.js`, `panel.js`, `dev.js` |
 | label markers | label markers | `app.js`, `previews.js`, `panel.js` |
 
+### VM-owned strict assertions
+
+The limited assertion facade stays entirely inside the request VM. Its relevant
+`node:assert/strict` decisions are pinned differentially against a separate native
+Node process: `equal` uses captured `Object.is` (SameValue), and `deepEqual` uses
+SameValue for leaves, array length/index and enumerable extra own-key checks,
+prototype identity, own enumerable data descriptors (including symbol keys),
+Date values, RegExp source/flags/lastIndex, and the qualified self-cycle shapes.
+Non-enumerable ordinary-object properties are ignored. This is the fixture-used
+subset, not a replacement implementation of every Node assertion API or exotic
+object type.
+
+The VM wraps its own Proxy constructor and revocable factory to record proxy
+identities in a VM-local WeakSet. Deep assertion inspection rejects those values
+and proxy prototype chains before invoking traps; enumerable accessors are
+rejected without invoking getters. Captured VM intrinsics, descriptor reads,
+and bounded key/depth walks avoid injecting host assertion functions or objects.
+The existing fixture assertions are unchanged: all 165 business rows execute the
+new facade, while the six-entrypoint direct matrix independently uses native
+assertions. The cleanup-success identity owns the differential and safety cases;
+no additional pytest identity is introduced.
+
 ### Source-text execution and one-shot compatibility
 
 The six existing CJS files remain the authoritative direct CLI programs. The
@@ -676,6 +701,17 @@ a structurally valid but semantically invalid business input executes its
 adapter, returns a detached `ok:false` business payload, and leaves the process
 retainable. Qualification pins both sides of this boundary.
 
+The first fatal event synchronously sets terminal `admissionClosed` state, closes
+readline admission, and pauses stdin. Closing readline alone is insufficient:
+its already-buffered iterator lines are checked before service, and both
+`executeRequest` and reply publication check the terminal flag. Fatal handling is
+idempotent and writes at most one bounded stderr diagnostic. A separate 100 ms
+host timer exits with status 70 even if the stderr callback cannot complete;
+no later request or EOF is needed to terminate. Malformed/invalid then valid
+buffered pairs are qualified with stdin deliberately open. A valid non-returning
+body is a launch witness: it would prevent the old callback-only fatal exit, so
+status 70 and no reply prove that body was never admitted. Every probe is reaped.
+
 The Node host parses the line only to validate primitive envelope fields and
 select the primitive program source. It immediately reserializes the payload to
 text with finite-JSON enforcement. The parsed host object is never assigned into
@@ -826,38 +862,52 @@ VM.
 ### Timers and asynchronous completion
 
 VM-local `setTimeout`, `setInterval`, `setImmediate`, and clear functions retain
-VM callbacks and primitive due times in a request-local scheduler. The host
-polls/drains that scheduler at event-loop turns; it never receives a VM callback
-or gives the VM a native handle. This preserves the real microtask-before-next-
-turn behavior required by Fleet Sharing and the existing `tick` helpers without
-sharing host timers.
+VM callbacks and primitive due times in a request-local scheduler. The host never
+receives those callbacks or exposes native handles to the VM. Each scheduling poll
+consumes the primitive rejection mailbox, selects **at most one** due callback by earliest
+due time (registration ID breaks ties), dispatches it, and returns `null`.
+The host yields through `setImmediate` before another poll, allowing VM microtasks
+and native `unhandledRejection` delivery before the next callback. Qualification
+pins `first, microtask, second`, and a callback rejection with a handler attached
+only in the next callback must fail the current request and recover in the same
+PID, matching the independently observed native unhandled event.
 
-The async request body writes its result into lexical VM state and uses
-`async`/`await`, not mutable `Promise.prototype.then`, for finalization. After the
-selected program settles it drains VM microtasks and one request-owned zero-delay
-timer turn, then queries already-primitive unhandled-rejection and timer-dispatch
-failure records. That query occurs before a primitive success completion can be
-published. The host poll sees completion only after:
+The async body uses lexical `async`/`await`, not mutable `Promise.prototype.then`.
+After the exported business completion settles, the cutoff is explicitly bounded:
 
-1. the selected program settles;
-2. the microtask/request-timer rejection boundary is drained and queried;
-3. diagnostics and error/reason are detached;
-4. every request-local timer/interval/immediate is canceled;
-5. every tracked real and synthetic DOM listener is removed with its owning
-   Element implementation, all real listener maps are verified empty, and
-   callback/DOM registries are released; a removal failure is fatal before any
-   reply;
-6. the host removes the context from its retained-realm Set through one release
-   helper, independently derives `cleanup.retained_realms` from that Set, and
-   treats a nonzero count as fatal before reply; `finally` repeats release and
-   worker shutdown clears the Set;
-7. the reply is serialized with captured pristine intrinsics; and
-8. no host callback, timer handle, raw rejection, promise, or VM realm is
-   retained by process state.
+1. Each of the next **four** polls consumes the preceding mailbox, advances the
+   completion checkpoint count once (even if idle), dispatches at most one due
+   callback, returns `null`, and yields to host microtasks/rejection delivery.
+2. The following poll first consumes that final mailbox and then performs cleanup
+   **without dispatching another callback**. A failure observed at the fourth
+   checkpoint therefore still replaces success before publication.
+3. Dispatch never resets this post-settlement budget. Due recurring callbacks and
+   future timers are canceled at cutoff; timer quiescence is not a requirement.
+   Before settlement, polling may continue until business completion or the
+   unchanged Python request deadline. Unresolved unrelated promises do not delay it.
 
-Unresolved promises do not delay completion when the business program has
-settled; they become unreachable with the realm. If the business program itself
-never settles, the Python request timeout discards the process.
+The existing three-level nested rejection remains inside this allowance. The
+self-rescheduling immediate and deliberately overdue interval witnesses return
+with positive registered handle counts, zero cleanup, and healthy same-PID clean
+requests. A safety stop after 16 callbacks makes a defective quiescence scheduler
+produce a specific business failure rather than a hung mutation child; restored
+completion dispatches at most one pre-settlement plus four post-settlement
+callbacks in these witnesses.
+
+Before any reply is published:
+
+1. the bounded mailbox/callback/microtask/rejection cutoff above is completed;
+2. diagnostics and error/reason are detached;
+3. every request-local timer, interval and immediate is canceled;
+4. every tracked real and synthetic DOM listener is removed with its owning
+   Element implementation, actual listener maps are verified empty, and callback
+   and DOM registries are released; a removal failure is fatal;
+5. the host removes the context from its retained-realm Set, derives
+   `cleanup.retained_realms` independently and treats nonzero as fatal; `finally`
+   repeats release and worker shutdown clears the Set;
+6. the reply is serialized with captured pristine intrinsics; and
+7. no host callback, timer handle, raw rejection, promise, or VM realm remains in
+   process state.
 
 ### Unhandled rejection ownership and completion boundary
 
@@ -874,14 +924,13 @@ carried into another request. Timer-dispatch failures use the same immediate
 origin-realm serialization path. A serialization failure is fatal protocol
 failure, not a reason to retain the raw value.
 
-The VM request body owns the final query. After its business body settles it
-allows microtasks and one request-owned timer turn to run, then synchronously
-queries the primitive mailbox supplied on the host's poll call for the already-
-detached rejection/dispatch records before it can send primitive success
-completion. A rejection observed before or at that
-boundary replaces success with a detached `ok:false` business failure and the
-same process remains usable after listener/timer/realm cleanup. The active
-listener is removed and the realm is released before reply publication.
+The VM poll owns the final query. It consumes the primitive mailbox before each
+callback and after the four post-settlement checkpoints described above. Any
+observed rejection through that final query replaces success with detached
+`ok:false`; cleanup finishes and the same process remains usable. The request
+listener is removed and the realm released before reply publication. No callback
+is dispatched after the final query, so a canceled fifth/future timer cannot
+extend the request or leak its rejection into another request.
 
 A process-level fail-fast backstop owns any rejection observed with no active
 request. The serial read loop includes a post-reply turn before admitting the
@@ -1264,9 +1313,19 @@ is tied to the named assertion, has an explicit restoration check, and is
 followed by a clean anti-masking run. A failure caused only by leaving the probe
 installed is not evidence.
 
-The canonical registry remains exactly `14/16/41` recipes and 71 names. Its
-current review-qualified matrix has 75 executions because the pristine-String
-recipe owns separate `detachJson` and `encodeJson` array-index variants. Task 5
+The canonical registry remains exactly `14/16/41` recipes and 71 names. The
+current final-review matrix has **86 executions** (`16/17/53` by phase), all
+rerun against the current executable. Eleven internal executions extend the
+historical 75: buffered fatal admission under `protocol-fatal-no-replay`; immediate
+and interval quiescence under `cleanup-timer-cancellation`; and batching plus
+seven strict assertion variants under `cleanup-before-reply`. The existing
+`rejection-boundary-turn` now batches callbacks substantively, while
+`rejection-final-timer-drain` shortens the actual completion allowance. Names,
+owner identities, canonical sentinels, partition and restoration rules are
+unchanged. Variant-specific sentinels are bound in the same literal registry.
+
+The historical 75-execution matrix already included separate pristine-String
+`detachJson` and `encodeJson` array-index variants. Earlier Task 5
 qualification corrected 18 edit loci whose Task 1 source bytes were superseded
 by the final Task 2–4 implementation: the three unmatched bool-ID
 recipes, `schema-bool-duration-discarded`, `schema-missing-fields-discarded`,
@@ -1623,10 +1682,11 @@ docs/superpowers/plans/2026-09-26-persistent-page-workers-stage-b.md
 docs/ci-persistent-page-workers-stage-b-results.md
 ```
 
-The implemented local range contains exactly these 17 paths. Task 6 changes only
-the three authorized documentation paths; all 14 executable paths remain byte-
-identical to the frozen executable head. Generated probes and review reports
-remain unversioned local evidence.
+The implemented local range contains exactly these 17 paths. The final-review
+fix commit changes only the shared worker and its existing qualification module.
+The prepared evidence child changes only the three authorized documentation
+paths; all 14 executable paths remain byte-identical to the new frozen executable
+head. Generated probes and review reports remain unversioned local evidence.
 
 ## Rejected alternatives
 
