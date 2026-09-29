@@ -414,6 +414,12 @@ FindNextAlpha() {
         NextAlpha++
 }
 
+SafeCtrl(key) {
+    Send {Ctrl Down}%key%{Ctrl Up}
+    Sleep 10
+    Send {Ctrl Up}
+}
+
 FireRootFinisher(finChar, isAlpha) {
     global RootKey, RootJustFired, LastSigId, LastFinisherWasAlpha
     global UsedNums, UsedAlphas, NextNum, NextAlpha
@@ -488,12 +494,12 @@ FireRootFinisher(finChar, isAlpha) {
     ClipWait, 2
 
     if (!ReadyToIncrement) {
-        Send ^a
+        SafeCtrl("a")
         Sleep 50
     }
 
     Sleep 50
-    Send ^v
+    SafeCtrl("v")
 
     ReadyToIncrement     := False
     RootJustFired        := True
@@ -661,7 +667,7 @@ DoQ:
 ; which FireRootFinisher then wrote into real bookmarks while the status bar
 ; showed it like any ordinary signature.
 Clipboard := ""
-Send ^c
+SafeCtrl("c")
 Sleep 100
 ClipWait, 2
 if (ErrorLevel) {
@@ -679,7 +685,7 @@ Return
 
 DoSemi:
 Clipboard := ""
-Send ^c
+SafeCtrl("c")
 Sleep 100
 ClipWait, 2, 1
 ClipSaved := Clipboard
@@ -810,7 +816,7 @@ DoConvertScout:
 ; Read current clipboard
 ClipSaved := ClipboardAll
 Clipboard := ""
-Send ^c
+SafeCtrl("c")
 ClipWait, 2
 if (ErrorLevel) {
     Clipboard := ClipSaved
@@ -1097,9 +1103,9 @@ Return
 
 ReadField:
 Clipboard := ""
-Send ^a
+SafeCtrl("a")
 Sleep 50
-Send ^c
+SafeCtrl("c")
 ClipWait, 2
 ClipRaw := Clipboard
 Return
@@ -1134,7 +1140,7 @@ if (DashPos > 0) {
 } else {
     Clipboard := Raw
     ClipWait, 2
-    Send ^v
+    SafeCtrl("v")
     NewSuffix := ""
     NewE      := 0
     NewSlash  := 0
@@ -1212,7 +1218,7 @@ if (FinalC)
 Clipboard := Result
 ClipWait, 2
 Sleep 50
-Send ^v
+SafeCtrl("v")
 NewSuffix := ""
 NewE      := 0
 NewSlash  := 0
