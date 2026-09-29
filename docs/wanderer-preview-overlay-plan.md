@@ -10,6 +10,15 @@
 
 **Spec:** `../../preview-growth-design/docs/wanderer-preview-overlay-design.md` in the sibling worktree, design commit `2a22f640b09000dc49e6f1beb7b9b3852d7852bf`. API authority is deployed Wanderer commit `2ddff24516c27ecde7b175991fcd74d608a35932`, `docs/tracked-character-locations-api.md` and executing serializer/controller at that commit—not the supplied checkout HEAD or public PR #160.
 
+> **Scope update (issue #281, ADR 0001, 2026-09-29).** This plan still describes the
+> read-only preview-metadata pipeline accurately, but its "no map mutations"
+> constraint no longer holds unconditionally: the pre-jump prime handoff (#295/#297,
+> upstream guarzo/wanderer#163) added one narrow Wingman → Wanderer write pipeline
+> alongside it — a second, independently stored prime token, an outbound staging
+> attempt in `wingman/wanderer/staging.py`, and an optional "Bookmark API token"
+> field on the Wanderer API settings card (its own write lane, blank = off). The
+> read-only pipeline below is untouched by it. See `docs/adr/0001-prejump-prime-handoff-to-wanderer.md`.
+
 ## Global constraints and discovery decisions
 
 - Base `83b7741bd997b7e0ea951c894183e10e4c68ae3b`; configurable alerts merge `04e9e9b9` is present. Preserve its mailbox/priority semantics.

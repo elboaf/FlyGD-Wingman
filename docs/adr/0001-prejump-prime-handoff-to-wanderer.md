@@ -41,7 +41,9 @@ tracked character's location update creates a new connection.
 
 - The documented read-only/no-map-writes boundary is deliberately reversed
   for this one narrow pipeline; all other Wanderer interactions remain
-  read-only. Update AGENTS.md and the plan doc when the Wingman slice lands.
+  read-only. AGENTS.md (the `wanderer/` bullet), the `wingman.wanderer`
+  package docstring, and `docs/wanderer-preview-overlay-plan.md` now carry
+  the exception note (landed with slice D, #298).
 - The feature is inert unless the user supplies a prime token, and inert for
   any Set Root that is not a single-bookmark selection.
 - An already-mapped destination never has its name or flags touched.

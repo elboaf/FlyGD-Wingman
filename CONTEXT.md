@@ -30,7 +30,8 @@ _Avoid_: flag char, suffix
 A bounded record captured at Set Root time — root J-code, parsed finisher
 tags, EVE character ID, expected source solar system, map binding, event ID,
 expiry — staged on Wanderer and consumed at most once. Not a bookmark, not a
-clipboard value.
+clipboard value. The `e` tag maps to Wanderer's 4-hour EOL bucket
+(`time_status` 2), not the 1-hour bucket.
 _Avoid_: pre-jump flag, cached bookmark
 
 **Staging**:

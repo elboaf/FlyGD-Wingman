@@ -208,10 +208,21 @@ reached through injected seams or lazy `windll` binding):
   bundled sidecar (`packaging/settings-codec/`, our own crate) that is a pure
   stdin/stdout filter and never opens a file. `formations.py` and
   `formation_sharing.py` are pure and speak meters.
-- `wanderer/` — default-off, read-only map names for current primary preview
-  sessions. `model.py` pins the deployed v1 snapshot contract; `credentials.py`
-  DPAPI-protects the entire URL/map/token binding separately from settings.
-  `client.py` makes one bounded HTTPS attempt; `worker.py` retains one HTTP lane
+- `wanderer/` — default-off. Two pipelines, deliberately separated: (1) the
+  original read-only map names for current primary preview sessions (2) the
+  one deliberate write pipeline, pre-jump prime staging (#281, ADR 0001 in
+  `docs/adr/`): `staging.py` POSTs a bounded prime record (J-code, finisher
+  flags, event id) with a **prime token** — a second DPAPI-protected
+  credential, stored and enabled independently of the preview token; the
+  empty field is the feature's off switch. Only a single-selected-bookmark
+  Set Root primes, and the clipboard flow is byte-identical with the feature
+  on or off (pinned by `tests/test_engine_invariants.py`). The Wanderer
+  server consumes the prime at most once, inside the tracked movement flow
+  (upstream guarzo/wanderer#163); a 200 means staged, never consumed.
+  `model.py` pins the deployed v1 snapshot contract; `credentials.py`
+  DPAPI-protects the entire URL/map/token binding separately from settings
+  (the prime token has its own document). `client.py` makes one bounded HTTPS
+  attempt; `worker.py` retains one HTTP lane
   (Test included) and an independent monotonic expiry owner. A 304 never renews
   location deadlines; 401/403 headers clear cached names before body reads finish.
   `controller.py` persists before reconfiguration and fences the host generation
@@ -222,7 +233,9 @@ reached through injected seams or lazy `windll` binding):
   bounded by its current admitted roster (not recent-name CAP64); only its pump
   touches the existing two-line label. Final shutdown detaches/closes metadata
   admission before native destruction and retains timed-out owners. No location
-  history, ESI/OAuth, map writes, fleet-sharing publication or companion dependency.
+  history, ESI/OAuth, fleet-sharing publication or companion dependency; the
+  prime pipeline above is the single, narrow exception to no-map-writes
+  (ADR 0001).
 - `fleetsharing/` — default-off publisher of projected fleet telemetry to an
   external relay: `projection.py`, `crypto.py`, `model.py`, `state.py` are pure
   or local-persistence seams; `client.py` is the signed transport; `worker.py`
@@ -272,9 +285,10 @@ never overwrite field drafts. The form takes a full map URL and token; Python
 extracts the server address/map identifier, preserving the saved binding format.
 Test saves the submitted connection; blank tokens reuse only the current normalized
 binding, and Remove clears the server address, map identifier and token
-while retaining the independent enable preference. Both credentials ingest
-interchangeably: Enter in their field, or the Test connection click, which
-carries a pasted Bookmark API token draft after the connection write settles.
+while retaining the independent enable preference. Both credentials (preview token and prime token) have their own write lane:
+Enter in the field, or the Test connection click, which carries a pasted
+Bookmark API token draft after the connection write settles. The prime token
+is optional; while blank, Set Root primes nothing and staging stays idle.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts. Uploading and Previews also have
 static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`
