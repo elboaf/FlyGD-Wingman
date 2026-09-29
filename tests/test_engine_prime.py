@@ -124,22 +124,42 @@ def test_prime_parser_shape(source):
         assert token in text, token
 
 
-def test_prime_is_captured_only_on_the_single_bookmark_path(source):
+def test_prime_is_captured_only_on_the_single_bookmark_paths(source):
     """No-selection (empty clipboard) and whole-list (ZeroMode or a multi-
     line list) Set Root must leave the prime fields empty. The capture sits
-    inside the loop that fires once, on a lone A-Z0-9 first field, gated on
-    the same text's ValidCount being 1."""
+    inside the loop that fires once, gated on the same text's ValidCount
+    being 1 -- in BOTH single-bookmark shapes: a bare A-Z0-9 first field
+    and a hyphenated system bookmark (CODE-SYS ...), whose branch used to
+    set the root while silently priming nothing (#297 field report)."""
     body = _label_body(source, "DoSemi")
     assert "PrimeJCode    := RootKey" in body
-    capture = re.search(
+    # The ZeroMode branch (the whole-list path) sets no prime field: the only
+    # prime writes in DoSemi sit inside the two single-bookmark captures,
+    # each gated on ValidCount = 1 (the reset block at the top writes the
+    # empty state, which the earlier test_prime_fields_are_reset_on_every_
+    # set_root covers).
+    for name in ("PrimeJCode", "PrimeFlags", "PrimeEvent", "PrimeCaptured"):
+        writes = [
+            w
+            for w in re.findall(rf"^\s*{name}\s+:=\s*(.+)", body, re.MULTILINE)
+            if w not in ('""', "0")
+        ]
+        assert len(writes) == 2, (name, writes)
+    captures = re.findall(
         r"if \(ValidCount = 1\) \{\n(.*?)\n            \}", body, re.DOTALL
     )
-    assert capture, "the prime capture is not gated on ValidCount = 1"
-    # The ZeroMode branch (the whole-list path) sets no prime field: the only
-    # prime writes in DoSemi sit inside the single-bookmark capture.
-    for name in ("PrimeJCode", "PrimeFlags", "PrimeEvent", "PrimeCaptured"):
-        assert len(re.findall(rf"^{name}\s+:=", body, re.MULTILINE)) == 1, name
-    # The empty-clipboard early return happens before the capture.
+    assert len(captures) == 2, "expected exactly two ValidCount = 1 captures"
+    for capture in captures:
+        for name in ("PrimeJCode", "PrimeFlags", "PrimeEvent", "PrimeCaptured"):
+            assert re.search(rf"^\s*{name}\s+:=", capture, re.MULTILINE), (
+                name,
+                capture,
+            )
+    # The hyphenated capture parses the same first field the loop matched,
+    # so its flags come from the bookmark text, not from a different line.
+    hyphen_capture = [c for c in captures if "ParsePrimeFlags(FirstField)" in c]
+    assert len(hyphen_capture) == 2, "both captures must parse FirstField"
+    # The empty-clipboard early return happens before either capture.
     assert body.index('if (ClipSaved = "")') < body.index("PrimeJCode    := RootKey")
 
 

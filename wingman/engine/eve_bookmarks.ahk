@@ -727,6 +727,17 @@ if (ValidCount > 1 && AllPrefixesSingle(ClipSaved)) {
             RootKey        := Prefix
             RootModeActive := True
             ZeroMode       := False
+            ; WINGMAN (#295): a single hyphenated system bookmark ("CODE-SYS
+            ; [class] [tags]") is exactly as much a single-bookmark Set Root
+            ; as a bare code is. Capture the same prime here, with the J-code
+            ; being the prefix and the tags parsed from the same first field;
+            ; a multi-line list never reaches either capture.
+            if (ValidCount = 1) {
+                PrimeJCode    := RootKey
+                PrimeFlags    := ParsePrimeFlags(FirstField)
+                PrimeEvent    := PrimeCapturedTime()
+                PrimeCaptured := EpochNow()
+            }
             Break
         }
     }
