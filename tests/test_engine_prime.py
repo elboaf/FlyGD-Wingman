@@ -49,6 +49,12 @@ VECTORS = [
     ("J123456-ABC T", ""),
     ("J123456-ABC D", ""),
     ("J123456-ABC 3 / f", "/f"),
+    # Digit-prefix J-code shapes (#297 field report): the class suffix and
+    # the flags coexist in one field.
+    ("12-FFC 3 e c", "ec"),
+    ("12-FFC 3", ""),
+    ("12-FFC 3 / f", "/f"),
+    ("12-REZ", ""),
     # A letter inside a word is not a tag.
     ("J123456-ABC extra", ""),
     ("J123456-ABC eve", ""),
