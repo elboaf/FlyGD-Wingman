@@ -947,6 +947,34 @@ def rig_tmp(tmp_path):
     return tmp_path
 
 
+def test_startup_reports_a_stored_prime_credential(rig_tmp):
+    """A saved prime credential must surface in the initial state.
+
+    The flag is set from the load, not only from set_prime_token: after an
+    app restart the controller loads the credential at __init__, and the
+    page's "No prime token stored" line is driven by prime_credential_present
+    (#297 field report: the state flipped back to "no prime token" across a
+    restart while the credential was intact and staging stayed armed).
+    """
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        rig.start()
+        state = rig.controller.state()
+        assert state["prime_credential_present"] is True
+        assert "prime_token" not in json.dumps(state)
+    finally:
+        rig.close()
+
+
+def test_startup_reports_the_absence_of_a_prime_credential(rig_tmp):
+    rig = Rig(rig_tmp)
+    try:
+        rig.start()
+        assert rig.controller.state()["prime_credential_present"] is False
+    finally:
+        rig.close()
+
+
 def test_set_prime_token_saves_a_second_protected_credential(rig_tmp):
     rig = Rig(rig_tmp)
     try:

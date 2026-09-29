@@ -122,6 +122,11 @@ class WandererController:
             self._prime_token = self._load_prime(self._section)
         except OSError:
             self._prime_credential_error = True
+        # The main token does this for its own flag above; the prime flag must
+        # too, or a restart shows "No prime token stored" while the loaded
+        # credential keeps staging (#297 field report: the state flipped to
+        # "no prime token" across an app restart).
+        self._prime_credential_present = self._prime_token is not None
         # Events already staged by this controller instance. Bounded: at most
         # one prime exists until the engine overwrites it, and replacement
         # stages a new event, so a small ring is a whole history.
