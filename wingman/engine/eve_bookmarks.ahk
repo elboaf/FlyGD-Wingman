@@ -414,10 +414,20 @@ FindNextAlpha() {
         NextAlpha++
 }
 
+; Send a Ctrl-modified keystroke safely.
+; - If Ctrl is PHYSICALLY held (Ctrl+key hotkey): plain Send ^key. Manual
+;   {Ctrl Up} here would desync logical vs physical state and make AHK
+;   re-press Ctrl into the game window (stray Ctrl side effects).
+; - If Ctrl is NOT held (bare-key hotkey like numpad): bracket explicitly
+;   with Down/Up plus a safety release so Ctrl can never stick down.
 SafeCtrl(key) {
-    Send {Ctrl Down}%key%{Ctrl Up}
-    Sleep 10
-    Send {Ctrl Up}
+    if (GetKeyState("Ctrl", "P")) {
+        Send ^%key%
+    } else {
+        Send {Ctrl Down}%key%{Ctrl Up}
+        Sleep 10
+        Send {Ctrl Up}
+    }
 }
 
 FireRootFinisher(finChar, isAlpha) {
