@@ -103,7 +103,7 @@ function key(key, code = key) { document.dispatchEvent({type: 'keydown', key, co
 function settle(p, applied = true) {
   writes.at(-1).resolve({applied, persisted: applied, error: applied ? null : 'Disk refused', hotkeys: clone(p.hotkeys)});
 }
-(async () => {
+const scenarioCompletion = (async () => {
   if (data.scenario === 'focus-fixture-unhydrated') {
     assert.equal(document.querySelector('.group-add-name'), null, 'live getter is still pending');
     const fixture = {kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: payload(), crops: {...payload().crops, definitions: {Alice: {}}}};
@@ -213,9 +213,14 @@ function settle(p, applied = true) {
       return writes.at(-1);
     }
     if (scenario === 'focus-own-dialog' || scenario === 'focus-dialog-owners') {
-      for (const operation of ['delete', 'rename']) for (const order of ['receipt-first', 'push-first']) for (const outcome of ['applied', 'refused', 'cancel']) {
-        const owners = scenario === 'focus-own-dialog' ? ['own'] : ['field', 'blurred-field', 'pointer', 'tab', 'section', 'route', 'closed', 'hidden', 'capture', 'queued-dialog', 'post-fallback-focus'];
-        for (const owner of owners) {
+      const dialogOperations = ['delete', 'rename'];
+      const dialogOwners = scenario === 'focus-own-dialog' ? ['own'] : ['field', 'blurred-field', 'pointer', 'tab', 'section', 'route', 'closed', 'hidden', 'capture', 'queued-dialog', 'post-fallback-focus'];
+      assert.equal(dialogOperations.length, 2, 'stage-b mutation group-own-dialog-matrix');
+      assert.equal(dialogOwners.length, scenario === 'focus-own-dialog' ? 1 : 11, 'stage-b mutation group-dialog-owner-matrix');
+      let dialogCases = 0;
+      for (const operation of dialogOperations) for (const order of ['receipt-first', 'push-first']) for (const outcome of ['applied', 'refused', 'cancel']) {
+        for (const owner of dialogOwners) {
+          dialogCases += 1;
           await open(); const count = writes.length;
           const selector = operation === 'delete' ? '.group-delete-btn' : '.group-rename-btn';
           const button = manager().querySelector(selector); const id = button.getAttribute('data-group-id');
@@ -266,6 +271,13 @@ function settle(p, applied = true) {
           document.getElementById('settings-previews-characters').hidden = false;
         }
       }
+      assert.equal(
+        dialogCases,
+        scenario === 'focus-own-dialog' ? 12 : 132,
+        scenario === 'focus-own-dialog'
+          ? 'stage-b mutation group-own-dialog-matrix'
+          : 'stage-b mutation group-dialog-owner-matrix'
+      );
     } else if (scenario === 'focus-fixture-draft') {
       for (const buffered of [false, true]) for (const replacement of [false, true]) {
         await open(); name().focus(); name().value = 'REAL unsent fleet'; name().setSelectionRange(2, 11, 'backward');
@@ -470,4 +482,9 @@ function settle(p, applied = true) {
     window.onPreviewBindCaptured({gesture: 'Ctrl+F8'}); await tick(); assert.equal(writes.length, 0);
   } else throw new Error('Unknown scenario ' + scenario);
   console.log('PASS group backward ' + scenario);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => { console.error(error); process.exitCode = 1; });
+} else {
+  module.exports = scenarioCompletion;
+}

@@ -123,6 +123,25 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (request.scenario === 'numeric-schema') {
+    const mode = request.payload.mode;
+    const id = mode === 'bool-id' ? 'true' : String(request.id);
+    const durations = {
+      'zero': '0',
+      'float': '1.5',
+      'bool-duration': 'true',
+      'negative': '-1',
+      'nan': 'NaN',
+      'positive-infinity': 'Infinity',
+      'negative-infinity': '-Infinity'
+    };
+    const duration = mode === 'bool-id' ? '0' : durations[mode];
+    process.stdout.write('{"id":' + id
+      + ',"scenario":"numeric-schema","ok":true,"duration_ms":'
+      + duration + ',"error":"","stack":""}\n');
+    return;
+  }
+
   if (request.scenario === 'malformed') {
     process.stderr.write('synthetic malformed stderr\n');
     process.stdout.write('{"id":\n');
@@ -398,12 +417,84 @@ def test_invalid_reply_schema_discards_process_with_context_and_restarts(
 
     assert crashed.value.scenario == "bad-schema"
     assert "synthetic schema stderr" in crashed.value.stderr
-    assert process.poll() is not None
+    if reply == {}:
+        assert "reply missing 'id'" in str(crashed.value), (
+            "missing-fields reply did not use _ProtocolError"
+        )
+    assert process.poll() is not None, "missing-fields process was not discarded"
     assert node_worker._proc is None
     restarted = node_worker.request("echo-after-restart", {"text": "fresh"})
     assert restarted["text"] == "fresh"
     assert restarted["id"] == 3
     assert node_worker._proc.pid != process.pid
+
+
+def test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration(
+    node_worker: NodeScenarioWorker,
+):
+    def rejected(mode: str, expected_error: str) -> None:
+        if node_worker._proc is None:
+            node_worker._ensure_started("numeric-schema")
+        process = node_worker._proc
+        request_id = node_worker._next_id
+        assert process is not None
+        try:
+            node_worker.request("numeric-schema", {"mode": mode})
+        except NodeScenarioCrash as crashed:
+            assert expected_error in str(crashed), (
+                f"numeric-schema {mode}: wrong protocol error"
+            )
+        else:
+            pytest.fail(f"numeric-schema {mode}: invalid reply was accepted")
+        termination_failure: AssertionError | None = None
+        try:
+            assert process.poll() is not None, (
+                f"numeric-schema {mode}: rejected process was not terminated"
+            )
+        except AssertionError as error:
+            termination_failure = error
+        finally:
+            # A discard mutant must fail immediately at poll(), not become a
+            # five-second timeout, but the synthetic child still cannot leak.
+            if process.poll() is None:
+                node_worker._stop_process(process)
+        if termination_failure is not None:
+            raise termination_failure
+        assert node_worker._proc is None, (
+            f"numeric-schema {mode}: process was not discarded"
+        )
+        recovered = node_worker.request("echo-after-restart", {"text": mode})
+        assert recovered["id"] == request_id + 1, (
+            f"numeric-schema {mode}: recovery request ID was not monotonic"
+        )
+        assert node_worker._proc is not None
+        assert node_worker._proc.pid != process.pid, (
+            f"numeric-schema {mode}: recovery reused discarded PID"
+        )
+
+    rejected("bool-id", "reply field 'id' had the wrong type")
+
+    try:
+        zero = node_worker.request("numeric-schema", {"mode": "zero"})
+    except NodeScenarioCrash as error:
+        raise AssertionError("numeric-schema zero: valid duration rejected") from error
+    assert zero["duration_ms"] == 0, "numeric-schema zero: valid duration changed"
+    try:
+        floating = node_worker.request("numeric-schema", {"mode": "float"})
+    except NodeScenarioCrash as error:
+        raise AssertionError("numeric-schema float: valid duration rejected") from error
+    assert floating["duration_ms"] == 1.5, (
+        "numeric-schema float: valid duration changed"
+    )
+
+    for mode in (
+        "bool-duration",
+        "negative",
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+    ):
+        rejected(mode, "duration_ms")
 
 
 def test_startup_failure_names_the_calling_scenario(tmp_path: Path):

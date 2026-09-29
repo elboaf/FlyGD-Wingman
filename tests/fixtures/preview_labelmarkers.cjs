@@ -59,7 +59,7 @@ const ok = marker => ({applied: true, persisted: true, error: null, marker});
 function push(value) { window.onPreviewHotkeys(clone(value)); }
 function section(name) { document.dispatchEvent({type: 'wm:section', detail: name}); }
 function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {section: 'previews', tab: name}}); }
-(async () => {
+const scenarioCompletion = (async () => {
   assert.equal(writes.length, 0);
   assert.equal(select(), null);
   getters.shift()(payload()); await tick();
@@ -318,6 +318,7 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     const bind = configure('Alice').parentNode.querySelector('.bindbtn');
     bind.focus(); bind.click(); await tick();
     const p = payload({Alice: 'cyan'}); p.roster.push('New pilot'); push(p);
+    assert.ok(p.roster.includes('New pilot'), 'stage-b mutation marker-deferred-roster');
     assert.equal(configure('New pilot'), undefined);
     const fixture = payload({Alice: 'purple'});
     fixture.crops.definitions = {Alice: {enabled: false}};
@@ -348,4 +349,9 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     writes[2].resolve(ok('green')); await tick(); assert.equal(field('Bob').value, 'green');
   } else throw new Error('Unknown scenario ' + scenario);
   console.log('PASS marker page ' + scenario);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => { console.error(error); process.exitCode = 1; });
+} else {
+  module.exports = scenarioCompletion;
+}

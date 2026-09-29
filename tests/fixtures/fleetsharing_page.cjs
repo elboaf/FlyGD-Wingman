@@ -1,10 +1,20 @@
 // Real app.js route/bridge and fleetsharing.js, with DOM and delivery seams only.
-const assert = require('node:assert/strict');
+const strictAssert = require('node:assert/strict');
+const assert = Object.create(strictAssert);
+assert.doesNotMatch = strictAssert.doesNotMatch || ((actual, expected, message) => {
+  if (expected.test(String(actual))) throw new Error(message || 'value unexpectedly matched');
+});
+assert.notEqual = strictAssert.notEqual || ((actual, expected, message) => {
+  if (actual === expected) throw new Error(message || 'values were equal');
+});
 const fs = require('node:fs');
 const vm = require('node:vm');
 const input = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
 const web = process.argv[4];
+const safeParse = JSON.parse.bind(JSON);
+const pageJson = JSON.stringify(input.page);
+const page = safeParse(pageJson);
 let activeElement = null;
 class Element {
   constructor(tag, attrs = {}) {
@@ -52,6 +62,9 @@ class Element {
     if (on) classes.push(key); this.className = classes.join(' ');
   }}; }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
+  removeEventListener(name, fn) {
+    this.listeners[name] = (this.listeners[name] || []).filter(listener => listener !== fn);
+  }
   dispatchEvent(event) { event.target ||= this; (this.listeners[event.type] || []).forEach(fn => fn(event)); }
   querySelectorAll(selector) {
     const all = this.children.flatMap(c => [c, ...c.querySelectorAll('*')]);
@@ -63,6 +76,9 @@ class Element {
     return all.filter(c => c.className.split(/\s+/).includes(selector.slice(1)));
   }
 }
+if (typeof globalThis.trackElementClass === 'function') {
+  globalThis.trackElementClass(Element);
+}
 const ids = {};
 function build(node) {
   const el = new Element(node.tag, node.attrs); el.text = node.text || '';
@@ -70,7 +86,7 @@ function build(node) {
   node.children.forEach(child => el.appendChild(build(child)));
   return el;
 }
-const document = build(input.page);
+const document = build(page);
 document.hidden = false;
 Object.defineProperty(document, 'activeElement', {get: () => activeElement, set: value => { activeElement = value; }});
 document.getElementById = id => ids[id] || null;
@@ -86,7 +102,11 @@ for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet
 for (const method of ['list_rows', 'get_settings', 'update_status', 'theme_state']) api[method] = () => Promise.resolve(null);
 window.pywebview = {api};
 const errors = [];
-const runtime = vm.createContext({window, document, Promise, console: {error: (...args) => errors.push(args), warn: (...args) => errors.push(args)},
+const workerDiagnostics = require.main === module ? null : console;
+const runtime = vm.createContext({window, document, Promise, console: {
+  error: (...args) => { errors.push(args); if (workerDiagnostics) workerDiagnostics.error(...args); },
+  warn: (...args) => { errors.push(args); if (workerDiagnostics) workerDiagnostics.warn(...args); }
+},
   CustomEvent: class {constructor(type, options) { this.type = type; this.detail = options.detail; }}});
 vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), runtime);
 const WM = runtime.WM = window.WM;
@@ -94,7 +114,9 @@ const confirmations = [];
 WM.confirm = (...args) => (scenario.startsWith('control-') || scenario.startsWith('replace-stop-'))
   ? new Promise(resolve => confirmations.push({args, resolve})) : Promise.resolve(true);
 vm.runInContext(fs.readFileSync(web + '/fleetsharing.js', 'utf8'), runtime);
-const turn = () => new Promise(resolve => setImmediate(resolve));
+const turn = () => new Promise(resolve => setImmediate(
+  require.main === module ? resolve : () => setImmediate(resolve)
+));
 const watches = () => calls.filter(c => c.method === 'fleet_sharing_watch');
 const mutationCount = () => calls.filter(c => c.method !== 'fleet_sharing_watch').length;
 function attemptMutations() {
@@ -806,8 +828,7 @@ async function run() {
       off.resolve({queued:true,state:input.live}); await turn();
       confirmations[0].resolve(true); await turn();
       assert.equal(calls.filter(c => c.method === 'fleet_sharing_automatic').length, 1);
-      console.log('PASS ' + scenario);
-      return;
+      return console.log('PASS ' + scenario);
     }
     if (scenario.endsWith('-route')) await leave();
     if (scenario.endsWith('-stale')) {
@@ -1038,4 +1059,9 @@ async function run() {
   assert.equal(errors.length, scenario === 'bridge-source-rejection' ? 2 : scenario === 'reject' ? 1 : 0);
   console.log('PASS ' + scenario);
 }
-run().catch(error => { console.error(error); process.exitCode = 1; });
+const scenarioCompletion = run();
+if (require.main === module) {
+  scenarioCompletion.catch(error => { console.error(error); process.exitCode = 1; });
+} else {
+  module.exports = scenarioCompletion;
+}

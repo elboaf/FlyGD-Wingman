@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -278,6 +279,14 @@ class WandererWorker:
             self._published.clear()
             self._test_pending = False
             self._refresh_locked()
+        # Outside the state lock: a pooled socket close must not wait on the
+        # condition while an in-flight request might still hold the GIL-heavy
+        # body I/O. The client closes its own idle pooled connection; a
+        # client without a pool (test fakes) is unaffected.
+        close = getattr(self._client, "close", None)
+        if close is not None:
+            with suppress(Exception):
+                close()
 
     def stop(self, timeout: float = 1.0) -> bool:
         self.close_admission()
