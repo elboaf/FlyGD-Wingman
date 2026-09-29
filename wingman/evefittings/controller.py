@@ -1059,7 +1059,7 @@ class FittingsController:
             return "This fitting cannot be copied safely. Choose a different fitting."
         if capability_status != "enabled":
             return (
-                "Use Authenticate character… in Settings \u203a Character access first."
+                "Use Authenticate character… in Settings \u203a EVE Characters first."
             )
         snapshot = self._snapshot_locked(character_id)
         if snapshot is None or snapshot.fetched_utc is None:

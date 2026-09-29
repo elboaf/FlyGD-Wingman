@@ -93,8 +93,7 @@ def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
     flat = " ".join(smoke.split())
     assert "Clear the capture after the automatic GitHub startup check finishes" in flat
     assert (
-        "Settings > Character access authorization or Skills refresh interaction"
-        in flat
+        "Settings > EVE Characters authorization or Skills refresh interaction" in flat
     )
     assert "only that EVE interaction contacts the network" in flat
     assert "only the Skills interaction" not in flat
@@ -104,14 +103,14 @@ def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     flat = " ".join(readme.split())
     assert (
-        "Settings → Character access is the only place to authorize, reconnect, or "
+        "Settings → EVE Characters is the only place to authorize, reconnect, or "
         "forget EVE characters." in flat
     )
     assert len(eveauth_application.FULL_AUTH_SCOPES) == 4
     for scope in sorted(eveauth_application.FULL_AUTH_SCOPES):
         assert scope in readme
     for phrase in (
-        "Every new EVE sign-in from Settings → Character access requests the full Skills-and-Fittings set",
+        "Every new EVE sign-in from Settings → EVE Characters requests the full Skills-and-Fittings set",
         "If EVE returns a character Wingman does not know yet, Wingman adds it only after Skills and Fittings cleanup both verify no orphan state blocks that ID.",
         "If Wingman already has that character with a known owner and EVE returns a different known owner, the sign-in is refused and the existing grant stays in place.",
         "Older grants that contain only the two Skills scopes keep working for Skills.",
@@ -135,13 +134,13 @@ def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_
 def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_checks():
     smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
     flat_smoke = " ".join(smoke.split())
-    assert "Settings > Character access" in smoke
+    assert "Settings > EVE Characters" in smoke
     assert "50-row keyboard/menu checks" in flat_smoke
     assert "Fittings spacing at 100%, 125%, 150%, and 200% scaling" in flat_smoke
-    assert "Open Settings on Uploading, Character access, or General" in flat_smoke
+    assert "Open Settings on Uploading, EVE Characters, or General" in flat_smoke
     # The full rail sequence is derived from markup in test_documentation.py.
     assert "Settings rail entries, General last" in flat_smoke
-    assert "Forget from Settings > Character access" in flat_smoke
+    assert "Forget from Settings > EVE Characters" in flat_smoke
     assert (
         "complete cleanup removes the shared credential, Skills snapshot, fitting snapshot and that character's presence"
         in flat_smoke

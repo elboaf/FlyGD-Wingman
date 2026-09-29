@@ -27,8 +27,17 @@ def test_preview_tabs_replace_mixed_scroll_and_cross_section_shortcuts():
     assert re.findall(r'data-settings-tab="([^"]+)"', section) == [
         "windows",
         "characters",
-        "wanderer",
     ]
+    # The Wanderer card moved to its own section (#301): no tab, no panel here.
+    assert 'data-settings-tab="wanderer"' not in section
+    assert 'id="settings-previews-wanderer"' not in section
+    assert 'id="section-wanderer"' in html
+    assert (
+        "data-settings-tab"
+        not in html.split('id="section-wanderer"', 1)[1].split('id="section-fleet"', 1)[
+            0
+        ]
+    )
     assert "data-preview-jump" not in section
     assert 'id="preview-fleet-settings"' not in section
     css = (WEB / "style.css").read_text(encoding="utf-8")

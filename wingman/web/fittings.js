@@ -1036,7 +1036,7 @@
                         || filters.collection_id !== 'all');
       empty.textContent = filtered
         ? 'No fittings match the current filters.'
-        : 'Use Import from clipboard… to add a fitting, or authenticate a character in Settings › Character access and press Refresh characters.';
+        : 'Use Import from clipboard… to add a fitting, or authenticate a character in Settings › EVE Characters and press Refresh characters.';
       return;
     }
     empty.hidden = true;
@@ -1993,7 +1993,7 @@
       if (!copyEligible(character)) {
         row.appendChild(WM.make('span', 'fit-copy-target-state',
           character.status !== 'enabled'
-            ? 'Use Authenticate character\u2026 in Settings \u203a Character access.'
+            ? 'Use Authenticate character\u2026 in Settings \u203a EVE Characters.'
             : character.stale ? 'Refresh failed. Use Refresh characters.'
               : 'Use Refresh characters first.'));
       }
@@ -2002,7 +2002,7 @@
     if (!targets.children.length) {
       targets.appendChild(WM.make(
         'p', 'hint',
-        'Authenticate a character in Settings › Character access, then return and press Refresh characters.'
+        'Authenticate a character in Settings › EVE Characters, then return and press Refresh characters.'
       ));
     }
     host.appendChild(targets);
@@ -2464,7 +2464,7 @@
       unknown: 'Before any retry, check each target\u2019s Personal Fittings in EVE, then refresh characters. These fittings may already exist.',
       unattempted_throttle: 'Wait for the ESI limit to clear, refresh characters, then review a new copy for fittings not attempted.',
       cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
-      unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Character access. Then refresh the target and review a new copy.',
+      unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a EVE Characters. Then refresh the target and review a new copy.',
       invalid_ticket: 'Preflight expired. Close these results and review a new copy.',
       needs_resolution: 'Close these results and resolve every name conflict in a new copy review.',
       busy: 'Another fitting copy is running. Wait for it to finish before reviewing a new copy.',

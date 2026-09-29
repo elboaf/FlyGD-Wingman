@@ -263,3 +263,201 @@ def test_failure_copy_never_echoes_external_errors(code):
     assert formatter is not None
     assert formatter("error", code)
     assert "private-exception" not in formatter("error", "private-exception")
+
+
+# --- Prime identity join (#296) ---------------------------------------------
+
+
+def _identity_api(tmp_path, prime_identity=None, focused_session=None):
+    """An Api whose host and Wanderer runtime answer fixed identity values.
+
+    The two collaborators are fakes because this seam's contract is the
+    JOIN, not either join's halves (those have their own tests): the
+    focused session from the preview host, the identity from the
+    Wanderer controller.
+    """
+    from types import SimpleNamespace
+
+    api = make_api(tmp_path)
+
+    def build(section):
+        return SimpleNamespace(
+            state=lambda: {"status": "stopped"},
+            start=lambda: True,
+            set_previews_enabled=lambda enabled: None,
+            stop=lambda timeout=1.0: True,
+            close_admission=lambda: None,
+            test_connection=lambda *a: {"applied": False},
+            set_enabled=lambda enabled: {"applied": True},
+            remove_connection=lambda revision: {"applied": True},
+            prime_identity=prime_identity,
+        )
+
+    api._build_wanderer_controller = build
+    api._wanderer = build(None)
+    api._preview_host = SimpleNamespace(
+        focused_session=focused_session,
+    )
+    return api
+
+
+def test_prime_identity_joins_focused_session_to_the_wanderer_snapshot(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    identity = PrimeIdentity(character_id=90000001, solar_system_id=30000142)
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: identity if s == session else None,
+        focused_session=lambda: session,
+    )
+    assert api._wanderer_prime_identity() == identity
+
+
+def test_prime_identity_is_none_without_a_focused_client(tmp_path):
+    from wingman.wanderer.model import PrimeIdentity
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: PrimeIdentity(character_id=1, solar_system_id=2),
+        focused_session=lambda: None,
+    )
+    assert api._wanderer_prime_identity() is None
+
+
+def test_prime_identity_is_none_when_the_map_does_not_know_the_character(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: None,
+        focused_session=lambda: ClientSessionId(16, 101, "Alice", 1),
+    )
+    assert api._wanderer_prime_identity() is None
+
+
+def test_prime_identity_survives_a_raising_focus_read(tmp_path):
+    """The focus read is a native-adjacent read on a host that may be
+    tearing down. A failure there must answer None, never raise out of
+    the staging slice."""
+    from wingman.wanderer.model import PrimeIdentity
+
+    api = _identity_api(
+        tmp_path,
+        prime_identity=lambda s: PrimeIdentity(character_id=1, solar_system_id=2),
+        focused_session=lambda: (_ for _ in ()).throw(RuntimeError("tearing down")),
+    )
+    assert api._wanderer_prime_identity() is None
+    # A missing host (previews never built) is the same closed answer.
+    api._preview_host = None
+    assert api._wanderer_prime_identity() is None
+
+
+# ---- Prime staging relay (issue #297) -------------------------------------
+
+
+class RelayEngine:
+    """A running engine whose prime the test controls."""
+
+    def __init__(self, prime):
+        self.prime = prime
+
+    def status(self, enabled, now=None):
+        from wingman import hotkeys
+
+        return hotkeys.EngineStatus(
+            state="running",
+            sig="MYR",
+            root="J1234",
+            next_num="21",
+            next_alpha="A",
+            prime=self.prime,
+        )
+
+
+class StubWanderer:
+    def __init__(self, identity="IDENTITY"):
+        self.identity = identity
+        self.staged = []
+        self.fail = False
+
+    def prime_identity(self, session):
+        return self.identity
+
+    def stage_prime(self, prime, identity):
+        if self.fail:
+            raise RuntimeError("staging exploded")
+        self.staged.append((prime, identity))
+        return True
+
+
+def prime_record(captured=None):
+    import time
+
+    from wingman.hotkeys import PrimeRecord
+
+    return PrimeRecord(
+        jcode="J123456",
+        flags=("e", "f"),
+        event="0f0e0d0c0b0a09080706050403020100",
+        captured=time.time() if captured is None else captured,
+    )
+
+
+class FocusedHost:
+    def focused_session(self):
+        return object()
+
+
+def relay_api(tmp_path, prime):
+    api = make_api(tmp_path)
+    api._state.engine = RelayEngine(prime)
+    api._state.settings.setdefault("eve_bookmarks", {})["enabled"] = True
+    stub = StubWanderer()
+    api._wanderer = stub
+    api._preview_host = FocusedHost()
+    return api, stub
+
+
+def test_push_eve_status_relays_a_fresh_prime_with_identity(tmp_path):
+    from wingman.hotkeys import PrimeRecord
+
+    api, stub = relay_api(tmp_path, prime_record())
+    api._push_eve_status()
+    assert len(stub.staged) == 1
+    relayed, identity = stub.staged[0]
+    assert isinstance(relayed, PrimeRecord)
+    assert relayed.event == "0f0e0d0c0b0a09080706050403020100"
+    assert identity == "IDENTITY"
+    # The page push is unchanged by staging: the prime still rides onEveStatus.
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime"]["jcode"] == "J123456"
+
+
+def test_push_eve_status_relays_nothing_without_a_prime(tmp_path):
+    api, stub = relay_api(tmp_path, None)
+    api._push_eve_status()
+    assert stub.staged == []
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime"] is None
+
+
+def test_push_eve_status_skips_a_prime_older_than_the_consume_window(tmp_path):
+    api, stub = relay_api(tmp_path, prime_record(captured=0.0))
+    api._push_eve_status()
+    assert stub.staged == []
+
+
+def test_push_eve_status_survives_raising_identity_and_staging(tmp_path):
+    api, stub = relay_api(tmp_path, prime_record())
+    stub.fail = True
+    api._wanderer_prime_identity = lambda: (_ for _ in ()).throw(
+        RuntimeError("focus read exploded")
+    )
+    api._push_eve_status()
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime"] is not None

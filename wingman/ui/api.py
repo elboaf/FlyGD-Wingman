@@ -101,6 +101,10 @@ from .scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
+# The staging endpoint's consume TTL (#163): a capture older than this can
+# never be consumed, so relaying it would only burn the retry budget.
+PRIME_MAX_AGE_SECONDS = 15 * 60
+
 
 def _page_payload(payload):
     """JSON data, not an object literal (whose __proto__ changes prototypes)."""
@@ -4208,6 +4212,8 @@ class Api:
             return
         enabled = self._state.settings["eve_bookmarks"]["enabled"]
         status = engine.status(enabled=enabled)
+        if status.prime is not None:
+            self._relay_prime(status.prime)
         self._push(
             "onEveStatus",
             {
@@ -4217,6 +4223,19 @@ class Api:
                 "next_num": status.next_num,
                 "next_alpha": status.next_alpha,
                 "failed_binds": status.failed_binds,
+                # Bounded, strictly validated upstream (#295). Absent
+                # whenever the engine primed nothing, which is every Set
+                # Root path except a single selected bookmark.
+                "prime": (
+                    None
+                    if status.prime is None
+                    else {
+                        "jcode": status.prime.jcode,
+                        "flags": list(status.prime.flags),
+                        "event": status.prime.event,
+                        "captured": status.prime.captured,
+                    }
+                ),
                 # A failed start is otherwise invisible: this is the one
                 # actionable thing the user can be told ("the engine is
                 # missing, reinstall").
@@ -5191,6 +5210,59 @@ class Api:
     def wanderer_state(self) -> dict:
         return self._wanderer.state()
 
+    def _relay_prime(self, prime) -> None:
+        """Offer one captured prime to the staging lane (#297).
+
+        Called only from _push_eve_status, on the poll tick or a status
+        push. Every absence stages nothing: no engine prime, no focused
+        client, no map identity, an event the lane already has, or a
+        capture older than the server's 15-minute consume window. A prime
+        relay must never cost the Set Root flow or the status push an
+        exception -- failures degrade to "no prime offered".
+        """
+        try:
+            # The engine keeps one prime until the next Set Root and the
+            # poll re-offers it every tick; the controller stages each
+            # event at most once, so this dedupe is the controller's
+            # event ledger, not a second one here.
+            captured = prime.captured
+            if not isinstance(captured, (int, float)) or isinstance(captured, bool):
+                return
+            if time.time() - float(captured) > PRIME_MAX_AGE_SECONDS:
+                return
+            identity = self._wanderer_prime_identity()
+            if identity is None:
+                return
+            self._wanderer.stage_prime(prime, identity)
+        except Exception:
+            logger.debug("Prime relay degraded", exc_info=True)
+
+    def _wanderer_prime_identity(self):
+        """The focused client's map identity, or None (#296, #297's input).
+
+        The whole join the staging slice consumes: the preview host
+        answers WHICH client ran Set Root (the foreground one), the
+        Wanderer controller answers what the map knows about it (EVE
+        character ID + current solar system, freshness-checked). Every
+        half can be absent -- previews off, no focused EVE client, the
+        map not tracking that character, a location gone stale -- and
+        None is the answer in every one of them. The caller stages no
+        prime rather than a half-identified one. A raising focus read is
+        degraded the same way: identity must never cost the Set Root
+        flow an exception.
+        """
+        host = self._preview_host
+        if host is None:
+            return None
+        try:
+            session = host.focused_session()
+        except Exception:
+            logger.debug("Could not read the focused preview session", exc_info=True)
+            return None
+        if session is None:
+            return None
+        return self._wanderer.prime_identity(session)
+
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 
@@ -5199,6 +5271,9 @@ class Api:
 
     def remove_wanderer_connection(self, revision) -> dict:
         return self._wanderer.remove_connection(revision)
+
+    def set_wanderer_prime_token(self, token) -> dict:
+        return self._wanderer.set_prime_token(token)
 
     # ---- EVE client previews ------------------------------------------
 

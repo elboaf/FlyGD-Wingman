@@ -602,7 +602,7 @@ async function gapRegression() {
     staging = false;
     if (wanderer) {
       await step(data.prepare);
-      staging = true; WM.openSettingsSection('previews');
+      staging = true; WM.openSettingsSection('wanderer');
     } else WM.route(profiles ? 'evesettings' : 'fittings');
     await tick(); calls.length = 0; staging = true;
     if (moduleName === 'fittings') { await step(data.fixture); await step(data.reset); }
@@ -622,7 +622,7 @@ async function gapRegression() {
     }
     let anchor, pane, target;
     if (wanderer) {
-      anchor = el('wanderer-save-note'); pane = el('settings-previews-wanderer'); target = el('wanderer-remove');
+      anchor = el('wanderer-save-note'); pane = el('settings-wanderer-connection'); target = el('wanderer-remove');
       assert.equal(el('wanderer-token').value, '');
       assert.equal(el('wanderer-token').type, 'password');
       assert.equal(el('wanderer-test').disabled, false);

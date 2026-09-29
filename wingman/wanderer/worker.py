@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -27,6 +28,7 @@ from .client import (
 )
 from .credentials import validate_token
 from .model import (
+    PrimeIdentity,
     Snapshot,
     normalize_base_url,
     normalize_character_name,
@@ -228,6 +230,36 @@ class WandererWorker:
             self._refresh_locked()
             return True
 
+    def prime_identity(
+        self, session: ClientSessionId, *, now: float | None = None
+    ) -> PrimeIdentity | None:
+        """The map's fresh identity for this client session, or None.
+
+        Joins the session to the latest snapshot by normalized character
+        name -- the same join the label projection uses -- and None when
+        there is no record (untracked character), no snapshot yet, or no
+        fresh location at *now*. A stale record is never an identity: the
+        prime's expected source system must be true at capture time, not
+        at the last successful poll.
+        """
+        try:
+            name = normalize_character_name(session.character)
+        except ValueError:
+            return None
+        with self._condition:
+            if self._closed or self._snapshot is None:
+                return None
+            record = self._snapshot.by_name.get(name)
+        if record is None:
+            return None
+        current = self._clock() if now is None else now
+        if record.deadline_monotonic is None or not current < record.deadline_monotonic:
+            return None
+        return PrimeIdentity(
+            character_id=record.character_id,
+            solar_system_id=record.solar_system_id,
+        )
+
     def state(self) -> WorkerState:
         with self._condition:
             return self._health
@@ -247,6 +279,14 @@ class WandererWorker:
             self._published.clear()
             self._test_pending = False
             self._refresh_locked()
+        # Outside the state lock: a pooled socket close must not wait on the
+        # condition while an in-flight request might still hold the GIL-heavy
+        # body I/O. The client closes its own idle pooled connection; a
+        # client without a pool (test fakes) is unaffected.
+        close = getattr(self._client, "close", None)
+        if close is not None:
+            with suppress(Exception):
+                close()
 
     def stop(self, timeout: float = 1.0) -> bool:
         self.close_admission()

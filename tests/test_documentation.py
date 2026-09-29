@@ -55,14 +55,14 @@ def test_active_docs_do_not_direct_readers_to_retired_settings_entries(path):
             (
                 "Google account, recording folder, and Discord webhook in Settings > Uploading",
                 "Gamelogs folder in Settings > Alerts",
-                "Settings > Character access is the only place to authorize",
+                "Settings > EVE Characters is the only place to authorize",
             ),
         ),
         (
             "DESIGN.md",
             (
                 "webhook from Settings > Uploading",
-                "EVE credential cleanup lives under Settings > Character access",
+                "EVE credential cleanup lives under Settings > EVE Characters",
             ),
         ),
         (
@@ -72,7 +72,7 @@ def test_active_docs_do_not_direct_readers_to_retired_settings_entries(path):
                 "choose a folder in Settings > Uploading",
                 "Clear the webhook in Settings > Uploading",
                 "Gamelogs folder in Settings > Alerts",
-                "Settings > Character access is the only EVE authorization surface",
+                "Settings > EVE Characters is the only EVE authorization surface",
             ),
         ),
     ),

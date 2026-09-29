@@ -50,22 +50,28 @@
     Object.keys(keys).forEach(function (name) {
       if (acknowledged) restore(name);
       else if (name === 'enabled') el(name).checked = false;
+      else if (name === 'primeToken') el('prime-token').value = '';
       else el(name).value = '';
     });
     el('token').value = '';
+    el('prime-token').value = '';
     if (!acknowledged) {
       paintHealth('Loading Wanderer settings…');
       el('coverage').textContent = ''; el('credential').textContent = '';
     }
     paint();
   };
-  var keys = {enabled: 'enabled', url: 'url'};
-  ['enabled', 'url', 'token', 'connection', 'test', 'remove'].forEach(function (name) {
+  var keys = {enabled: 'enabled', url: 'url', primeToken: 'prime_token'};
+  ['enabled', 'url', 'token', 'primeToken', 'connection', 'test', 'remove'].forEach(function (name) {
     fields[name] = {edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve()};
   });
 
   function el(name) { return WM.el('wanderer-' + name); }
-  function value(name) { return name === 'enabled' ? el(name).checked : el(name).value; }
+  function value(name) {
+    if (name === 'enabled') return el(name).checked;
+    if (name === 'primeToken') return el('prime-token').value;
+    return el(name).value;
+  }
   function baseline(name) {
     if (name === 'url') {
       // Partial legacy settings are not a map URL. Opening the form never
@@ -73,10 +79,12 @@
       return acknowledged.base_url && acknowledged.map_identifier
         ? acknowledged.base_url + '/' + acknowledged.map_identifier : '';
     }
+    if (name === 'primeToken') return '';
     return acknowledged[keys[name]];
   }
   function restore(name) {
     if (name === 'enabled') el(name).checked = baseline(name);
+    else if (name === 'primeToken') el('prime-token').value = '';
     else if (keys[name]) el(name).value = baseline(name);
   }
   function dirty(name) { return acknowledged && value(name) !== baseline(name); }
@@ -91,7 +99,8 @@
         || (acknowledged && p.revision < acknowledged.revision)) return false;
     acknowledged = {revision: p.revision, enabled: p.enabled, base_url: p.base_url,
       map_identifier: p.map_identifier, credential_present: p.credential_present,
-      credential_error: p.credential_error, persistence_error: p.persistence_error};
+      credential_error: p.credential_error, persistence_error: p.persistence_error,
+      prime_credential_present: p.prime_credential_present};
     if (testWaiting && testRevision !== p.revision) testWaiting = false;
     return true;
   }
@@ -132,20 +141,25 @@
   }
 
   function paint() {
-    ['enabled', 'url', 'token'].forEach(function (name) {
+    ['enabled', 'url', 'token', 'prime-token'].forEach(function (name) {
       el(name).disabled = !hydrated;
     });
     var incomplete = acknowledged && !!acknowledged.base_url !== !!acknowledged.map_identifier;
     el('url-draft').textContent = fields.url.pending ? 'Saving submitted connection…'
       : dirty('url') ? 'Not saved — press Enter or Test connection.'
       : incomplete ? 'Saved connection is incomplete — paste the full map URL, then test the connection.' : '';
-    ['enabled', 'connection', 'test', 'remove'].forEach(function (name) {
-      var slot = el(name + '-error');
+    ['enabled', 'primeToken', 'connection', 'test', 'remove'].forEach(function (name) {
+      var slot = el(name === 'primeToken' ? 'prime-token-error' : name + '-error');
       slot.textContent = fields[name].error;
       slot.className = 'field-msg err';
       slot.hidden = !fields[name].error;
     });
     el('token-draft').textContent = 'Windows-protected on this PC. Blank reuses the token only for the same saved map URL.';
+    el('prime-token-draft').textContent = 'Optional: names wormholes Set Root captures. Windows-protected; blank turns that off.';
+    el('prime-credential').textContent = !acknowledged || !acknowledged.base_url || !acknowledged.map_identifier
+      ? 'Save the map connection to add a Bookmark API token.'
+      : acknowledged.prime_credential_present ? 'Bookmark API token stored for the saved map URL.'
+        : 'No Bookmark API token stored for the saved map URL.';
     var currentHealth = health && acknowledged && health.revision === acknowledged.revision ? health : null;
     var testing = testWaiting || (currentHealth && (currentHealth.test_pending || currentHealth.test_in_flight));
     el('test').disabled = !hydrated || confirming || !!connectionBusy() || !!testing;
@@ -238,7 +252,9 @@
     var request = ++field.request;
     var edit = ++field.edit;
     var owned = {};
-    var inputs = name === 'enabled' ? ['enabled'] : ['url', 'token'];
+    var inputs = name === 'enabled' ? ['enabled']
+      : name === 'primeToken' ? ['primeToken']
+      : ['url', 'token'];
     inputs.forEach(function (key) {
       owned[key] = fields[key].edit;
       if (key !== name) fields[key].pending += 1;
@@ -246,7 +262,9 @@
     field.pending += 1;
     delivery += 1;
     interaction += 1;
-    var tail = name === 'enabled' ? field.tail : connectionTail;
+    // The prime token is an independent credential: its write lanes alone,
+    // never the url+token group and never the enable toggle.
+    var tail = name === 'enabled' || name === 'primeToken' ? field.tail : connectionTail;
     field.tail = tail.then(send).then(function (res) {
       field.pending -= 1;
       delivery += 1;
@@ -260,7 +278,7 @@
       var errorField = name === 'test' ? fields.connection : field;
       if (saved) errorField.error = '';
       else if (owns) errorField.error = res && res.error ? res.error
-        : 'Could not reach the app. Reopen Previews to check the saved connection.';
+        : 'Could not reach the app. Reopen Wanderer API to check the saved connection.';
       if (name === 'test' && request === field.request) {
         if (!saved || !res.test_accepted) {
           testWaiting = false;
@@ -301,7 +319,7 @@
       }
       paint();
     });
-    if (name !== 'enabled') connectionTail = field.tail;
+    if (name !== 'enabled' && name !== 'primeToken') connectionTail = field.tail;
     paint();
   }
 
@@ -319,8 +337,49 @@
     testInterrupted = false;
     testPriorResult = health && health.revision === testRevision ? health.test_result : null;
     fields.test.error = '';
+    var prime = el('prime-token').value;
+    if (prime) el('prime-token').value = '';
     commit('test', function () {
       var response = WM.send('test_wanderer_connection', mapUrl, token);
+      token = null;
+      return response;
+    });
+    if (prime) {
+      // Ingestion parity (#301): a prime draft pasted but not yet Enter-committed
+      // ingests with the same Test click, on the prime lane, after the connection
+      // write settles -- so a first-ever setup saves the binding the prime token
+      // binds to before the credential arrives. The edit counter, not the field
+      // value, is the guard: a draft typed (or Enter-committed) since submission
+      // must never be swept up by this stale callback.
+      var primeEdit = fields.primeToken.edit;
+      connectionTail.then(function () {
+        if (fields.primeToken.edit !== primeEdit) return;
+        commit('primeToken', function () {
+          var response = WM.send('set_wanderer_prime_token', prime);
+          prime = null;
+          return response;
+        });
+      });
+    }
+  }
+
+  el('prime-token').addEventListener('input', function () {
+    fields.primeToken.edit += 1;
+    interaction += 1;
+    paint();
+  });
+  el('prime-token').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') { event.preventDefault(); commitPrimeToken(); }
+  });
+
+  function commitPrimeToken() {
+    if (screenshotFixture || !hydrated) return;
+    var token = el('prime-token').value;
+    // Clear at submission, never on a later reply over a newer secret draft.
+    // The prime token has no acknowledged baseline or binding history here.
+    el('prime-token').value = '';
+    commit('primeToken', function () {
+      var response = WM.send('set_wanderer_prime_token', token);
       token = null;
       return response;
     });
@@ -360,7 +419,7 @@
 
   document.addEventListener('wm:section', function (event) {
     interaction += 1;
-    if (event.detail !== 'previews') return;
+    if (event.detail !== 'wanderer') return;
     if (screenshotFixture) { paint(); return; }
     var request = ++readRequest;
     var atRead = delivery;
@@ -375,7 +434,7 @@
         hydrated = true;
       }
       paint();
-      if (!acknowledged) paintHealth('Could not load Wanderer settings', 'Reopen Previews to retry.');
+      if (!acknowledged) paintHealth('Could not load Wanderer settings', 'Reopen Wanderer API to retry.');
     });
   });
   paint();

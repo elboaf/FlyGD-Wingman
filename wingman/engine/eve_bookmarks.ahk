@@ -97,6 +97,16 @@ NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
 
+; --- WINGMAN: pre-jump prime (#295) ---
+; Set Root on a SINGLE selected bookmark captures the root J-code plus the
+; finisher tags parsed from the bookmark text, for the status relay. Every
+; other Set Root path (no selection, whole list) leaves this empty, so the
+; status payload stays byte-identical to the pre-prime shape in those cases.
+PrimeJCode   := ""
+PrimeFlags   := ""
+PrimeEvent   := ""
+PrimeCaptured := 0
+
 ; --- Keybind defaults ---
 KB_GrabSig     := ""
 KB_SetRoot     := ""
@@ -205,6 +215,7 @@ StatusBody := "{"
     . """next_num"":""" . JsonEsc(NextNumText) . ""","
     . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
     . """failed_binds"":[" . JsonList(FailedBinds) . "],"
+    . """prime"":" . BuildPrimeJson() . ","
     . """written"":" . EpochNow()
     . "}"
 FileDelete, eve_status.json.tmp
@@ -544,6 +555,101 @@ AllPrefixesSingle(clip) {
     return foundAny
 }
 
+; --- WINGMAN: pre-jump prime parsing (#295) ---
+; The finisher-tag vocabulary the engine itself writes into bookmark names:
+; e stacks with anything; / and c are mutually exclusive (the engine's own
+; FormatClipAndPaste clears one when the other is set); f is independent.
+; The finisher writes lowercase (the tags land in the bookmark name itself);
+; the legacy uppercase frig tag S is still read by that parser and is
+; accepted here the same way, so an old bookmark primes exactly what its
+; text says.
+
+; Extract the flags from one bookmark's first field. The field shape is the
+; engine's own: CODE-SYS [class] [tags] -- the system code after the hyphen,
+; then free text. Only whole, space-separated tokens count, so a letter
+; inside a word is never a flag.
+ParsePrimeFlags(field) {
+    StringUpper, field, field
+    HyphenPos := InStr(field, "-")
+    if (HyphenPos < 2)
+        return ""
+    Rest := SubStr(field, HyphenPos + 1)
+    ; The token right after the hyphen is the three-letter system code; the
+    ; tokens after it are the free text the tags live in.
+    InCode := True
+    flags := ""
+    Loop, Parse, Rest, %A_Space%
+    {
+        t := A_LoopField
+        if (t = "")
+            continue
+        if (InCode) {
+            if (StrLen(t) = 3 && RegExMatch(t, "^[A-Z]{3}$"))
+                InCode := False
+            else
+                return ""
+            continue
+        }
+        if (InStr(flags, "e") = 0 && t = "e")
+            flags .= "e"
+        else if (InStr(flags, "/") = 0 && t = "/")
+            flags .= "/"
+        else if (InStr(flags, "f") = 0 && (t = "f" || t = "S"))
+            flags .= "f"
+        else if (InStr(flags, "c") = 0 && t = "c")
+            flags .= "c"
+    }
+    return flags
+}
+
+; The event id: a fresh UUID per captured prime. Downstream this is the
+; staging idempotency key, so it must change on every Set Root that primes.
+PrimeCapturedTime() {
+    ; CoCreateGuid via the raw API. The previous generator, ComObjCreate
+    ; ("Scriptlet.TypeLib"), depends on a COM class whose CLSID is commonly
+    ; blocked by Windows Defender Attack Surface Reduction and other
+    ; hardening policies: when the object will not instantiate, AHK's
+    ; ComObjCreate either throws or yields an empty value, PrimeEvent
+    ; stays empty, and BuildPrimeJson() -- which requires a non-empty
+    ; event -- publishes "null". The user-visible symptom: Set Root sets
+    ; the root and parses the tags, but the prime relay never fires and
+    ; nothing reaches Wanderer, with no error anywhere (#297 field
+    ; report). CoCreateGuid is a plain RPC call with no COM activation,
+    ; so it cannot be blocked the same way.
+    event := ""
+    VarSetCapacity(GUID, 16, 0)
+    if DllCall("ole32\CoCreateGuid", "Ptr", &GUID, "Int") = 0 {
+        size := VarSetCapacity(wstr, 64, 0) * 2
+        if DllCall("ole32\StringFromGUID2", "Ptr", &GUID, "Ptr", &wstr, "Int", size // 2, "Int") > 0 {
+            event := StrGet(&wstr, "UTF-16")
+            StringLower, event, event
+            StringReplace, event, event, {, , All
+            StringReplace, event, event, }, , All
+            StringReplace, event, event, -, , All
+            StringLeft, event, event, 32
+        }
+    }
+    return event
+}
+
+BuildPrimeJson() {
+    global PrimeJCode, PrimeFlags, PrimeEvent, PrimeCaptured
+    if (PrimeJCode = "" || PrimeEvent = "")
+        return "null"
+    flagsJson := "["
+    Loop, Parse, PrimeFlags
+    {
+        if (A_Index > 1)
+            flagsJson .= ","
+        flagsJson .= """" . A_LoopField . """"
+    }
+    flagsJson .= "]"
+    return "{""jcode"":""" . PrimeJCode
+        . """,""flags"":" . flagsJson
+        . ",""event"":""" . PrimeEvent
+        . """,""captured"":" . PrimeCaptured . "}"
+}
+
 DoQ:
 ; WINGMAN: clear-then-check, the same shape DoConvertScout already uses a
 ; few lines below. The author's version sends ^c onto whatever the
@@ -589,6 +695,11 @@ NextNum              := 1
 NextAlpha            := 1
 LastUsedNum          := ""
 LastUsedAlpha        := ""
+PrimeJCode           := ""
+PrimeFlags           := ""
+PrimeEvent           := ""
+PrimeCaptured        := 0
+
 if (ClipSaved = "") {
     RootModeActive := True
     Return
@@ -612,6 +723,17 @@ if (ValidCount > 1 && AllPrefixesSingle(ClipSaved)) {
             RootKey        := FirstField
             RootModeActive := True
             ZeroMode       := False
+            ; WINGMAN (#295): exactly one line arrived, and it is a system
+            ; bookmark. That is the single-bookmark Set Root: capture the
+            ; finisher tags its text carries. ValidCount is parsed from the
+            ; same text the loop above walked, so it counts first fields;
+            ; a single line with no trailing newline makes ValidCount 1.
+            if (ValidCount = 1) {
+                PrimeJCode    := RootKey
+                PrimeFlags    := ParsePrimeFlags(FirstField)
+                PrimeEvent    := PrimeCapturedTime()
+                PrimeCaptured := EpochNow()
+            }
             Break
         }
         HyphenPos := InStr(FirstField, "-")
@@ -623,6 +745,17 @@ if (ValidCount > 1 && AllPrefixesSingle(ClipSaved)) {
             RootKey        := Prefix
             RootModeActive := True
             ZeroMode       := False
+            ; WINGMAN (#295): a single hyphenated system bookmark ("CODE-SYS
+            ; [class] [tags]") is exactly as much a single-bookmark Set Root
+            ; as a bare code is. Capture the same prime here, with the J-code
+            ; being the prefix and the tags parsed from the same first field;
+            ; a multi-line list never reaches either capture.
+            if (ValidCount = 1) {
+                PrimeJCode    := RootKey
+                PrimeFlags    := ParsePrimeFlags(FirstField)
+                PrimeEvent    := PrimeCapturedTime()
+                PrimeCaptured := EpochNow()
+            }
             Break
         }
     }
