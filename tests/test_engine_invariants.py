@@ -438,7 +438,12 @@ _CLIPBOARD_READERS = ("DoQ", "DoSemi", "DoConvertScout", "ReadField")
 
 
 def test_no_clipboard_read_can_pick_up_stale_data(source):
-    """A handler must clear the clipboard before its own `Send ^c`.
+    """A handler must clear the clipboard before its own copy keystroke.
+
+    Each reader performs its copy through SafeCtrl("c") -- explicit
+    {Ctrl Down}/{Ctrl Up} states instead of bare `Send ^c`, so a scripted
+    copy cannot leave a logically-stuck Ctrl behind for the bare-key
+    hotkeys. The stale-data hazard this test guards is unchanged.
 
     Without the clear, a copy that does not land -- focus not where the user
     thought, EVE dropping the synthetic keystroke, another process holding
@@ -460,8 +465,8 @@ def test_no_clipboard_read_can_pick_up_stale_data(source):
     """
     for label in _CLIPBOARD_READERS:
         body = _label_body(source, label)
-        assert "Send ^c" in body, label
-        before = body[: body.index("Send ^c")]
+        assert 'SafeCtrl("c")' in body, label
+        before = body[: body.index('SafeCtrl("c")')]
         assert re.search(r"Clipboard\s*:=\s*\"\"", before), (
             f"{label} sends ^c without first clearing the clipboard, so a "
             f"failed copy silently reads whatever was already there"
