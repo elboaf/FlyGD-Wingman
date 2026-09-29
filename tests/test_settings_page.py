@@ -61,8 +61,9 @@ def test_settings_subpages_own_the_existing_controls_and_accessible_tabs():
                 "preview-nm-exceptions",
             ),
             "characters": ("preview-binds", "preview-binds-off"),
-            "wanderer": ("wanderer-settings",),
         },
+        # Wanderer has no tabs (#301): its single card sits directly in the
+        # section pane; test_wanderer_page.py owns its placement checks.
         "uploading": {
             "youtube": ("f-privacy", "f-category", "btn-auth"),
             "recording": ("f-recdir", "detect-note", "msg-notify"),
@@ -121,8 +122,9 @@ def test_window_disclosures_keep_exceptions_with_their_preferences():
 
 def test_settings_rail_names_distinguish_auth_from_preview_characters():
     rail = dict(_rail())
-    assert rail["characters"] == "Character access"
+    assert rail["characters"] == "EVE Characters"
     assert rail["companions"] == "Companion previews"
+    assert rail["wanderer"] == "Wanderer API"
 
 
 def test_design_records_the_global_badge_fetch_exception():
@@ -165,7 +167,7 @@ def _panes() -> list[tuple[str, str]]:
 
 
 def _headings(pane: str) -> list[str]:
-    return [h.strip() for h in re.findall(r"<h2>([^<]+)</h2>", pane)]
+    return [h.strip() for h in re.findall(r"<h2[^>]*>([^<]+)</h2>", pane)]
 
 
 def test_the_rail_and_the_panes_are_in_the_same_order():
@@ -179,6 +181,7 @@ def test_the_rail_and_the_panes_are_in_the_same_order():
         "characters",
         "bookmarks",
         "previews",
+        "wanderer",
         "fleet",
         "alerts",
         "general",

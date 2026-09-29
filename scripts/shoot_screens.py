@@ -194,14 +194,14 @@ SCREENS = (
         "settings-wanderer",
         "Settings - Wanderer connection",
         "settings",
-        "previews",
+        "wanderer",
         True,
     ),
     Screen(
         "settings-wanderer-narrow",
         "Settings - Wanderer status (840x625)",
         "settings",
-        "previews",
+        "wanderer",
         True,
         True,
     ),
@@ -209,7 +209,7 @@ SCREENS = (
         "settings-wanderer-controls-narrow",
         "Settings - Wanderer Test and Remove controls (840x625)",
         "settings",
-        "previews",
+        "wanderer",
         True,
         True,
     ),
@@ -887,10 +887,11 @@ _SETTINGS_SCREEN_TABS = {
     "settings-previews-groups": "characters",
     "settings-previews-narrow": "characters",
     "settings-previews-crop-narrow": "characters",
-    "settings-wanderer": "wanderer",
-    "settings-wanderer-narrow": "wanderer",
-    "settings-wanderer-controls-narrow": "wanderer",
 }
+
+# Wanderer has no tabs since #301 (its own section); its container is
+# always visible, so no settingsTab stage applies. The keys stay in
+# _CURRENT_SCREEN_TARGETS for framing.
 
 # Semantic anchors, not scroll fractions. Static cards stay live: no synthetic
 # state or actions are needed to expose their current controls.
@@ -1200,7 +1201,7 @@ def _gap_verify_script(screen: Screen) -> str | None:
     if key == "settings-wanderer-controls-narrow":
         prefix = _current_screen_verify_script(screen) + ";\n"
         body = """
-var pane = WM.el('settings-previews-wanderer');
+var pane = WM.el('settings-wanderer-connection');
 var note = WM.el('wanderer-save-note'), test = WM.el('wanderer-test'), remove = WM.el('wanderer-remove');
 check(text(note, 'Test connection saves the map URL and token; it does not turn names on.')
   && text(test, 'Test connection') && !test.disabled
@@ -1508,7 +1509,7 @@ def _current_screen_verify_script(screen: Screen) -> str:
                 f"WM.el('dlg-select').options.length !== {len(fixture['sources'])}",
                 "!WM.el('dlg-select-detail').textContent",
             ]
-    elif screen.section == "previews":
+    elif screen.section == "wanderer":
         state = load_dev_tool_screenshot_fixture()["wanderer"]["state"]
         conditions += [
             f"WM.el('wanderer-url').value !== {json.dumps(state['base_url'] + '/' + state['map_identifier'])}",

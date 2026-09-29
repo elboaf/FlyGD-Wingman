@@ -31,7 +31,7 @@ def test_wanderer_retains_compact_identity_without_pinning_the_whole_form():
     assert rule and "position: sticky" in rule.group(1)
     assert "background: var(--panel)" in rule.group(1)
     assert "top: 0" in rule.group(1)
-    pane = re.search(r"#settings-previews-wanderer\s*\{([^}]*)\}", css)
+    pane = re.search(r"#settings-wanderer-connection\s*\{([^}]*)\}", css)
     clearance = (
         re.search(r"scroll-padding-top:\s*(\d+)px", pane.group(1)) if pane else None
     )
@@ -176,46 +176,55 @@ vm.runInContext(source.slice(start, end), context);
     assert '"token":' not in run.stdout
 
 
-def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
+def test_wanderer_card_is_its_own_settings_section_with_accessible_safe_controls():
+    """#301: the whole Map connection card left Previews > Wanderer names for
+    its own rail section, whose label it must not repeat as a heading."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    previews = html.split('id="section-previews"', 1)[1].split('id="section-fleet"', 1)[
+    wanderer = html.split('id="section-wanderer"', 1)[1].split('id="section-fleet"', 1)[
         0
     ]
-    assert 'id="wanderer-settings"' in previews
-    heading = re.search(r'<h2 id="wanderer-heading">([^<]+)</h2>', previews)
-    tab = re.search(
-        r'id="settings-tab-previews-wanderer"[^>]*>([^<]+)</button>', previews
+    previews = html.split('id="section-previews"', 1)[1].split(
+        'id="section-wanderer"', 1
+    )[0]
+    assert 'id="wanderer-settings"' in wanderer
+    assert 'id="wanderer-settings"' not in previews
+    heading = re.search(r'<h2 id="wanderer-heading">([^<]+)</h2>', wanderer)
+    assert heading
+    assert heading[1] != "Wanderer API", (
+        "Connection heading must not repeat its rail section"
     )
-    assert heading and tab
-    assert heading[1] != tab[1], "Connection heading must not repeat its selected tab"
-    assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', previews)
+    assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', wanderer)
     for field in ("url", "token"):
-        assert f'for="wanderer-{field}"' in previews
-        assert f'id="wanderer-{field}-apply"' not in previews
-        assert f'aria-describedby="wanderer-{field}' in previews
-    token = re.search(r'<input[^>]*id="wanderer-token"[^>]*>', previews)
+        assert f'for="wanderer-{field}"' in wanderer
+        assert f'id="wanderer-{field}-apply"' not in wanderer
+        assert f'aria-describedby="wanderer-{field}' in wanderer
+    token = re.search(r'<input[^>]*id="wanderer-token"[^>]*>', wanderer)
     assert token
     assert 'type="password"' in token[0]
     assert 'autocomplete="new-password"' in token[0]
     assert "value=" not in token[0]
+    assert ">Location API token<" in wanderer, "the read credential's label (#301)"
+    assert ">Bookmark API token<" in wanderer, "the prime credential's label (#301)"
+    assert ">Map API token<" not in html
+    assert ">Prime token<" not in html
     assert re.search(
         r'<label class="check">\s*<input[^>]*id="wanderer-enabled"[^>]*>'
         r'<span class="box">',
-        previews,
+        wanderer,
     )
-    assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
-    assert re.search(r'<p class="operational-status" id="wanderer-health"', previews)
-    assert re.search(r'<p class="hint" id="wanderer-coverage"', previews), (
+    assert re.search(r'id="wanderer-health"[^>]*role="status"', wanderer)
+    assert re.search(r'<p class="operational-status" id="wanderer-health"', wanderer)
+    assert re.search(r'<p class="hint" id="wanderer-coverage"', wanderer), (
         "Only the combined health/coverage headline is authoritative; recovery is subordinate"
     )
     for state in ("health", "coverage"):
-        assert previews.index(f'id="wanderer-{state}"') < previews.index(
+        assert wanderer.index(f'id="wanderer-{state}"') < wanderer.index(
             'id="wanderer-url"'
         )
-    assert 'id="wanderer-connection-error"' in previews
-    assert "saves the map URL and token" in previews
+    assert 'id="wanderer-connection-error"' in wanderer
+    assert "saves the map URL and token" in wanderer
     source = (WEB / "wanderer.js").read_text(encoding="utf-8")
-    initial_hint = re.search(r'id="wanderer-token-draft"[^>]*>([^<]+)</p>', previews)
+    initial_hint = re.search(r'id="wanderer-token-draft"[^>]*>([^<]+)</p>', wanderer)
     painted_hint = re.search(r"el\('token-draft'\)\.textContent = '([^']*)';", source)
     assert initial_hint and painted_hint
     assert initial_hint[1] == painted_hint[1]

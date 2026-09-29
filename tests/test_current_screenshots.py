@@ -20,8 +20,8 @@ SYNTHETIC = {
     "settings-companions-detail-narrow": "companions",
     "settings-companions-add": "companions",
     "settings-companions-source-narrow": "companions",
-    "settings-wanderer": "previews",
-    "settings-wanderer-narrow": "previews",
+    "settings-wanderer": "wanderer",
+    "settings-wanderer-narrow": "wanderer",
     "settings-fleet-characters-narrow": "fleet",
     "settings-fleet-sharing": "fleet",
     "settings-fleet-sharing-details": "fleet",
@@ -64,8 +64,8 @@ SUBPAGES = {
     "settings-previews-groups": "characters",
     "settings-previews-narrow": "characters",
     "settings-previews-crop-narrow": "characters",
-    "settings-wanderer": "wanderer",
-    "settings-wanderer-narrow": "wanderer",
+    "settings-wanderer": None,
+    "settings-wanderer-narrow": None,
 }
 
 _VM_INTRINSIC_MUTATION = r"""

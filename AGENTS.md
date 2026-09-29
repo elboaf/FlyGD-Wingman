@@ -266,12 +266,15 @@ panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
-`wanderer.js` owns the Wanderer names card in Settings > Previews; health pushes
+`wanderer.js` owns the Wanderer API section's Map connection card (its own
+Settings section since #301, no tabs); health pushes
 never overwrite field drafts. The form takes a full map URL and token; Python
 extracts the server address/map identifier, preserving the saved binding format.
 Test saves the submitted connection; blank tokens reuse only the current normalized
 binding, and Remove clears the server address, map identifier and token
-while retaining the independent enable preference.
+while retaining the independent enable preference. Both credentials ingest
+interchangeably: Enter in their field, or the Test connection click, which
+carries a pasted Bookmark API token draft after the connection write settles.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts. Uploading and Previews also have
 static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`

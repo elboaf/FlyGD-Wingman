@@ -492,19 +492,19 @@ class WandererController:
                 return refusal
             if not isinstance(token, str):
                 return self._result(
-                    False, "Enter a prime token or leave the field empty."
+                    False, "Enter a Bookmark API token or leave the field empty."
                 )
             with self._condition:
                 section = dict(self._section)
             if not section["base_url"] or not section["map_identifier"]:
                 return self._result(
                     False,
-                    "Save and test the map connection before adding a prime token.",
+                    "Save and test the map connection before adding a Bookmark API token.",
                 )
             try:
                 candidate = validate_token(token) if token != "" else None
             except OSError:
-                return self._result(False, "That prime token is not valid.")
+                return self._result(False, "That Bookmark API token is not valid.")
             if candidate == self._prime_token:
                 return self._result(True)
             try:
@@ -515,7 +515,9 @@ class WandererController:
                         section["base_url"], section["map_identifier"], candidate
                     )
             except Exception:  # noqa: BLE001 — protected-store failure: fixed context only.
-                return self._result(False, "Could not save the prime token on this PC.")
+                return self._result(
+                    False, "Could not save the Bookmark API token on this PC."
+                )
             with self._condition:
                 self._prime_token = candidate
                 self._prime_credential_present = candidate is not None

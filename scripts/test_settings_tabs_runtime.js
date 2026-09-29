@@ -15,7 +15,7 @@ function test(name, run) { tests.push({name, run}); }
 function turn() { return new Promise(resolve => setImmediate(resolve)); }
 const accepted = {applied: true, persisted: true, error: null};
 const refused = {applied: false, persisted: false, error: 'Not accepted'};
-const tabs = {previews: ['windows', 'characters', 'wanderer'], uploading: ['youtube', 'recording', 'combatlogs']};
+const tabs = {previews: ['windows', 'characters'], uploading: ['youtube', 'recording', 'combatlogs']};
 
 function previewPayload(overrides = {}) {
   return {hotkeys: {characters: {}, cycle_next: '', cycle_prev: '',
@@ -73,8 +73,8 @@ async function page({previews = false, settings = false} = {}) {
     const node = new Element(tag, attrs); parent.appendChild(node); return node;
   }
   const el = id => document.getElementById(id);
-  add('input', {id: 'retained-draft'}, el('settings-previews-wanderer'));
-  add('details', {id: 'retained-disclosure'}, el('settings-previews-wanderer'));
+  add('input', {id: 'retained-draft'}, el('settings-previews-characters'));
+  add('details', {id: 'retained-disclosure'}, el('settings-previews-characters'));
 
   const calls = [], errors = [], events = [], sections = [];
   const window = {document, addEventListener() {}, location: {search: ''},
@@ -151,16 +151,16 @@ function selected(p, section, wanted) {
 test('mouse activation toggles only static subpages, emits once, and retains drafts and scroll', async () => {
   const p = await page(); p.WM.openSettingsSection('previews');
   const draft = p.el('retained-draft'), disclosure = p.el('retained-disclosure');
-  draft.value = 'unsaved'; disclosure.open = true; p.panel('previews', 'wanderer').scrollTop = 123;
+  draft.value = 'unsaved'; disclosure.open = true; p.panel('previews', 'characters').scrollTop = 123;
   const sections = p.sections.slice(), calls = p.calls.length;
-  await p.click('previews', 'wanderer'); selected(p, 'previews', 'wanderer');
-  assert.deepEqual(p.events, [{section: 'previews', tab: 'wanderer', previous: 'windows'}]);
-  await p.click('previews', 'wanderer');
+  await p.click('previews', 'characters'); selected(p, 'previews', 'characters');
+  assert.deepEqual(p.events, [{section: 'previews', tab: 'characters', previous: 'windows'}]);
+  await p.click('previews', 'characters');
   assert.equal(p.events.length, 1, 'same tab is a no-op');
-  await p.click('previews', 'characters'); await p.click('previews', 'wanderer');
+  await p.click('previews', 'windows'); await p.click('previews', 'characters');
   assert.equal(p.el('retained-draft'), draft); assert.equal(draft.value, 'unsaved');
   assert.equal(p.el('retained-disclosure'), disclosure); assert.equal(disclosure.open, true);
-  assert.equal(p.panel('previews', 'wanderer').scrollTop, 123);
+  assert.equal(p.panel('previews', 'characters').scrollTop, 123);
   assert.deepEqual(p.sections, sections); assert.equal(p.calls.length, calls);
   assert.deepEqual(p.scrolls, []);
 });
@@ -192,8 +192,8 @@ test('invalid and gated targets are no-ops, including deep links after gate reso
   }
   assert.equal(p.events.length, count); assert.equal(p.document.activeElement, focused);
   p.WM.apply_eve_gate(false);
-  p.WM.settingsTab('previews', 'wanderer');
-  p.WM.openSettingsSection('previews', 'wanderer');
+  p.WM.settingsTab('previews', 'characters');
+  p.WM.openSettingsSection('previews', 'characters');
   assert.equal(p.WM.current_section, 'general'); selected(p, 'previews', 'characters');
   assert.equal(p.events.length, count);
   p.WM.route('main'); p.WM.openSettingsSection('previews', 'windows');
@@ -208,8 +208,8 @@ test('ordinary entry remembers live selection; explicit deep links override with
   assert.deepEqual(p.sections, ['', 'previews']); selected(p, 'previews', 'characters');
   p.WM.section('uploading'); p.WM.section('previews'); selected(p, 'previews', 'characters');
   p.WM.route('main'); p.WM.route('settings'); selected(p, 'previews', 'characters');
-  p.WM.openSettingsSection('previews', 'wanderer'); selected(p, 'previews', 'wanderer');
-  p.WM.openSettingsSection('previews'); selected(p, 'previews', 'wanderer');
+  p.WM.openSettingsSection('previews', 'characters'); selected(p, 'previews', 'characters');
+  p.WM.openSettingsSection('previews'); selected(p, 'previews', 'characters');
   const fresh = await page(); selected(fresh, 'previews', 'windows'); selected(fresh, 'uploading', 'youtube');
 });
 
@@ -285,8 +285,8 @@ for (const entry of ['focus', 'click', 'pointerdown']) {
     const key = await p.fire(button, 'keydown', {key: 'ArrowRight', code: 'ArrowRight'});
     assert.equal(p.calls.some(call => call.method === 'capture_preview_bind'), false,
       'tab navigation must not be captured as a Preview bind');
-    assert.equal(key.defaultPrevented, true); selected(p, 'previews', 'wanderer');
-    assert.equal(p.document.activeElement, p.button('previews', 'wanderer'));
+    assert.equal(key.defaultPrevented, true); selected(p, 'previews', 'windows');
+    assert.equal(p.document.activeElement, p.button('previews', 'windows'));
     await p.reply('set_bind_capture', true, [false, 1]);
     assert.equal(capture.classList.contains('capturing'), false);
     assert.equal(p.events.length, events.length + 1);

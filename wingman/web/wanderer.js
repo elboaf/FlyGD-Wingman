@@ -157,9 +157,9 @@
     el('token-draft').textContent = 'Windows-protected on this PC. Blank reuses the token only for the same saved map URL.';
     el('prime-token-draft').textContent = 'Optional: names wormholes Set Root captures. Windows-protected; blank turns that off.';
     el('prime-credential').textContent = !acknowledged || !acknowledged.base_url || !acknowledged.map_identifier
-      ? 'Save the map connection to add a prime token.'
-      : acknowledged.prime_credential_present ? 'Prime token stored for the saved map URL.'
-        : 'No prime token stored for the saved map URL.';
+      ? 'Save the map connection to add a Bookmark API token.'
+      : acknowledged.prime_credential_present ? 'Bookmark API token stored for the saved map URL.'
+        : 'No Bookmark API token stored for the saved map URL.';
     var currentHealth = health && acknowledged && health.revision === acknowledged.revision ? health : null;
     var testing = testWaiting || (currentHealth && (currentHealth.test_pending || currentHealth.test_in_flight));
     el('test').disabled = !hydrated || confirming || !!connectionBusy() || !!testing;
@@ -278,7 +278,7 @@
       var errorField = name === 'test' ? fields.connection : field;
       if (saved) errorField.error = '';
       else if (owns) errorField.error = res && res.error ? res.error
-        : 'Could not reach the app. Reopen Previews to check the saved connection.';
+        : 'Could not reach the app. Reopen Wanderer API to check the saved connection.';
       if (name === 'test' && request === field.request) {
         if (!saved || !res.test_accepted) {
           testWaiting = false;
@@ -337,11 +337,30 @@
     testInterrupted = false;
     testPriorResult = health && health.revision === testRevision ? health.test_result : null;
     fields.test.error = '';
+    var prime = el('prime-token').value;
+    if (prime) el('prime-token').value = '';
     commit('test', function () {
       var response = WM.send('test_wanderer_connection', mapUrl, token);
       token = null;
       return response;
     });
+    if (prime) {
+      // Ingestion parity (#301): a prime draft pasted but not yet Enter-committed
+      // ingests with the same Test click, on the prime lane, after the connection
+      // write settles -- so a first-ever setup saves the binding the prime token
+      // binds to before the credential arrives. The edit counter, not the field
+      // value, is the guard: a draft typed (or Enter-committed) since submission
+      // must never be swept up by this stale callback.
+      var primeEdit = fields.primeToken.edit;
+      connectionTail.then(function () {
+        if (fields.primeToken.edit !== primeEdit) return;
+        commit('primeToken', function () {
+          var response = WM.send('set_wanderer_prime_token', prime);
+          prime = null;
+          return response;
+        });
+      });
+    }
   }
 
   el('prime-token').addEventListener('input', function () {
@@ -400,7 +419,7 @@
 
   document.addEventListener('wm:section', function (event) {
     interaction += 1;
-    if (event.detail !== 'previews') return;
+    if (event.detail !== 'wanderer') return;
     if (screenshotFixture) { paint(); return; }
     var request = ++readRequest;
     var atRead = delivery;
@@ -415,7 +434,7 @@
         hydrated = true;
       }
       paint();
-      if (!acknowledged) paintHealth('Could not load Wanderer settings', 'Reopen Previews to retry.');
+      if (!acknowledged) paintHealth('Could not load Wanderer settings', 'Reopen Wanderer API to retry.');
     });
   });
   paint();

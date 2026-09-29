@@ -74,7 +74,7 @@ function page() {
   return {
     calls, confirmations, elements, logs,
     el: id => elements['wanderer-' + id],
-    enter(section = 'previews') { document.dispatchEvent({type: 'wm:section', detail: section}); },
+    enter(section = 'wanderer') { document.dispatchEvent({type: 'wm:section', detail: section}); },
     push(payload) { handlers.onWandererState(payload); },
     fire(id, type, extra = {}) { this.el(id).dispatchEvent(Object.assign({type}, extra)); },
     edit(id, value) { this.el(id).value = value; this.fire(id, 'input'); },
@@ -671,11 +671,11 @@ test('prime token commits on Enter alone, clears the field, and blank is the off
   assert.deepEqual(p.calls[0].args, ['prime-ephemeral']);
   assert.equal(p.el('prime-token').value, '');
   await p.reply('set_wanderer_prime_token', result({prime_credential_present: true}));
-  assert.equal(p.el('prime-credential').textContent, 'Prime token stored for the saved map URL.');
+  assert.equal(p.el('prime-credential').textContent, 'Bookmark API token stored for the saved map URL.');
   await p.apply('prime-token', '');
   assert.deepEqual(p.calls.find(c => c.method === 'set_wanderer_prime_token').args, ['']);
   await p.reply('set_wanderer_prime_token', result({prime_credential_present: false}));
-  assert.equal(p.el('prime-credential').textContent, 'No prime token stored for the saved map URL.');
+  assert.equal(p.el('prime-credential').textContent, 'No Bookmark API token stored for the saved map URL.');
 });
 
 test('prime token never queues behind Test and Test never submits it', async () => {
@@ -688,8 +688,8 @@ test('prime token never queues behind Test and Test never submits it', async () 
   assert.deepEqual(primeCall.args, ['prime-ephemeral']);
   assert.equal(p.calls.filter(c => c.method === 'set_wanderer_prime_token').length, 1,
     'the prime lane fires while Test is in flight');
-  await p.reply('set_wanderer_prime_token', result({}, 'Could not save the prime token on this PC.'));
-  assert.match(p.el('prime-token-error').textContent, /prime token/i);
+  await p.reply('set_wanderer_prime_token', result({}, 'Could not save the Bookmark API token on this PC.'));
+  assert.match(p.el('prime-token-error').textContent, /Bookmark API token/i);
   assert.equal(p.el('prime-token-error').hidden, false);
   // The prime refusal owns its slot: the Test outcome line keeps only the
   // in-flight Test's own business.
@@ -697,12 +697,57 @@ test('prime token never queues behind Test and Test never submits it', async () 
   await p.reply('test_wanderer_connection', result({test_result: 'success', test_result_text: 'Connected.'}));
 });
 
+test('a pasted prime draft ingests with the Test click (#301 ingestion parity)', async () => {
+  const p = page(); await p.hydrate({credential_present: true});
+  await p.apply('prime-token', 'prime-pasted');
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: true}));
+  await p.edit('prime-token', 'prime-next');
+  await p.click('test');
+  // The connection write leads; the prime lane fires only after it settles,
+  // so a first-ever setup saves the binding the prime token binds to.
+  assert.deepEqual(p.calls.map(c => c.method), ['test_wanderer_connection']);
+  await p.reply('test_wanderer_connection', result({test_result: 'success'}));
+  await turn();
+  const primeCalls = p.calls.filter(c => c.method === 'set_wanderer_prime_token');
+  assert.equal(primeCalls.length, 1, 'the settled Test click carries the prime draft');
+  assert.deepEqual(primeCalls[0].args, ['prime-next']);
+  assert.equal(p.el('prime-token').value, '', 'the draft clears at submission');
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: true}));
+  // The settled health push clears the consumed Test wait before re-arming.
+  p.push(Object.assign(result({test_result: 'success', test_result_text: 'Connected.'}), {revision: 2, generation: 2})); await turn();
+  assert.equal(p.el('test').disabled, false, 'the consumed Test must re-arm');
+  // A draft typed after the click is not swept up by its stale lane callback:
+  // the edit counter, not the field value, is the guard.
+  await p.edit('prime-token', 'typed-after-click');
+  await turn(); await turn();
+  assert.equal(p.el('prime-token').value, 'typed-after-click',
+    'a draft typed after the click stays in the field and is never re-sent');
+  assert.ok(!p.calls.some(c => c.method === 'set_wanderer_prime_token'),
+    'the stale lane callback must not re-send the submitted draft');
+  await p.apply('prime-token', '');
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: false}), ['']);
+});
+
+test('Enter in the map fields also carries a pasted prime draft (#301 parity)', async () => {
+  const p = page(); await p.hydrate({credential_present: true});
+  await p.edit('token', 'location-token');
+  await p.edit('prime-token', 'prime-pasted');
+  await p.apply('token', 'location-token');
+  assert.equal(p.calls[0].method, 'test_wanderer_connection');
+  await p.reply('test_wanderer_connection', result({test_result: 'success'}));
+  await turn();
+  const primeCalls = p.calls.filter(c => c.method === 'set_wanderer_prime_token');
+  assert.equal(primeCalls.length, 1, 'Enter-driven Test carries the prime draft');
+  assert.deepEqual(primeCalls[0].args, ['prime-pasted']);
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: true}));
+});
+
 test('prime token needs a saved connection and reports it without touching other drafts', async () => {
   const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
   p.edit('url', 'https://new.example/next');
   await p.apply('prime-token', 'prime-ephemeral');
   await p.reply('set_wanderer_prime_token',
-    result({base_url: '', map_identifier: ''}, 'Save and test the map connection before adding a prime token.'));
+    result({base_url: '', map_identifier: ''}, 'Save and test the map connection before adding a Bookmark API token.'));
   assert.equal(p.el('url').value, 'https://new.example/next', 'a prime refusal cannot rewind the url draft');
   assert.match(p.el('prime-token-error').textContent, /saved|connection/i);
 });

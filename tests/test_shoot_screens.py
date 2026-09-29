@@ -232,7 +232,7 @@ def test_floor_sized_screens_use_the_explicit_inventory_flag():
 
 
 GAP_CAPTURES = {
-    "settings-wanderer-controls-narrow": ("settings", "previews", True),
+    "settings-wanderer-controls-narrow": ("settings", "wanderer", True),
     "profiles-copy-scope": ("evesettings", None, False),
     "fittings-metadata-narrow": ("fittings", None, True),
     "fittings-copy-preflight-bottom-narrow": ("fittings", None, True),

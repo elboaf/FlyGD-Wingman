@@ -115,10 +115,12 @@ the other — which the rail had been hiding by interleaving the two halves
 across seven entries.
 
 Uploading's setup remains one Settings section, with **YouTube**, **Recording**
-and **Combat logs** subpages. Previews likewise separates **Windows**,
-**Characters & cycling** and **Wanderer names**. These are navigation within
-configuration, not additional destinations or feature switches. The EVE preview
-master switch stays visible across its subpages.
+and **Combat logs** subpages. Previews likewise separates **Windows** and
+**Characters & cycling**. These are navigation within configuration, not
+additional destinations or feature switches. The EVE preview master switch stays
+visible across its subpages. The Wanderer map connection is its own **Wanderer API**
+Settings section rather than a Previews subpage: the prime (bookmark) credential is
+a Bookmarks feature, so the whole connection card must not sit behind a Previews tab.
 
 Previews and Bookmarks are as important as uploading and are still
 configuration, because neither produces anything on its own screen — they

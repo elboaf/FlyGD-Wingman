@@ -432,9 +432,16 @@
            impression of the app's configuration surface. -->
       <button class="rail-item active" data-section="uploading">Uploading</button>
       <button class="rail-item" data-section="companions">Companion previews</button>
-      <button class="rail-item" data-section="characters">Character access</button>
+      <button class="rail-item" data-section="characters">EVE Characters</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
+      <!-- Its own section since #301. The connection card lived under
+           Previews > Wanderer names, which buried the prime token -- a
+           Bookmarks feature -- behind a previews tab, and split one
+           feature's configuration across a menu the Bookmarks reader
+           never opens. The read credential is preview-specific, but both
+           credentials are one connection, so the whole card moves. -->
+      <button class="rail-item" data-section="wanderer">Wanderer API</button>
       <button class="rail-item" data-section="fleet">Fleet telemetry</button>
       <!-- Its own entry since round 5's D1. It was a card at the bottom of
            Previews, which is where PRODUCT.md's rule put it -- alerts act
@@ -909,7 +916,6 @@
         <div class="settings-tabs" id="settings-tabs-previews" data-settings-section="previews" role="tablist" aria-label="Preview settings">
           <button class="settings-tab" id="settings-tab-previews-windows" data-settings-tab="windows" role="tab" aria-controls="settings-previews-windows" aria-selected="true" tabindex="0">Windows</button>
           <button class="settings-tab" id="settings-tab-previews-characters" data-settings-tab="characters" role="tab" aria-controls="settings-previews-characters" aria-selected="false" tabindex="-1">Characters &amp; cycling</button>
-          <button class="settings-tab" id="settings-tab-previews-wanderer" data-settings-tab="wanderer" role="tab" aria-controls="settings-previews-wanderer" aria-selected="false" tabindex="-1">Wanderer names</button>
         </div>
       </header>
       <section class="settings-subpage" id="settings-previews-windows" role="tabpanel" aria-labelledby="settings-tab-previews-windows" tabindex="0">
@@ -933,7 +939,7 @@
           </label>
         </div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-show-system-names-status">Requires Wanderer names in Settings &rsaquo; Previews &rsaquo; Wanderer names.</span></div>
+          <span class="hint" id="preview-show-system-names-status">Requires the Wanderer connection in Settings &rsaquo; Wanderer API.</span></div>
         <div class="row">
           <label class="lab" for="preview-label-size">Label size</label>
           <select class="field" id="preview-label-size" aria-describedby="preview-label-size-status">
@@ -1212,50 +1218,7 @@
       </section>
 
       </section>
-      <section class="settings-subpage" id="settings-previews-wanderer" role="tabpanel" aria-labelledby="settings-tab-previews-wanderer" tabindex="0" hidden>
-      <section class="card" id="wanderer-settings" aria-labelledby="wanderer-heading">
-        <header class="scroll-context">
-          <h2 id="wanderer-heading">Map connection</h2>
-          <p class="operational-status" id="wanderer-health" role="status" aria-live="polite"><span id="wanderer-health-label">Loading Wanderer settings…</span><span class="status-announcement" id="wanderer-health-detail"></span></p>
-        </header>
-        <div class="row"><label class="check">
-          <input type="checkbox" id="wanderer-enabled" disabled aria-describedby="wanderer-enabled-error"><span class="box"></span>
-          Show Wanderer system names below character labels
-        </label></div>
-        <p class="field-msg" id="wanderer-enabled-error" hidden></p>
-        <p class="hint" id="wanderer-coverage"></p>
-        <p class="hint">Map-local names; requires character labels.</p>
-        <div class="row">
-          <label class="lab" for="wanderer-url">Map URL</label>
-          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
-        </div>
-        <p class="hint" id="wanderer-url-help">Paste the map page address, not a settings or character-list URL.</p>
-        <p class="hint" id="wanderer-url-draft"></p>
-        <div class="row">
-          <label class="lab" for="wanderer-token">Map API token</label>
-          <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
-          <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
-        </div>
-        <p class="hint" id="wanderer-token-draft">Windows-protected on this PC. Blank reuses the token only for the same saved map URL.</p>
-        <div class="row">
-          <label class="lab" for="wanderer-prime-token">Prime token</label>
-          <span class="hint" id="wanderer-prime-credential">No prime token stored for the saved map URL.</span>
-          <input class="field" id="wanderer-prime-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-prime-token-draft wanderer-connection-error wanderer-prime-credential">
-        </div>
-        <p class="hint" id="wanderer-prime-token-draft">Optional: names wormholes Set Root captures. Windows-protected; blank turns that off.</p>
-        <p class="field-msg" id="wanderer-prime-token-error" hidden></p>
-        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token; it does not turn names on.</p>
-        <p class="field-msg" id="wanderer-connection-error" hidden></p>
-        <div class="row">
-          <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
-          <button class="btn danger" id="wanderer-remove" type="button" disabled aria-describedby="wanderer-remove-error">Remove connection</button>
-        </div>
-        <p class="field-msg" id="wanderer-test-error" hidden></p>
-        <p class="field-msg" id="wanderer-remove-error" hidden></p>
-        <p class="hint" id="wanderer-test-status" role="status" aria-live="polite"></p>
-      </section>
 
-      </section>
       <section class="settings-subpage" id="settings-previews-characters" role="tabpanel" aria-labelledby="settings-tab-previews-characters" tabindex="0" hidden>
       <section class="card" id="preview-keybind-options">
         <h2>Character previews &amp; cycle groups</h2>
@@ -1321,6 +1284,61 @@
           <span class="hint" id="preview-cycle-groups-status"
                 role="status" hidden></span></div>
       </section>
+      </section>
+    </div>
+
+    <div class="settings" id="section-wanderer">
+      <header class="settings-page-header">
+        <h1>Wanderer API</h1>
+      </header>
+      <!-- A scroll container, not a tab panel: this section has no tabs
+           (#301), so the card keeps its sticky scroll-context and bounded
+           scrollport without tablist semantics pointing at a tab that
+           does not exist. -->
+      <section class="settings-subpage" id="settings-wanderer-connection" tabindex="0" aria-label="Wanderer API connection">
+
+      <section class="card" id="wanderer-settings" aria-labelledby="wanderer-heading">
+        <header class="scroll-context">
+          <h2 id="wanderer-heading">Map connection</h2>
+          <p class="operational-status" id="wanderer-health" role="status" aria-live="polite"><span id="wanderer-health-label">Loading Wanderer settings…</span><span class="status-announcement" id="wanderer-health-detail"></span></p>
+        </header>
+        <div class="row"><label class="check">
+          <input type="checkbox" id="wanderer-enabled" disabled aria-describedby="wanderer-enabled-error"><span class="box"></span>
+          Show Wanderer system names below character labels
+        </label></div>
+        <p class="field-msg" id="wanderer-enabled-error" hidden></p>
+        <p class="hint" id="wanderer-coverage"></p>
+        <p class="hint">Map-local names; requires character labels.</p>
+        <div class="row">
+          <label class="lab" for="wanderer-url">Map URL</label>
+          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
+        </div>
+        <p class="hint" id="wanderer-url-help">Paste the map page address, not a settings or character-list URL.</p>
+        <p class="hint" id="wanderer-url-draft"></p>
+        <div class="row">
+          <label class="lab" for="wanderer-token">Location API token</label>
+          <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
+          <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
+        </div>
+        <p class="hint" id="wanderer-token-draft">Windows-protected on this PC. Blank reuses the token only for the same saved map URL.</p>
+        <div class="row">
+          <label class="lab" for="wanderer-prime-token">Bookmark API token</label>
+          <span class="hint" id="wanderer-prime-credential">No Bookmark API token stored for the saved map URL.</span>
+          <input class="field" id="wanderer-prime-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-prime-token-draft wanderer-connection-error wanderer-prime-credential">
+        </div>
+        <p class="hint" id="wanderer-prime-token-draft">Optional: names wormholes Set Root captures. Windows-protected; blank turns that off.</p>
+        <p class="field-msg" id="wanderer-prime-token-error" hidden></p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token; it does not turn names on.</p>
+        <p class="field-msg" id="wanderer-connection-error" hidden></p>
+        <div class="row">
+          <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
+          <button class="btn danger" id="wanderer-remove" type="button" disabled aria-describedby="wanderer-remove-error">Remove connection</button>
+        </div>
+        <p class="field-msg" id="wanderer-test-error" hidden></p>
+        <p class="field-msg" id="wanderer-remove-error" hidden></p>
+        <p class="hint" id="wanderer-test-status" role="status" aria-live="polite"></p>
+      </section>
+
       </section>
     </div>
 

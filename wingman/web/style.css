@@ -4370,8 +4370,9 @@ button.btn:disabled,
    scrolls; the section title, preview master switch and tabs stay reachable.
    Other Settings sections retain their existing scrolling and form measure. */
 .settings-pane:has(> #section-previews.active),
+.settings-pane:has(> #section-wanderer.active),
 .settings-pane:has(> #section-uploading.active) { overflow: hidden; }
-#section-previews, #section-uploading {
+#section-previews, #section-wanderer, #section-uploading {
   height: 100%; max-width: 940px; min-height: 0; gap: 0;
 }
 .settings-page-header { flex: none; padding-top: 3px; }
@@ -4406,6 +4407,7 @@ button.btn:disabled,
 }
 .settings-subpage[hidden] { display: none; }
 #section-previews .settings-subpage { overscroll-behavior-y: contain; }
+#section-wanderer .settings-subpage { overscroll-behavior-y: contain; }
 /* Retain local identity, not the whole form. The enable switch and its refusal
    scroll together; pinning only the switch would hide failed-save feedback. */
 .scroll-context {
@@ -4422,7 +4424,7 @@ button.btn:disabled,
 #wanderer-settings .scroll-context > .operational-status {
   margin: 4px 0 0; line-height: 20px; font-weight: 600; color: var(--text);
 }
-#settings-previews-wanderer { scroll-padding-top: 72px; }
+#settings-wanderer-connection { scroll-padding-top: 72px; }
 /* Cards retain their control/feedback ownership but not a second visual box. */
 .settings-subpage > .card {
   border: 0; box-shadow: none; background: transparent; border-radius: 0;

@@ -162,7 +162,7 @@
   api.set_wanderer_prime_token = function (token) {
     // Presence only: the entry itself is never logged, cached or echoed.
     if (!wanderer.base_url || !wanderer.map_identifier) {
-      return Promise.resolve(wandererAck('Save and test the map connection before adding a prime token.'));
+      return Promise.resolve(wandererAck('Save and test the map connection before adding a Bookmark API token.'));
     }
     return Promise.resolve(wandererChange({prime_credential_present: !!token}, true));
   };
@@ -1786,7 +1786,7 @@
         || !character.fetched_utc) {
       base.status = 'unavailable';
       base.error = !entry.deployable ? 'This fitting cannot be copied safely. Choose a different fitting.'
-                                     : 'Use Authenticate character\u2026 in Settings \u203a Character access if needed, then Refresh characters.';
+                                     : 'Use Authenticate character\u2026 in Settings \u203a EVE Characters if needed, then Refresh characters.';
       return base;
     }
     if (entry.presences.some(function (p) {

@@ -343,7 +343,7 @@
                    'accountidentity', 'backups', 'uisetup'];
   // EVE configuration stays separate from Uploading, Companions and General. Fleet has
   // its own section but no additional runtime owner or activation path.
-  WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'fleet', 'alerts'];
+  WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'wanderer', 'fleet', 'alerts'];
 
   WM.apply_eve_gate = function (shown, fleetEnabled) {
     WM.eve_shown = shown !== false;

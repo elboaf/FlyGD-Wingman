@@ -2604,6 +2604,7 @@ def test_nested_work_panes_declare_overscroll_containment():
     for selector in (
         "#characters-roster",
         "#section-previews .settings-subpage",
+        "#section-wanderer .settings-subpage",
         ".fit-workspace-scroll",
         "#fittings-copy-body",
     ):
