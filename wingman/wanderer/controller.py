@@ -21,7 +21,7 @@ from ..telemetry.model import ClientSessionId
 from .client import WandererClient
 from .credentials import CredentialStore, validate_token
 from .model import PrimeIdentity, parse_map_url
-from .staging import Staged, StagingFailure, build_prime_record
+from .staging import Staged, StagingClient, StagingFailure, build_prime_record
 from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
 logger = logging.getLogger(__name__)
@@ -83,8 +83,6 @@ class WandererController:
                 path=paths.state_dir() / "wanderer_prime_credentials.json"
             )
         )
-        from .staging import StagingClient
-
         self._staging = staging if staging is not None else StagingClient()
         self._mutation_lock = threading.Lock()
         self._handoff_lock = threading.RLock()
