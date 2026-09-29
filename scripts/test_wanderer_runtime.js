@@ -12,7 +12,7 @@ function test(name, run) { tests.push({name, run}); }
 function turn() { return new Promise(resolve => setImmediate(resolve)); }
 function state(overrides = {}) {
   return Object.assign({enabled: false, base_url: 'https://wanderer.example/prefix',
-    map_identifier: 'home', revision: 1, credential_present: false, credential_error: false, persistence_error: false,
+    map_identifier: 'home', revision: 1, credential_present: false, credential_error: false, persistence_error: false, prime_credential_present: false,
     generation: 1, automatic_ready: false, status: 'off', error_code: null, paused: false,
     in_flight: false, test_pending: false, test_in_flight: false, test_result: null,
     last_success_monotonic: null, next_request_monotonic: null,
@@ -24,7 +24,8 @@ function result(overrides = {}, error = null) {
   const p = state(overrides);
   const acknowledged = {};
   for (const key of ['enabled', 'base_url', 'map_identifier', 'revision',
-    'credential_present', 'credential_error', 'persistence_error']) acknowledged[key] = p[key];
+    'credential_present', 'credential_error', 'persistence_error', 'prime_credential_present'])
+    acknowledged[key] = p[key];
   return {applied: !error, persisted: !error, error, acknowledged,
     test_accepted: !error, test_error: null, test_generation: p.generation};
 }
@@ -661,6 +662,59 @@ test('failed compensation never paints a healthy saved credential or an old Test
   assert.doesNotMatch(p.el('health').textContent, /^Connected/);
   assert.doesNotMatch(p.el('credential').textContent, /^Token stored/);
   assert.doesNotMatch(p.el('test-status').textContent, /Connected/);
+});
+
+test('prime token commits on Enter alone, clears the field, and blank is the off switch', async () => {
+  const p = page(); await p.hydrate({credential_present: true, prime_credential_present: true});
+  await p.apply('prime-token', 'prime-ephemeral');
+  assert.equal(p.calls[0].method, 'set_wanderer_prime_token');
+  assert.deepEqual(p.calls[0].args, ['prime-ephemeral']);
+  assert.equal(p.el('prime-token').value, '');
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: true}));
+  assert.equal(p.el('prime-credential').textContent, 'Prime token stored for the saved map URL.');
+  await p.apply('prime-token', '');
+  assert.deepEqual(p.calls.find(c => c.method === 'set_wanderer_prime_token').args, ['']);
+  await p.reply('set_wanderer_prime_token', result({prime_credential_present: false}));
+  assert.equal(p.el('prime-credential').textContent, 'No prime token stored for the saved map URL.');
+});
+
+test('prime token never queues behind Test and Test never submits it', async () => {
+  const p = page(); await p.hydrate({credential_present: true});
+  await p.click('test');
+  assert.equal(p.calls[0].method, 'test_wanderer_connection');
+  assert.deepEqual(p.calls[0].args, ['https://wanderer.example/prefix/home', '']);
+  await p.apply('prime-token', 'prime-ephemeral');
+  const primeCall = p.calls.find(c => c.method === 'set_wanderer_prime_token');
+  assert.deepEqual(primeCall.args, ['prime-ephemeral']);
+  assert.equal(p.calls.filter(c => c.method === 'set_wanderer_prime_token').length, 1,
+    'the prime lane fires while Test is in flight');
+  await p.reply('set_wanderer_prime_token', result({}, 'Could not save the prime token on this PC.'));
+  assert.match(p.el('prime-token-error').textContent, /prime token/i);
+  assert.equal(p.el('prime-token-error').hidden, false);
+  // The prime refusal owns its slot: the Test outcome line keeps only the
+  // in-flight Test's own business.
+  assert.doesNotMatch(p.el('test-status').textContent, /prime/i);
+  await p.reply('test_wanderer_connection', result({test_result: 'success', test_result_text: 'Connected.'}));
+});
+
+test('prime token needs a saved connection and reports it without touching other drafts', async () => {
+  const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
+  p.edit('url', 'https://new.example/next');
+  await p.apply('prime-token', 'prime-ephemeral');
+  await p.reply('set_wanderer_prime_token',
+    result({base_url: '', map_identifier: ''}, 'Save and test the map connection before adding a prime token.'));
+  assert.equal(p.el('url').value, 'https://new.example/next', 'a prime refusal cannot rewind the url draft');
+  assert.match(p.el('prime-token-error').textContent, /saved|connection/i);
+});
+
+test('prime token entries never leak into element text, attributes or logs', async () => {
+  const p = page(); await p.hydrate({credential_present: true});
+  await p.apply('prime-token', 'prime-ephemeral');
+  p.push(state({revision: 2, credential_present: true, prime_credential_present: true}));
+  assert.equal(p.logs.length, 0);
+  for (const el of Object.values(p.elements)) {
+    assert.doesNotMatch(el.textContent + JSON.stringify(el.attributes), /prime-ephemeral/);
+  }
 });
 
 // The controller regression supplies an actual barrier-controlled read trace.

@@ -1237,6 +1237,13 @@
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
         <p class="hint" id="wanderer-token-draft">Windows-protected on this PC. Blank reuses the token only for the same saved map URL.</p>
+        <div class="row">
+          <label class="lab" for="wanderer-prime-token">Prime token</label>
+          <span class="hint" id="wanderer-prime-credential">No prime token stored for the saved map URL.</span>
+          <input class="field" id="wanderer-prime-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-prime-token-draft wanderer-connection-error wanderer-prime-credential">
+        </div>
+        <p class="hint" id="wanderer-prime-token-draft">Optional: names wormholes Set Root captures. Windows-protected; blank turns that off.</p>
+        <p class="field-msg" id="wanderer-prime-token-error" hidden></p>
         <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token; it does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">

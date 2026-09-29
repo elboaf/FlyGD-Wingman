@@ -1,6 +1,7 @@
 """Committed transactions and real retained owners; no timing sleeps."""
 
 import json
+import queue
 import shutil
 import subprocess
 import threading
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_wanderer_staging import EVENT, make_identity, make_prime
 from tests.test_wanderer_worker import (
     FIRST,
     HIDDEN,
@@ -18,10 +20,41 @@ from tests.test_wanderer_worker import (
 )
 from wingman import settings
 from wingman.wanderer.credentials import CredentialStore
+from wingman.wanderer.staging import Staged
 from wingman.wanderer.worker import WandererWorker
 
 BASE = "https://wanderer.example/prefix"
 TOKEN = "private-controller-token"
+PRIME_TOKEN = "wmi_v1_11111111-2222-3333-4444-555555555555_" + "b" * 43
+
+
+class StagingCall:
+    def __init__(self, args):
+        self.args = args
+        self.replies = queue.Queue()
+
+    def reply(self, result):
+        self.replies.put(result)
+
+
+class FakeStaging:
+    """Mirrors the worker-test Client: stage() blocks until the test replies."""
+
+    def __init__(self):
+        self.calls = []
+        self.cv = threading.Condition()
+
+    def stage(self, *args):
+        call = StagingCall(args)
+        with self.cv:
+            self.calls.append(call)
+            self.cv.notify_all()
+        return call.replies.get(timeout=5)
+
+    def call(self, number):
+        with self.cv:
+            assert self.cv.wait_for(lambda: len(self.calls) >= number, 2)
+            return self.calls[number - 1]
 
 
 @pytest.mark.parametrize("raw", [None, [], "yes", {"enabled": 1}, {"enabled": "true"}])
@@ -108,7 +141,16 @@ class Host:
 
 class Rig:
     def __init__(
-        self, tmp_path, *, enabled=True, previews=True, delivery=None, section=None
+        self,
+        tmp_path,
+        *,
+        enabled=True,
+        previews=True,
+        delivery=None,
+        section=None,
+        with_prime_credential=False,
+        staging=None,
+        prime_credentials=None,
     ):
         from wingman.wanderer.controller import WandererController, WandererPorts
 
@@ -129,6 +171,16 @@ class Rig:
             unprotect=lambda b: b[::-1],
         )
         self.store.replace(BASE, "map", TOKEN)
+        self.prime_store = prime_credentials
+        if self.prime_store is None:
+            self.prime_store = CredentialStore(
+                tmp_path / "prime_credential",
+                protect=lambda b: b[::-1],
+                unprotect=lambda b: b[::-1],
+            )
+        if with_prime_credential:
+            self.prime_store.replace(BASE, "map", PRIME_TOKEN)
+        self.staging = staging if staging is not None else FakeStaging()
         self.clock = Clock()
         self.worker_cv = ObservedCondition()
         self.client = Client()
@@ -154,6 +206,8 @@ class Rig:
             credentials=self.store,
             client=self.client,
             worker_factory=factory,
+            staging=self.staging,
+            prime_credentials=self.prime_store,
             ports=WandererPorts(
                 update_settings=lambda: settings.update(self.cfg),
                 set_metadata_callback=self.host.subscribe,
@@ -811,3 +865,247 @@ def test_prime_identity_survives_a_shut_page(rig):
     assert rig.controller.prime_identity(session) is not None
     rig.controller.close_admission()
     assert rig.controller.prime_identity(session) is None
+
+
+# ---- Prime staging (issue #297) ------------------------------------------
+
+
+def test_stage_prime_posts_the_wire_record_exactly_once_per_event(rig_tmp):
+    prime, identity = make_prime(), make_identity()
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(prime, identity) is True
+        call = rig.staging.call(1)
+        base, map_identifier, token, record = call.args
+        assert (base, map_identifier, token) == (BASE, "map", PRIME_TOKEN)
+        assert record["event_id"] == EVENT
+        assert record["eve_character_id"] == identity.character_id
+        assert record["source_solar_system_id"] == identity.solar_system_id
+        assert record["system_name"] == "J123456"
+        assert record["flags"] == {
+            "eol": True,
+            "half_mass": False,
+            "critical": False,
+            "frigate": True,
+        }
+        call.reply(Staged())
+        # The engine keeps one prime until the next Set Root, so the relay
+        # re-offers the same event; the controller must stage it once.
+        assert rig.controller.stage_prime(prime, identity) is False
+        with rig.staging.cv:
+            assert len(rig.staging.calls) == 1
+    finally:
+        rig.close()
+
+
+def test_stage_prime_is_inert_without_the_prime_credential(rig_tmp):
+    prime, identity = make_prime(), make_identity()
+    rig = Rig(rig_tmp)
+    try:
+        assert rig.controller.stage_prime(prime, identity) is False
+        assert rig.staging.calls == []
+    finally:
+        rig.close()
+
+
+def test_stage_prime_is_inert_without_identity(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), None) is False
+        assert rig.staging.calls == []
+        # An identity whose map record is online-but-unmapped stages nothing:
+        # the prime's expected source must be a known solar system.
+        assert (
+            rig.controller.stage_prime(
+                make_prime(), make_identity(solar_system_id=None)
+            )
+            is False
+        )
+        assert rig.staging.calls == []
+    finally:
+        rig.close()
+
+
+def test_stage_prime_without_a_saved_connection_still_uses_the_prime_credential(
+    rig_tmp,
+):
+    """Staging binds to the saved map; without one it cannot bind and stays inert."""
+    rig = Rig(
+        rig_tmp,
+        with_prime_credential=True,
+        section={"enabled": True, "base_url": "", "map_identifier": ""},
+    )
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity()) is False
+        assert rig.staging.calls == []
+    finally:
+        rig.close()
+
+
+@pytest.fixture
+def rig_tmp(tmp_path):
+    return tmp_path
+
+
+def test_set_prime_token_saves_a_second_protected_credential(rig_tmp):
+    rig = Rig(rig_tmp)
+    try:
+        rig.start()
+        result = rig.controller.set_prime_token(PRIME_TOKEN)
+        assert result["applied"] and result["persisted"]
+        assert rig.prime_store.load(BASE, "map") == PRIME_TOKEN
+        state = rig.controller.state()
+        assert state["prime_credential_present"] is True
+        # The acknowledged section still carries no secret material.
+        assert "prime_token" not in json.dumps(state)
+        assert PRIME_TOKEN not in json.dumps(state)
+    finally:
+        rig.close()
+
+
+def test_empty_prime_token_is_the_off_switch(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        rig.start()
+        result = rig.controller.set_prime_token("")
+        assert result["applied"] and result["persisted"]
+        assert rig.prime_store.load(BASE, "map") is None
+        assert rig.controller.state()["prime_credential_present"] is False
+    finally:
+        rig.close()
+
+
+def test_set_prime_token_refuses_a_malformed_token_without_store_change(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        rig.start()
+        result = rig.controller.set_prime_token("bad token\nwith control chars")
+        assert not result["applied"]
+        assert rig.prime_store.load(BASE, "map") == PRIME_TOKEN
+    finally:
+        rig.close()
+
+
+def test_set_prime_token_needs_a_saved_connection(rig_tmp):
+    rig = Rig(
+        rig_tmp,
+        with_prime_credential=True,
+        section={"enabled": True, "base_url": "", "map_identifier": ""},
+    )
+    try:
+        result = rig.controller.set_prime_token(PRIME_TOKEN)
+        assert not result["applied"]
+    finally:
+        rig.close()
+
+
+def test_prime_store_failure_refuses_and_keeps_the_prior_credential(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+
+    def explode(plaintext):
+        raise OSError("dpapi down")
+
+    try:
+        rig.start()
+        rig.prime_store._protect = explode
+        result = rig.controller.set_prime_token(
+            "wmi_v1_11111111-2222-3333-4444-555555555555_" + "c" * 43
+        )
+        assert not result["applied"]
+        assert rig.prime_store.load(BASE, "map") == PRIME_TOKEN
+    finally:
+        rig.close()
+
+
+def test_remove_connection_clears_the_prime_credential_too(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        rig.start()
+        revision = rig.controller.state()["revision"]
+        result = rig.controller.remove_connection(revision)
+        assert result["applied"]
+        assert rig.prime_store.load(BASE, "map") is None
+        assert rig.controller.state()["prime_credential_present"] is False
+    finally:
+        rig.close()
+
+
+def test_rebinding_the_map_reloads_prime_presence(rig_tmp):
+    """A prime token is bound to its map: a new binding starts without it."""
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        rig.start()
+        result = rig.controller.test_connection("https://other.example/map2", TOKEN)
+        assert result["applied"]
+        state = rig.controller.state()
+        assert state["map_identifier"] == "map2"
+        assert state["prime_credential_present"] is False
+    finally:
+        rig.close()
+
+
+def test_stage_prime_retries_a_transient_failure_within_its_budget(rig_tmp):
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity())
+        call = rig.staging.call(1)
+        call.reply(StagingFailure("service_unavailable", 503))
+        # The budget is 3 attempts: two retries follow the 503.
+        rig.staging.call(2).reply(StagingFailure("service_unavailable", 503))
+        rig.staging.call(3).reply(Staged())
+        with rig.staging.cv:
+            assert len(rig.staging.calls) == 3
+    finally:
+        rig.close()
+
+
+def test_stage_prime_gives_up_silently_after_the_budget(rig_tmp):
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity())
+        for number in (1, 2, 3):
+            rig.staging.call(number).reply(StagingFailure("timeout"))
+        with rig.staging.cv:
+            assert len(rig.staging.calls) == 3
+        # The exhausted event is not re-offered by the controller itself.
+        assert rig.controller.stage_prime(make_prime(), make_identity()) is False
+        with rig.staging.cv:
+            assert len(rig.staging.calls) == 3
+    finally:
+        rig.close()
+
+
+def test_stage_prime_never_retries_a_declined_credential(rig_tmp):
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity())
+        rig.staging.call(1).reply(StagingFailure("scope_forbidden", 403))
+        with rig.staging.cv:
+            assert len(rig.staging.calls) == 1
+    finally:
+        rig.close()
+
+
+def test_stage_prime_stages_a_replacement_event_while_a_lane_is_free(rig_tmp):
+    """The engine replaces the prime: a new event id must stage, newest wins."""
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity())
+        rig.staging.call(1).reply(StagingFailure("timeout"))
+        for number in (2, 3):
+            rig.staging.call(number).reply(StagingFailure("timeout"))
+        replacement = make_prime(event="1a2b3c4d5e6f778899aabbccddeeff00")
+        assert rig.controller.stage_prime(replacement, make_identity())
+        call = rig.staging.call(4)
+        assert call.args[3]["event_id"] == ("1a2b3c4d-5e6f-7788-99aa-bbccddeeff00")
+        call.reply(Staged())
+    finally:
+        rig.close()

@@ -986,3 +986,32 @@ def test_every_bridge_method_the_page_calls_exists_on_the_api():
         "controls are dead in the shipped app and say nothing when "
         f"clicked: {missing}"
     )
+
+
+def test_prime_token_facade_is_an_exact_single_line_delegate():
+    facade, delegate, args = "set_wanderer_prime_token", "set_prime_token", ["token"]
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, facade)).parameters) == ["self", *args]
+    tree = ast.parse(API.read_text(encoding="utf-8"))
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == facade
+    )
+    assert len(method.body) == 1
+    assert (
+        ast.unparse(method.body[0])
+        == f"return self._wanderer.{delegate}({', '.join(args)})"
+    )
+
+
+def test_prime_relay_keeps_the_page_payload_and_the_outbound_lane_separate():
+    body = api_method_body("_relay_prime")
+    # The relay only feeds the controller's staging lane; it never touches
+    # the page push, which _push_eve_status owns.
+    assert "self._push(" not in body
+    assert "stage_prime" in body and "_wanderer_prime_identity" in body
+    # The #295 page payload contract is untouched by #297.
+    push_body = api_method_body("_push_eve_status")
+    assert '"prime"' in push_body and '"onEveStatus"' in push_body

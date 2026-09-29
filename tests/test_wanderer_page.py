@@ -119,6 +119,7 @@ vm.runInContext(source.slice(start, end), context);
         "revision",
         "credential_present",
         "credential_error",
+        "prime_credential_present",
         "persistence_error",
         "generation",
         "automatic_ready",
@@ -230,6 +231,31 @@ def test_wanderer_owns_its_literal_bridge_and_no_other_settings_inputs():
         "set_wanderer_enabled",
         "test_wanderer_connection",
         "remove_wanderer_connection",
+        "set_wanderer_prime_token",
     }
     assert "innerHTML" not in source
     assert not re.search(r"\b(?:let|const)\s|=>|`", re.sub(r"//[^\n]*", "", source))
+
+
+def test_wanderer_prime_token_field_is_a_bounded_second_credential():
+    """#297: the prime token is a second password field on the Map connection
+    card -- never prefilled, never echoed, with its presence line and an
+    explicit off-switch hint beside it."""
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    card = html.split('id="wanderer-settings"', 1)[1].split("</section>", 1)[0]
+    token_at = card.index('id="wanderer-token"')
+    prime_at = card.index('id="wanderer-prime-token"')
+    assert token_at < prime_at, "the prime token joins the card after the map token"
+    prime = re.search(r'<input[^>]*id="wanderer-prime-token"[^>]*>', card)
+    assert prime
+    assert 'type="password"' in prime[0]
+    assert 'autocomplete="new-password"' in prime[0]
+    assert "value=" not in prime[0]
+    assert 'aria-describedby="wanderer-prime-token-draft' in prime[0]
+    assert 'for="wanderer-prime-token"' in card
+    assert 'id="wanderer-prime-credential"' in card
+    draft = re.search(r'id="wanderer-prime-token-draft"[^>]*>([^<]+)</p>', card)
+    assert draft and "off" in draft[1]
+    source = (WEB / "wanderer.js").read_text(encoding="utf-8")
+    painted = re.search(r"el\('prime-token-draft'\)\.textContent = '([^']*)';", source)
+    assert painted and painted[1] == draft[1]

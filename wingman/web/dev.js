@@ -103,7 +103,7 @@
     var configured = kind !== 'off' && kind !== 'setup';
     wanderer = {enabled: kind !== 'off', base_url: configured ? 'https://wanderer.example' : '',
       map_identifier: configured ? 'home' : '', revision: ++wandererRevision,
-      credential_present: configured, credential_error: false, persistence_error: false, generation: wandererRevision,
+      credential_present: configured, credential_error: false, persistence_error: false, prime_credential_present: false, generation: wandererRevision,
       automatic_ready: configured, status: kind === 'off' ? 'off' : configured ? 'connected' : 'setup_incomplete',
       error_code: null, paused: false, in_flight: false,
       test_pending: false, test_in_flight: false, test_result: null, test_result_text: '',
@@ -125,7 +125,7 @@
   function wandererPush() { window.onWandererState(wandererCopy()); }
   function wandererAck(error) {
     var ack = {};
-    ['enabled', 'base_url', 'map_identifier', 'revision', 'credential_present', 'credential_error', 'persistence_error'].forEach(function (key) {
+    ['enabled', 'base_url', 'map_identifier', 'revision', 'credential_present', 'credential_error', 'persistence_error', 'prime_credential_present'].forEach(function (key) {
       ack[key] = wanderer[key];
     });
     return {applied: !error, persisted: !error, error: error || null, acknowledged: ack};
@@ -157,7 +157,14 @@
   api.remove_wanderer_connection = function (revision) {
     return Promise.resolve(revision !== wanderer.revision
       ? wandererAck('The connection changed. Confirm removal again.')
-      : wandererChange({base_url: '', map_identifier: '', credential_present: false}));
+      : wandererChange({base_url: '', map_identifier: '', credential_present: false, prime_credential_present: false}));
+  };
+  api.set_wanderer_prime_token = function (token) {
+    // Presence only: the entry itself is never logged, cached or echoed.
+    if (!wanderer.base_url || !wanderer.map_identifier) {
+      return Promise.resolve(wandererAck('Save and test the map connection before adding a prime token.'));
+    }
+    return Promise.resolve(wandererChange({prime_credential_present: !!token}, true));
   };
   api.test_wanderer_connection = function (mapUrl, token) {
     // Never log, cache or echo the entry. Only presence reaches dev state.
