@@ -605,12 +605,30 @@ ParsePrimeFlags(field) {
 ; The event id: a fresh UUID per captured prime. Downstream this is the
 ; staging idempotency key, so it must change on every Set Root that primes.
 PrimeCapturedTime() {
-    event := ComObjCreate("Scriptlet.TypeLib")
-    StringLower, event, event
-    StringReplace, event, event, {, , All
-    StringReplace, event, event, }, , All
-    StringReplace, event, event, -, , All
-    StringLeft, event, event, 32
+    ; CoCreateGuid via the raw API. The previous generator, ComObjCreate
+    ; ("Scriptlet.TypeLib"), depends on a COM class whose CLSID is commonly
+    ; blocked by Windows Defender Attack Surface Reduction and other
+    ; hardening policies: when the object will not instantiate, AHK's
+    ; ComObjCreate either throws or yields an empty value, PrimeEvent
+    ; stays empty, and BuildPrimeJson() -- which requires a non-empty
+    ; event -- publishes "null". The user-visible symptom: Set Root sets
+    ; the root and parses the tags, but the prime relay never fires and
+    ; nothing reaches Wanderer, with no error anywhere (#297 field
+    ; report). CoCreateGuid is a plain RPC call with no COM activation,
+    ; so it cannot be blocked the same way.
+    event := ""
+    VarSetCapacity(GUID, 16, 0)
+    if DllCall("ole32\CoCreateGuid", "Ptr", &GUID, "Int") = 0 {
+        size := VarSetCapacity(wstr, 64, 0) * 2
+        if DllCall("ole32\StringFromGUID2", "Ptr", &GUID, "Ptr", &wstr, "Int", size // 2, "Int") > 0 {
+            event := StrGet(&wstr, "UTF-16")
+            StringLower, event, event
+            StringReplace, event, event, {, , All
+            StringReplace, event, event, }, , All
+            StringReplace, event, event, -, , All
+            StringLeft, event, event, 32
+        }
+    }
     return event
 }
 
