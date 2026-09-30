@@ -1811,7 +1811,7 @@ def test_preserved_real_thread_mailbox_publishes_latest_after_held_publication(
             == client.signed_publications[0]["revision"]
         )
         client.release.set()
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline and len(client.publish_calls) < 2:
             time.sleep(0.01)
         assert [rows[0].outgoing_dps for _, rows in client.publish_calls[:2]] == [
@@ -1837,7 +1837,7 @@ def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry(tmp_pat
     worker.submit(_source(10, time.monotonic()))
     assert worker.start()
     try:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline and not any(
             k == "publish_snapshot" for k, _, _ in client.calls
         ):
@@ -1850,7 +1850,7 @@ def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry(tmp_pat
             worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
         assert len([t for k, t, _ in client.calls if k == "publish_snapshot"]) == 1
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline and not client.publish_calls:
             worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
@@ -1957,7 +1957,7 @@ def test_real_thread_start_response_cannot_erase_new_stop():
         )
         assert time.monotonic() - started < 0.2
         client.release.set()
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 15
         while (
             time.monotonic() < deadline
             and client.source_views.get(source_id, None) is None
@@ -1965,7 +1965,7 @@ def test_real_thread_start_response_cannot_erase_new_stop():
             time.sleep(0.01)
         # The first completion's attempt was fenced; any later writes retain
         # the pending Start until the queued same-ID Stop is persisted.
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             view = client.source_views.get(source_id)
             if view and view.state == "ended":

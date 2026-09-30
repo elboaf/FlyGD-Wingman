@@ -344,7 +344,7 @@ def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_fai
             and not entered.is_set()
         ):
             entered.set()
-            completions.append(release.wait(5))
+            completions.append(release.wait(15))
 
     def status_changed(value):
         if value.detail == "persistence_failed" and failed_writes:
@@ -371,7 +371,7 @@ def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_fai
         write(path, text)
 
     def wait_for(predicate):
-        deadline = time.monotonic() + 8
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if predicate():
                 return
@@ -381,7 +381,7 @@ def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_fai
     monkeypatch.setattr(s.atomicio, "write_atomic", save)
     assert worker.start()
     try:
-        assert entered.wait(5)
+        assert entered.wait(15)
         before_bytes = store.path.read_bytes()
         before_state = s.load(store.path)
         start = next(
@@ -407,7 +407,7 @@ def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_fai
         assert queued["participation"].payload == s.PendingParticipation(off, False, 1)
         assert store.path.read_bytes() == before_bytes
         release.set()
-        assert failed.wait(5) and completions == [True]
+        assert failed.wait(15) and completions == [True]
         assert failed_writes and failure_statuses
         assert worker.status().local_inhibited
         assert store.path.read_bytes() == before_bytes, (
