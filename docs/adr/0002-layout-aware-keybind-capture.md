@@ -21,9 +21,14 @@ and registration machinery untouched.
   Shift+Comma trade-off the original design made.
 - **One seam, both paths:** the resolver is a single Python seam (Win32
   through an injected seam, unit-testable off-Windows like the other seams).
-  `capture_bind` and the preview capture both consume it; their duplicated,
-  position-only code tables collapse into it. The preview path resolves to a
-  VK for `RegisterHotKey`; bookmarks resolves to an AHK hotkey string.
+  `capture_bind` and the preview capture both consume it, so they cannot
+  disagree about what a key produces. Each capture function keeps its own
+  position table, narrowed to a fallback role: degraded captures still need
+  per-consumer position tokens (the two consumers keep different case
+  conventions), and hand-typed entry validates through those same tables.
+- **Layout consulted:** the foreground thread's — the one actually
+  receiving the user's keys — resolved once per layout and cached, since a
+  capture happens per keystroke.
 - **Representation and migration:** the stored format does not change. Binds
   stay `^+s`-style AHK notation; preview hotkeys keep storing what they store
   today. No settings migration and no engine change: existing binds were

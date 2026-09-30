@@ -11,6 +11,7 @@ resolver is unit-testable on Linux; only the real view's thin wrapper
 binds Win32.
 """
 
+import ctypes
 from typing import NamedTuple
 
 
@@ -37,7 +38,9 @@ _NUMPAD_OPERATORS = frozenset(
 # every Windows layout: numpad, F-number, the named non-printing keys. The
 # layout cannot change what they produce into a *different* storable key,
 # so resolving them can only introduce drift (Numpad4 types "4" on Dvorak;
-# storing "4" would silently move the bind onto the digit row).
+# storing "4" would silently move the bind onto the digit row). The named
+# numpad operators belong here too: they are physical keys with fixed VKs,
+# and leaving them out would make every well-defined capture of one warn.
 _POSITION_DEFINED = frozenset(
     {
         "Space",
@@ -55,6 +58,12 @@ _POSITION_DEFINED = frozenset(
         "ArrowDown",
         "ArrowLeft",
         "ArrowRight",
+        "NumpadAdd",
+        "NumpadSub",
+        "NumpadMult",
+        "NumpadDiv",
+        "NumpadDot",
+        "NumpadEnter",
     }
 )
 
@@ -172,7 +181,7 @@ def win32_available(user32) -> bool:
     )
 
 
-def _bind_signatures(user32) -> None:
+def _pin_user32_signatures(user32) -> None:
     """Pin the W-function signatures before first use.
 
     Without them ctypes marshals HKL as a 32-bit c_int: GetKeyboardLayout's
@@ -180,23 +189,29 @@ def _bind_signatures(user32) -> None:
     fails with 0 on real x64 Windows -- the failure the injected-fake tests
     cannot see. HKL travels as c_size_t (unsigned, pointer-sized); every
     code is c_uint so 0xBA-style VKs never ride as negative ints.
+
+    A test double's plain methods have no argtypes to pin: the assignment
+    raises AttributeError there, which means "fake" and pins nothing.
     """
     from ctypes import c_int, c_size_t, c_uint, c_void_p, c_wchar_p
 
-    user32.GetKeyboardLayout.argtypes = (c_uint,)
-    user32.GetKeyboardLayout.restype = c_size_t
-    user32.MapVirtualKeyExW.argtypes = (c_uint, c_uint, c_size_t)
-    user32.MapVirtualKeyExW.restype = c_uint
-    user32.ToUnicodeEx.argtypes = (
-        c_uint,
-        c_uint,
-        c_void_p,
-        c_wchar_p,
-        c_int,
-        c_uint,
-        c_size_t,
-    )
-    user32.ToUnicodeEx.restype = c_int
+    try:
+        user32.GetKeyboardLayout.argtypes = (c_uint,)
+        user32.GetKeyboardLayout.restype = c_size_t
+        user32.MapVirtualKeyExW.argtypes = (c_uint, c_uint, c_size_t)
+        user32.MapVirtualKeyExW.restype = c_uint
+        user32.ToUnicodeEx.argtypes = (
+            c_uint,
+            c_uint,
+            c_void_p,
+            c_wchar_p,
+            c_int,
+            c_uint,
+            c_size_t,
+        )
+        user32.ToUnicodeEx.restype = c_int
+    except AttributeError:
+        return
 
 
 def windows_layout_view(user32, hkl=None):
@@ -237,13 +252,60 @@ def windows_layout_view(user32, hkl=None):
     return view
 
 
+# One built view per layout HKL, so a capture costs two syscalls, not a
+# signature re-pin and a closure per keystroke. Layouts are per-thread and
+# switched rarely; the dict is bounded by how many layouts the user has.
+_VIEWS = {}
+
+
+def _foreground_hkl(user32):
+    """The layout of the thread receiving the keys.
+
+    GetGUIThreadInfo(NULL) describes the foreground input thread; its focus
+    window's thread owns the layout the user's keystrokes land under. Zero
+    (no foreground, or a blocked call) falls back to the calling thread's
+    own layout -- in Wingman that thread serves the capture UI anyway.
+    """
+    from ctypes import (
+        Structure,
+        c_size_t,
+        c_uint,
+        c_void_p,
+        pointer,
+    )
+
+    class GUITHREADINFO(Structure):
+        _fields_ = [
+            ("cbSize", c_uint),
+            ("flags", c_uint),
+            ("hwndActive", c_void_p),
+            ("hwndFocus", c_void_p),
+            ("hwndCapture", c_void_p),
+            ("hwndMenuOwner", c_void_p),
+            ("hwndMoveSize", c_void_p),
+            ("hwndCaret", c_void_p),
+            ("rcCaret", c_size_t * 4),
+        ]
+
+    info = GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(GUITHREADINFO)
+    get_info = getattr(user32, "GetGUIThreadInfo", None)
+    if get_info is not None and get_info(0, pointer(info)):
+        thread = user32.GetWindowThreadProcessId(info.hwndFocus, None)
+        if thread:
+            return user32.GetKeyboardLayout(thread)
+    return user32.GetKeyboardLayout(0)
+
+
 def bridge_view():
     """The view the bridge uses, on this process's input desktop.
 
-    The capture UI lives in the WebView2 window, whose thread's layout is
-    what the user is pressing keys under (layouts are per-thread; the
-    foreground app can differ). None when Win32 is unavailable -- Linux
-    tests and stripped builds get the position-only path, not an exception.
+    The capture UI lives in the WebView2 window; the layout consulted is the
+    foreground thread's -- the one actually receiving the user's keys
+    (layouts are per-thread, and a user mid-switch may have per-window
+    layouts). Views are cached per layout, so a capture costs two syscalls.
+    None when Win32 is unavailable -- Linux tests and stripped builds get
+    the position-only path, not an exception.
     """
     import ctypes
 
@@ -253,8 +315,13 @@ def bridge_view():
         return None
     if not win32_available(user32):
         return None
-    _bind_signatures(user32)
-    return windows_layout_view(user32)
+    _pin_user32_signatures(user32)
+    hkl = _foreground_hkl(user32)
+    view = _VIEWS.get(hkl)
+    if view is None:
+        view = windows_layout_view(user32, hkl=hkl)
+        _VIEWS[hkl] = view
+    return view
 
 
 def capture_parts(parts: dict) -> dict:
@@ -266,7 +333,16 @@ def capture_parts(parts: dict) -> dict:
     what they mean, so consulting it can only add drift.
     """
     code = parts.get("code") or ""
-    enriched = dict(parts)
+    # `produced`/`warn_reason` are this module's reserved outputs. They are
+    # stripped before anything else so a crafted page payload cannot
+    # dictate what a capture stores: only this module's resolution --
+    # against a layout this side of the bridge actually consulted -- may
+    # set them.
+    enriched = {
+        key: value
+        for key, value in parts.items()
+        if key not in ("produced", "warn_reason")
+    }
     try:
         view = bridge_view()
         missing_reason = "no-layout"
@@ -281,9 +357,8 @@ def capture_parts(parts: dict) -> dict:
     if resolved.kind == "layout":
         enriched["produced"] = resolved.token
     else:
-        # position-defined keys degrade silently: nothing about them changed.
-        if resolved.reason == "position-defined":
-            enriched.pop("warn_reason", None)
-        else:
+        # position-defined keys degrade silently: nothing about them
+        # changed, and the strip above guarantees no stale warn survives.
+        if resolved.reason != "position-defined":
             enriched["warn_reason"] = resolved.reason
     return enriched

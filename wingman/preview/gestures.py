@@ -86,8 +86,11 @@ for _i in range(1, 25):
 
 _NAMES = {vk: name for name, vk in _KEYS.items()}
 
-# DOM event.code -> our key name. Same US-layout assumption bookmarks.py
-# documents, and mitigated the same way: an Edit... escape hatch in the UI.
+# DOM event.code -> our key name for the position fallback. Capture
+# resolves the produced character first (wingman.keylayout, ADR 0002) and
+# hands it over as `produced`; this table is what a degraded capture falls
+# back to. Typed entry (parse) also reads it and is deliberately never
+# layout-resolved: hand-typed text is already what will be stored.
 _CODES = {
     "Space": "Space",
     "Enter": "Enter",

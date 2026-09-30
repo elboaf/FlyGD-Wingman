@@ -28,10 +28,13 @@ _MODIFIER_CODES = frozenset(
     }
 )
 
-# event.code -> AHK key name. event.code is used rather than event.key
-# because event.key reports the *produced* character: Shift+Comma arrives as
-# "<" and the shifting would have to be reversed to recover the "," AHK
-# wants. The cost is a US-layout assumption, mitigated by manual entry.
+# event.code -> AHK key name for the position fallback. Capture resolves
+# the produced character first (wingman.keylayout, ADR 0002) and hands it
+# to to_ahk as `produced`; this table is what a degraded capture -- dead
+# key, unresolvable position -- falls back to. The fallback keeps
+# event.code rather than event.key for the original reason: event.key
+# reports the *produced* character, so Shift+Comma arrives as "<" and the
+# shifting would have to be reversed to recover the "," AHK wants.
 _NAMED = {
     "Space": "Space",
     "Enter": "Enter",
@@ -329,9 +332,9 @@ def collisions(binds: dict) -> dict:
 def parse_ahk(text: str) -> dict:
     """Validate a hand-typed AHK hotkey string.
 
-    The escape hatch for non-US layouts, where the event.code table maps to
-    the wrong character. Routed through the same rules as capture so the
-    two cannot disagree.
+    Hand-typed notation is already spelled the way it will be stored, so it
+    is never layout-resolved (ADR 0002): Edit... remains the deliberate
+    escape hatch for any key capture cannot name.
     """
     raw = (text or "").strip()
     parts = dict.fromkeys(("ctrl", "alt", "shift", "meta"), False)

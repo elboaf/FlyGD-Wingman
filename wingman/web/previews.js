@@ -100,6 +100,7 @@
   // capture reply (setCapWarn), painted by render like every other row.
   var capWarnText = '';
   var host = WM.el('preview-binds');
+
   if (!host) { return; }
 
   var state = {hotkeys: {characters: {}, groups: []},
@@ -111,16 +112,10 @@
   var capturing = null;
   // ADR 0002: capture resolves under the user's active layout; a
   // position that cannot be resolved still binds -- by position -- and says
-  // so on this line until the next capture or render replaces it.
+  // so on this line until the next capture or render replaces it. The
+  // sentences live in WM.positionWarn (app.js) so every page says the same.
   function setCapWarn(reason) {
-    capWarnText = reason && {
-      'no-layout': 'That key was stored by keyboard position: the active ' +
-        'keyboard layout could not be read.',
-      'resolver-failed': 'That key was stored by keyboard position: the ' +
-        'layout lookup failed.',
-      'not-representable': 'That key produces a character Wingman hotkeys ' +
-        'cannot store, so it was stored by keyboard position.'
-    }[reason] || '';
+    capWarnText = WM.positionWarn(reason);
   }
   // One main-page lifetime; never persisted with settings or screenshot state.
   var captureSequence = 0;

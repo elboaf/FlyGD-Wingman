@@ -57,10 +57,9 @@ from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..alerts.controller import AlertsController, AlertsPorts
 from ..eveauth import application as eveauth_application
-from ..keylayout import bridge_view as keylayout_bridge_view
-from ..keylayout import capture_parts as keylayout_capture_parts
 from ..evesettings.controller import ProfilesController, ProfilesPorts
 from ..fleetsharing.projection import verified_character_ids
+from ..keylayout import capture_parts as keylayout_capture_parts
 from ..preview import crops as preview_crops
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures

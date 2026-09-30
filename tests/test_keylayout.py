@@ -5,6 +5,8 @@ exercised off-Windows; the real view's Win32 marshalling is tested with an
 injected fake in the same spirit as the other injected seams.
 """
 
+import types
+
 from wingman import keylayout
 
 
@@ -63,6 +65,21 @@ def test_numpad_keys_keep_position_identity():
     numpad sits regardless of layout. Position-defined keys never resolve."""
     got = keylayout.resolve({"Numpad4": "4"}.get, "Numpad4")
     assert got == keylayout.Resolution("position", None, "position-defined")
+
+
+def test_numpad_operators_keep_position_identity_without_warning():
+    """The named operators are physical keys with fixed VKs: pass-through,
+    and no warn -- nothing about them degraded."""
+    for code in (
+        "NumpadAdd",
+        "NumpadSub",
+        "NumpadMult",
+        "NumpadDiv",
+        "NumpadDot",
+        "NumpadEnter",
+    ):
+        got = keylayout.resolve({code: "?"}.get, code)
+        assert got == keylayout.Resolution("position", None, "position-defined"), code
 
 
 def test_named_keys_keep_position_identity():
@@ -137,3 +154,97 @@ def test_win32_available_requires_both_functions():
     assert keylayout.win32_available(object()) is False
     user32 = _FakeUser32({}, {})
     assert keylayout.win32_available(user32) is True
+
+
+# --- which layout the bridge consults (receiving thread, cached) -----------
+
+
+def test_bridge_view_uses_the_receiving_threads_layout(monkeypatch):
+    """ADR 0002's consequence: the layout consulted is the one receiving
+    the keys (the foreground thread the capture UI types into), not
+    blindly the calling thread's."""
+    calls = []
+
+    class Receiving(_FakeUser32):
+        def GetGUIThreadInfo(self, thread, info):
+            calls.append("gti")
+            info.contents.hwndFocus = 0x1234
+            return 1
+
+        def GetWindowThreadProcessId(self, hwnd, unused):
+            calls.append(("tid", hwnd))
+            return 4242
+
+        def GetKeyboardLayout(self, thread):
+            calls.append(("layout", thread))
+            return 0xA if thread == 4242 else 0xB
+
+    monkeypatch.setattr(keylayout, "_VIEWS", {})
+    user32 = Receiving({0x22: 0x49}, {0x49: "i"})
+    monkeypatch.setattr(
+        keylayout.ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False
+    )
+    view = keylayout.bridge_view()
+    assert view is not None
+    assert ("layout", 4242) in calls, calls
+
+
+def test_bridge_view_falls_back_to_the_calling_thread(monkeypatch):
+    class NoForeground(_FakeUser32):
+        def GetGUIThreadInfo(self, thread, info):
+            return 0
+
+        def GetKeyboardLayout(self, thread):
+            return 0xC
+
+    monkeypatch.setattr(keylayout, "_VIEWS", {})
+    user32 = NoForeground({0x22: 0x49}, {0x49: "i"})
+    monkeypatch.setattr(
+        keylayout.ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False
+    )
+    assert keylayout.bridge_view() is not None
+
+
+def test_bridge_view_caches_one_view_per_layout(monkeypatch):
+    """One ctypes signature pin and one closure per layout, not one per
+    captured keystroke."""
+
+    class Counting(_FakeUser32):
+        built = 0
+        layouts = iter([0xA, 0xA, 0xB])
+
+        def GetGUIThreadInfo(self, thread, info):
+            return 0
+
+        def GetKeyboardLayout(self, thread):
+            try:
+                return next(self.layouts)
+            except StopIteration:
+                return 0xB
+
+    monkeypatch.setattr(keylayout, "_VIEWS", {})
+    user32 = Counting({0x22: 0x49}, {0x49: "i"})
+    monkeypatch.setattr(
+        keylayout.ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False
+    )
+    first = keylayout.bridge_view()
+    second = keylayout.bridge_view()
+    third = keylayout.bridge_view()
+    assert first is second
+    assert third is not first
+    assert sorted(keylayout._VIEWS) == [0xA, 0xB]
+
+
+def test_page_supplied_bridge_keys_are_never_trusted():
+    """`produced`/`warn_reason` are the bridge's reserved keys: the page
+    sends only what a DOM event carries, and a crafted payload must not be
+    able to dictate what a capture stores."""
+    parts = {
+        "ctrl": True,
+        "code": "Numpad4",
+        "produced": "a",
+        "warn_reason": "not-representable",
+    }
+    got = keylayout.capture_parts(parts)
+    assert "produced" not in got
+    assert "warn_reason" not in got
