@@ -18,6 +18,18 @@ The J-code system identifier extracted by Set Root from the selected
 bookmark's text. It is the clipboard value and the name field of a prime.
 _Avoid_: root value, root system name
 
+**Position code**:
+The hardware identity of a key (`event.code`, e.g. `KeyG`): where the key
+sits on a reference board, not what it types. Never stored; capture input
+only.
+_Avoid_: keycode, scan code
+
+**Produced character**:
+The character the user's active OS layout generates for a key; what capture
+resolves a position code into before storing a keybind. Press = label = key
+that fires.
+_Avoid_: layout key, resolved key
+
 **Finisher tag**:
 One of the four flag characters appended to a bookmark name by the finisher
 keybinds: `e` (end of life), `/` (half mass), `c` (critical mass), `f`
