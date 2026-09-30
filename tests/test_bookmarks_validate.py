@@ -80,11 +80,13 @@ def test_collision_is_caught_across_modifier_order():
 
 def test_parse_ahk_accepts_a_typed_string():
     """The manual escape hatch for non-US layouts, validated by the same
-    rules as capture."""
+    rules as capture. It passes neither `produced` nor `warn_reason`: hand-
+    typed notation is already spelled the way it will be stored."""
     assert bookmarks.parse_ahk("^+s") == {
         "ahk": "^+s",
         "display": "Ctrl+Shift+S",
         "error": None,
+        "warn": None,
     }
 
 

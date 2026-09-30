@@ -93,13 +93,25 @@ def to_ahk(parts: dict) -> dict:
 
     Returns both the AHK string and a human label, so the page holds no
     mapping table of its own and cannot drift from this one.
+
+    The bridge pre-resolves the layout (ADR 0002): `produced` carries the
+    character the user's layout types at this position, and wins over the
+    position table; `warn_reason` marks a degraded capture that fell back to
+    the position-derived key. Edit... (parse_ahk) passes neither, so hand-
+    typed notation is never layout-resolved -- it is already spelled the way
+    it will be stored.
     """
     code = parts.get("code") or ""
     if code in _MODIFIER_CODES:
-        return {"ahk": "", "display": "", "error": "modifier-only"}
-    base = _base_key(code)
+        return {"ahk": "", "display": "", "error": "modifier-only", "warn": None}
+    produced = parts.get("produced")
+    base = (
+        produced
+        if isinstance(produced, str) and produced
+        else _base_key(code)
+    )
     if base is None:
-        return {"ahk": "", "display": "", "error": "unmappable"}
+        return {"ahk": "", "display": "", "error": "unmappable", "warn": None}
 
     prefix = "".join(sym for key, sym, _ in _MODIFIERS if parts.get(key))
     labels = [label for key, _, label in _MODIFIERS if parts.get(key)]
@@ -108,6 +120,7 @@ def to_ahk(parts: dict) -> dict:
         "ahk": prefix + base,
         "display": "+".join([*labels, display_key]),
         "error": None,
+        "warn": parts.get("warn_reason") or None,
     }
 
 
