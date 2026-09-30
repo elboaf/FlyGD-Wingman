@@ -418,15 +418,26 @@ FindNextAlpha() {
 ; - If Ctrl is PHYSICALLY held (Ctrl+key hotkey): plain Send ^key. Manual
 ;   {Ctrl Up} here would desync logical vs physical state and make AHK
 ;   re-press Ctrl into the game window (stray Ctrl side effects).
-; - If Ctrl is NOT held (bare-key hotkey like numpad): bracket explicitly
-;   with Down/Up plus a safety release so Ctrl can never stick down.
+; - If Ctrl is NOT held (bare-key hotkey like numpad): phase the chord.
+;   EVE's input is POLLED, not message-driven, so each state change must
+;   hold ~40ms (2+ frames at 60fps) to be reliably sampled: a one-shot
+;   {Ctrl Down}%key%{Ctrl Up} keeps Ctrl down ~10ms, the game can miss the
+;   Ctrl-down entirely, and ^a lands as a bare a -- firing an unrelated
+;   in-game bind, intermittently, depending on where polling is in its
+;   frame. Each Down carries a matching Up so Ctrl can never stick down.
 SafeCtrl(key) {
     if (GetKeyState("Ctrl", "P")) {
         Send ^%key%
     } else {
-        Send {Ctrl Down}%key%{Ctrl Up}
-        Sleep 10
+        Send {Ctrl Down}
+        Sleep 40              ; hold each state change so a polled game
+        Send {%key% Down}     ; input loop reliably samples it
+        Sleep 40
+        Send {%key% Up}
+        Sleep 40
         Send {Ctrl Up}
+        Sleep 10
+        Send {Ctrl Up}        ; safety release (stuck-modifier protection)
     }
 }
 
