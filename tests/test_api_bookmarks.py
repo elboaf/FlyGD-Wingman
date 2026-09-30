@@ -141,7 +141,14 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(
     assert api._state.engine.applied == []
 
 
-def test_capture_and_parse_delegate_to_bookmarks(api):
+def test_capture_and_parse_delegate_to_bookmarks(api, monkeypatch):
+    """The layout view is pinned because capture now resolves under the
+    live layout -- on this machine that is Dvorak, and the point of the
+    fix is that the pin is the only thing keeping the assertion honest.
+    parse_bind passes no view: hand-typed notation is never resolved."""
+    from wingman import keylayout
+
+    monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyS": "s"}.get)
     assert (
         api.capture_bind(
             {"ctrl": True, "alt": False, "shift": True, "meta": False, "code": "KeyS"}
@@ -318,6 +325,41 @@ def test_blockers_are_empty_while_the_feature_is_off(api):
         "keybinds": {"FinH": ""},
     }
     assert api.get_bookmarks()["engine"]["blockers"] == []
+
+
+def test_capture_resolves_under_the_active_layout(api, monkeypatch):
+    """ADR 0002: Dvorak Ctrl+I (position KeyG) stores ^i, labelled Ctrl+I --
+    press = label = key that fires."""
+    from wingman import keylayout
+
+    monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyG": "i"}.get)
+    got = api.capture_bind(
+        {"ctrl": True, "alt": False, "shift": False, "meta": False, "code": "KeyG"}
+    )
+    assert got == {"ahk": "^i", "display": "Ctrl+I", "error": None, "warn": None}
+
+
+def test_capture_degrades_with_a_warn_when_resolution_fails(api, monkeypatch):
+    from wingman import keylayout
+
+    def boom():
+        raise OSError("no user32")
+
+    monkeypatch.setattr(keylayout, "bridge_view", boom)
+    got = api.capture_bind(
+        {"ctrl": True, "alt": False, "shift": False, "meta": False, "code": "KeyG"}
+    )
+    assert got["ahk"] == "^g"
+    assert got["warn"] == "resolver-failed"
+
+
+def test_parse_bind_is_never_layout_resolved(api, monkeypatch):
+    """Edit... spells what it means; resolving it would silently re-bind a
+    Dvorak user's hand-typed `g` to whatever KeyG types."""
+    from wingman import keylayout
+
+    monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyG": "i"}.get)
+    assert api.parse_bind("^g")["ahk"] == "^g"
 
 
 class _SettingsDialogWindow(FakeWindow):

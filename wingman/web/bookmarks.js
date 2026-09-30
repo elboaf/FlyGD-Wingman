@@ -388,6 +388,18 @@
     send(next);
   }
 
+  // ADR 0002: capture resolves under the user's active layout, and a
+  // position that cannot be resolved (dead key, multi-character result, no
+  // Win32 answer) still binds -- by position -- but says so here, one line,
+  // until the next capture or re-render replaces it. The sentences live in
+  // WM.positionWarn (app.js) so every page says the same thing.
+  function showBindWarn(reason) {
+    var row = WM.el('eve-bind-warn');
+    var text = WM.positionWarn(reason);
+    row.hidden = !text;
+    row.querySelector('.lab').textContent = text;
+  }
+
   document.addEventListener('keydown', function (event) {
     if (!capturing) return;
     event.preventDefault();
@@ -414,6 +426,7 @@
       endCapture();
       if (result.error) return;
       setBind(session.id, result.ahk);
+      showBindWarn(result.warn);
     });
   }, true);
 

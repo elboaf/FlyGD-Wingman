@@ -96,6 +96,20 @@
     return node;
   };
 
+  // The sentence for a capture warn reason (ADR 0002), shared by every
+  // page that captures a keybind so the wording cannot drift. Unknown or
+  // missing reasons read as empty: no line beats a wrong line.
+  WM.positionWarn = function (reason) {
+    return {
+      'no-layout': 'That key was stored by keyboard position: the active ' +
+        'keyboard layout could not be read.',
+      'resolver-failed': 'That key was stored by keyboard position: the ' +
+        'layout lookup failed.',
+      'not-representable': 'That key produces a character Wingman hotkeys ' +
+        'cannot store, so it was stored by keyboard position.'
+    }[reason] || '';
+  };
+
   // ---- enabled state --------------------------------------------------
   // THE way a control is made inert. There is no styling half to this: the
   // disabled treatment already exists and works (style.css, the

@@ -18,6 +18,7 @@ def test_plain_letter():
         "ahk": "s",
         "display": "S",
         "error": None,
+        "warn": None,
     }
 
 
@@ -178,3 +179,34 @@ def test_parse_ahk_accepts_the_letter_f(text, ahk):
     characters, so there is no ambiguity to guard against -- an earlier fix
     excluded F on that mistaken basis and made it unbindable."""
     assert bookmarks.parse_ahk(text)["ahk"] == ahk
+
+
+def test_layout_produced_base_is_stored_verbatim():
+    """ADR 0002: the bridge resolves the produced character before calling
+    to_ahk, so a Dvorak capture of the key that types `i` (position KeyG)
+    stores `i` -- the letter -- with no warning."""
+    got = bookmarks.to_ahk({**parts("KeyG"), "produced": "i"})
+    assert got["ahk"] == "i"
+    assert got["display"] == "I"
+    assert got["warn"] is None
+    assert got["error"] is None
+
+
+def test_layout_produced_punctuation_is_stored_verbatim():
+    got = bookmarks.to_ahk({**parts("Slash"), "produced": ","})
+    assert got["ahk"] == ","
+    assert got["display"] == ","
+
+
+def test_fallback_carries_the_warn_reason():
+    """Degraded captures succeed with the position-derived key and say why."""
+    got = bookmarks.to_ahk({**parts("Digit2"), "warn_reason": "not-representable"})
+    assert got["ahk"] == "2"
+    assert got["error"] is None
+    assert got["warn"] == "not-representable"
+
+
+def test_position_capture_warns_none():
+    got = bookmarks.to_ahk(parts("KeyS", ctrl=True))
+    assert got["ahk"] == "^s"
+    assert got["warn"] is None

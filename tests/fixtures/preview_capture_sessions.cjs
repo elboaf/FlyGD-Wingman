@@ -56,6 +56,22 @@ const scenarioCompletion = (async () => {
     window.WM.previewCropScreenshot(null);
     native(b.args[1]);
     assert.equal(writes.length, 0, 'screenshot ingress retires live capture even after exit');
+  } else if (data.scenario === 'warn') {
+    // ADR 0002: a degraded capture still binds, by position, and says so
+    // on the warn line under the rows; the next clean capture retires it.
+    a.resolve(false); await tick();
+    key(); assert.equal(parses.length, 1);
+    parses[0]({gesture: 'Ctrl+2', warn: 'not-representable'}); await tick();
+    assert.equal(writes.length, 1, 'degraded capture still binds');
+    assert.equal(writes[0].characters.Alice, 'Ctrl+2');
+    const hinted = () => Array.from(document.querySelectorAll('#preview-binds .hint'))
+      .some(el => el.textContent.indexOf('stored by keyboard position') !== -1);
+    assert.ok(hinted(), 'warn line rendered under the rows');
+    bind('Bob').click(); const b = arms.at(-1); b.resolve(false); await tick();
+    key(); parses[1]({gesture: 'Ctrl+F9'}); await tick();
+    assert.equal(writes.length, 2);
+    assert.equal(writes[1].characters.Bob, 'Ctrl+F9');
+    assert.ok(!hinted(), 'a clean capture retires the warn line');
   } else {
     window.WM.endPreviewCapture();
     const disarm = arms.at(-1);

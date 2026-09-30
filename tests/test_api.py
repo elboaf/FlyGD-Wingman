@@ -1111,7 +1111,20 @@ def test_capture_preview_bind_returns_a_canonical_gesture(tmp_path):
 
     result = api.capture_preview_bind({"ctrl": True, "alt": True, "code": "F1"})
 
-    assert result == {"gesture": "Ctrl+Alt+F1", "error": None}
+    assert result == {"gesture": "Ctrl+Alt+F1", "error": None, "warn": None}
+
+
+def test_capture_preview_bind_resolves_under_the_active_layout(tmp_path, monkeypatch):
+    """ADR 0002: the preview path shares the resolver with bookmarks -- on
+    Dvorak, position KeyG stores Ctrl+I, the gesture the engine registers."""
+    from wingman import keylayout
+
+    api = make_api(tmp_path)
+    monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyG": "i"}.get)
+
+    result = api.capture_preview_bind({"ctrl": True, "code": "KeyG"})
+
+    assert result == {"gesture": "Ctrl+I", "error": None, "warn": None}
 
 
 def test_parse_preview_bind_reports_a_rejected_chord(tmp_path):

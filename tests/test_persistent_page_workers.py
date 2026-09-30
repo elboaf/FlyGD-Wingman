@@ -261,6 +261,7 @@ def _build_qualification_inputs(
                     "scenario": "hydration",
                 }
                 dev_payload = dict(capture_payload, scenario="dev")
+                warn_payload = dict(capture_payload, scenario="warn")
                 direct_cases = (
                     DirectCliCase(
                         "saved-main",
@@ -282,6 +283,13 @@ def _build_qualification_inputs(
                         _json_text(capture_payload),
                         (),
                         "PASS reversed",
+                    ),
+                    DirectCliCase(
+                        "capture-warn",
+                        "preview_capture_sessions.cjs",
+                        _json_text(warn_payload),
+                        (),
+                        "PASS warn",
                     ),
                     DirectCliCase(
                         "saved-dev",

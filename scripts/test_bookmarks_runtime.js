@@ -130,6 +130,33 @@ for (const leave of ['section', 'route']) {
     assert.equal(p.el('eve-binds').querySelector('.capturing'), null);
   });
 }
+test('capture stores the produced key and says nothing when resolved', async () => {
+  const p = page();
+  p.WM.openSettingsSection('bookmarks'); await p.reply('get_bookmarks', payload());
+  const btn = p.el('eve-binds').querySelector('.bindbtn'); btn.click();
+  p.document.dispatchEvent({type: 'keydown', key: 'i', code: 'KeyG', ctrlKey: true});
+  await p.reply('capture_bind', {ahk: '^i', display: 'Ctrl+I', error: null, warn: null});
+  assert.equal(p.el('eve-bind-warn').hidden, true, 'no warn line for a resolved capture');
+  assert.equal(p.el('eve-bind-warn').textContent, '');
+});
+
+test('capture warns, inline, when the key was stored by position', async () => {
+  const p = page();
+  p.WM.openSettingsSection('bookmarks'); await p.reply('get_bookmarks', payload());
+  const btn = p.el('eve-binds').querySelector('.bindbtn'); btn.click();
+  p.document.dispatchEvent({type: 'keydown', key: 'è', code: 'Digit2', ctrlKey: true});
+  await p.reply('capture_bind', {ahk: '^2', display: 'Ctrl+2', error: null,
+    warn: 'not-representable'});
+  const row = p.el('eve-bind-warn');
+  assert.equal(row.hidden, false);
+  assert.match(row.textContent, /stored by keyboard position/);
+  // The next clean capture retires the line.
+  btn.click();
+  p.document.dispatchEvent({type: 'keydown', key: 'a', code: 'KeyA', ctrlKey: true});
+  await p.reply('capture_bind', {ahk: '^a', display: 'Ctrl+A', error: null, warn: null});
+  assert.equal(p.el('eve-bind-warn').hidden, true);
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
