@@ -360,3 +360,76 @@ def test_parse_bind_is_never_layout_resolved(api, monkeypatch):
 
     monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyG": "i"}.get)
     assert api.parse_bind("^g")["ahk"] == "^g"
+
+
+class _SettingsDialogWindow(FakeWindow):
+    """FakeWindow's dialog takes no keyword options; the settings-share
+    chooser passes allow_multiple/file_types."""
+
+    def create_file_dialog(self, dialog_type, directory="", **kwargs):
+        self.dialogs.append((dialog_type, directory))
+        return self.dialog_result
+
+
+def _import_export_with_bookmarks(api, tmp_path, monkeypatch, keybinds, enabled):
+    """Write a settings export whose eve_bookmarks section carries the given
+    keybinds/enabled flag, and point the file dialog at it. Returns the
+    review_id of the pending import offer."""
+    from wingman import settingssharing
+    from wingman.ui import api as api_mod
+
+    monkeypatch.setattr(api_mod, "_open_file_dialog_kind", lambda: "OPEN")
+    document = settingssharing.export_document(api._state.settings)
+    document["settings"]["eve_bookmarks"]["keybinds"] = dict(keybinds)
+    document["settings"]["eve_bookmarks"]["enabled"] = enabled
+    exported = tmp_path / "export.json"
+    exported.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    window = _SettingsDialogWindow()
+    window.dialog_result = (str(exported),)
+    api._window = window
+    read = api.settings_import_read()
+    assert read["ok"] is True, read["error"]
+    return read["review_id"]
+
+
+def test_an_applied_import_reaches_the_engine(api, tmp_path, monkeypatch):
+    """#304: the import applied to disk and the page rendered the imported
+    bind, but nothing regenerated the engine's INI -- the bind stayed dead
+    until the user re-saved some keybind or toggled the engine checkbox."""
+    review_id = _import_export_with_bookmarks(
+        api,
+        tmp_path,
+        monkeypatch,
+        dict(bookmarks.DEFAULT_BINDS, FinH="^h"),
+        enabled=False,
+    )
+    assert api.settings_import_apply(review_id)["ok"] is True
+    assert api._state.engine.applied[-1]["keybinds"]["FinH"] == "^h"
+    on_disk = json.loads((tmp_path / "s.json").read_text())
+    assert on_disk["eve_bookmarks"]["keybinds"]["FinH"] == "^h"
+
+
+def test_an_applied_import_reconciles_the_engine_with_the_enabled_flag(
+    api, tmp_path, monkeypatch
+):
+    """The same missing reconcile: an import that flips "Register keybinds
+    in EVE" used to leave the engine's running state untouched in both
+    directions."""
+    api._state.settings["eve_bookmarks"]["enabled"] = True
+    assert api._state.engine.start() is True  # engine live before the import
+
+    review_id = _import_export_with_bookmarks(
+        api, tmp_path, monkeypatch, dict(bookmarks.DEFAULT_BINDS), enabled=False
+    )
+    assert api.settings_import_apply(review_id)["ok"] is True
+    assert api._state.engine.stopped == 1
+
+    review_id = _import_export_with_bookmarks(
+        api,
+        tmp_path,
+        monkeypatch,
+        dict(bookmarks.DEFAULT_BINDS),
+        enabled=True,
+    )
+    assert api.settings_import_apply(review_id)["ok"] is True
+    assert api._state.engine.started == 2

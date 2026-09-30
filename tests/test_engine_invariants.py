@@ -473,6 +473,51 @@ def test_no_clipboard_read_can_pick_up_stale_data(source):
         )
 
 
+def test_safectrl_phases_each_state_change_for_polled_input(source):
+    """SafeCtrl's bracketed path must hold every state change ~40ms.
+
+    EVE samples input by polling, not messages: a one-shot
+    {Ctrl Down}key{Ctrl Up} keeps Ctrl down ~10ms, the game can miss the
+    Ctrl-down entirely, and the chord lands as a bare key -- firing an
+    unrelated in-game bind, intermittently, depending on where polling is
+    in its frame. Both halves of the final shape are load-bearing, and
+    each one breaking is the other's symptom (handoff:
+    stuck-Ctrl/dropped-modifier fix, iterations 1-3):
+
+    - Unconditional manual bracketing (iteration 1) desyncs logical from
+      physical Ctrl when a Ctrl+key hotkey is held, so AHK auto-restores
+      it after Send and pushes stray Ctrl into the game -- hence the
+      GetKeyState("Ctrl", "P") branch, which must stay first.
+    - A bracketed path without the phased holds (iteration 2) drops the
+      modifier into polled games -- hence every Down/Up pair separated
+      by a hold, not one combined send.
+    """
+    start = source.index("SafeCtrl(key)")
+    body = source[start : source.index("\n}\n", start)]
+    assert body.index('GetKeyState("Ctrl", "P")') < body.index("Send ^"), (
+        "the physical-Ctrl branch must gate the plain send"
+    )
+    for pair in (
+        ("{Ctrl Down}", "{%key% Down}"),
+        ("{%key% Down}", "{%key% Up}"),
+        ("{%key% Up}", "{Ctrl Up}"),
+    ):
+        first = body.index(pair[0])
+        second = body.index(pair[1])
+        hold = re.search(r"Sleep\s+(\d+)", body[first:second])
+        assert hold and int(hold.group(1)) >= 40, (
+            f"{pair[0]} -> {pair[1]} needs a >=40ms hold between them; a "
+            f"polled game loop misses shorter states and the chord lands bare"
+        )
+    assert body.count("Send {Ctrl Up}") == 2, (
+        "the safety release is the stuck-modifier protection; without the "
+        "second {Ctrl Up} a missed first release sticks Ctrl down"
+    )
+    assert len(re.findall(r"Send \^", body)) == 1, (
+        "only the physical-Ctrl branch may send a ^-prefixed chord"
+    )
+
+
 def test_setting_root_does_not_show_a_redundant_tooltip(lowered):
     """Root state reaches the main strip and, when enabled, the sigbar.
 
