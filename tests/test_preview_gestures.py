@@ -59,7 +59,7 @@ def test_capture_maps_a_dom_event():
     result = gestures.from_capture(
         {"ctrl": True, "alt": True, "shift": False, "meta": False, "code": "F1"}
     )
-    assert result == {"gesture": "Ctrl+Alt+F1", "error": None}
+    assert result == {"gesture": "Ctrl+Alt+F1", "error": None, "warn": None}
 
 
 def test_capture_letters_and_digits():
@@ -90,3 +90,17 @@ def test_capture_rejects_an_unmappable_code():
 def test_imports_without_windows():
     """settings.py imports this for validation, and CI is ubuntu-latest."""
     assert gestures.parse("Ctrl+F1") is not None
+
+
+def test_capture_layout_produced_letter_is_stored_verbatim():
+    """ADR 0002: on Dvorak the key QWERTY calls KeyG types `i`; the stored
+    gesture must say `i` so RegisterHotKey claims the key that fires."""
+    got = gestures.from_capture({"ctrl": True, "code": "KeyG", "produced": "i"})
+    assert got == {"gesture": "Ctrl+I", "error": None, "warn": None}
+
+
+def test_capture_fallback_carries_the_warn_reason():
+    got = gestures.from_capture({"ctrl": True, "code": "Digit2", "warn_reason": "not-representable"})
+    assert got["gesture"] == "Ctrl+2"
+    assert got["error"] is None
+    assert got["warn"] == "not-representable"

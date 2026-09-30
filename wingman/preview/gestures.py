@@ -204,18 +204,31 @@ def from_capture(parts) -> dict:
     Returns the canonical gesture string rather than a structure, so the
     page holds no mapping table of its own and cannot drift from this one --
     the same contract bookmarks.to_ahk keeps.
+
+    The bridge pre-resolves the layout (ADR 0002): `produced` carries the
+    character the user's layout types at this position and wins over the
+    position table; `warn_reason` marks a degraded capture that fell back.
+    parse() never sets either, so typed entry is never layout-resolved.
     """
     if not isinstance(parts, dict):
-        return {"gesture": "", "error": "unmappable"}
+        return {"gesture": "", "error": "unmappable", "warn": None}
     code = parts.get("code") or ""
     if code in _MODIFIER_CODES:
         # Not an error the user needs told about: they are still reaching
         # for the combination.
-        return {"gesture": "", "error": "modifier-only"}
-    name = _code_to_name(code)
+        return {"gesture": "", "error": "modifier-only", "warn": None}
+    produced = parts.get("produced")
+    if isinstance(produced, str) and produced:
+        name = produced.upper() if len(produced) == 1 and produced.isalpha() else produced
+    else:
+        name = _code_to_name(code)
     if name is None:
-        return {"gesture": "", "error": "unmappable"}
+        return {"gesture": "", "error": "unmappable", "warn": None}
     labels = [label for key, _, label in _MODIFIERS if parts.get(key)]
     if not labels:
-        return {"gesture": "", "error": "no-modifier"}
-    return {"gesture": "+".join([*labels, name]), "error": None}
+        return {"gesture": "", "error": "no-modifier", "warn": None}
+    return {
+        "gesture": "+".join([*labels, name]),
+        "error": None,
+        "warn": parts.get("warn_reason") or None,
+    }

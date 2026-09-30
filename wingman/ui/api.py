@@ -57,6 +57,8 @@ from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..alerts.controller import AlertsController, AlertsPorts
 from ..eveauth import application as eveauth_application
+from ..keylayout import bridge_view as keylayout_bridge_view
+from ..keylayout import capture_parts as keylayout_capture_parts
 from ..evesettings.controller import ProfilesController, ProfilesPorts
 from ..fleetsharing.projection import verified_character_ids
 from ..preview import crops as preview_crops
@@ -5724,7 +5726,8 @@ class Api:
             logger.warning("EVE telemetry reconciliation is still stopping")
 
     def capture_preview_bind(self, parts) -> dict:
-        return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
+        parts = parts if isinstance(parts, dict) else {}
+        return preview_gestures.from_capture(keylayout_capture_parts(parts))
 
     def parse_preview_bind(self, text) -> dict:
         parsed = preview_gestures.parse(text if isinstance(text, str) else "")
@@ -7635,7 +7638,8 @@ class Api:
         return {**self.get_bookmarks(), "saved": True}
 
     def capture_bind(self, parts) -> dict:
-        return bookmarks.to_ahk(parts if isinstance(parts, dict) else {})
+        parts = parts if isinstance(parts, dict) else {}
+        return bookmarks.to_ahk(keylayout_capture_parts(parts))
 
     def reset_binds(self) -> dict:
         """Apply the recommended set, overwriting every bind.

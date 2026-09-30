@@ -90,3 +90,130 @@ def resolve(view, code: str) -> Resolution:
     if not _representable(char):
         return Resolution("position", None, "not-representable")
     return Resolution("layout", char)
+
+
+# --- the Windows layout view ------------------------------------------------
+
+_MAPVK_VK_TO_VSC = 0
+_MAPVK_VSC_TO_VK_EX = 4
+
+# Position -> VK for the consultable punctuation positions. Letters and
+# digits keep their fixed VKs (0x41+, 0x30+); these do too (the OEM-1..8
+# block), but they are the ones with no arithmetic spelling.
+_PUNCT_VK = {
+    "Semicolon": 0xBA,
+    "Equal": 0xBB,
+    "Comma": 0xBC,
+    "Minus": 0xBD,
+    "Period": 0xBE,
+    "Slash": 0xBF,
+    "Backquote": 0xC0,
+    "BracketLeft": 0xDB,
+    "Backslash": 0xDC,
+    "BracketRight": 0xDD,
+    "Quote": 0xDE,
+}
+
+
+def win32_available(user32) -> bool:
+    """Both functions the view needs, present (skipped on Wine-like shims)."""
+    return bool(
+        getattr(user32, "MapVirtualKeyExW", None)
+        and getattr(user32, "ToUnicodeEx", None)
+    )
+
+
+def _position_vk(code: str) -> int | None:
+    if len(code) == 4 and code.startswith("Key"):
+        return 0x41 + ord(code[3].upper()) - ord("A")
+    if len(code) == 6 and code.startswith("Digit") and code[5].isdigit():
+        return 0x30 + int(code[5])
+    return _PUNCT_VK.get(code)
+
+
+def windows_layout_view(user32, hkl=None):
+    """The injected view: position code -> produced character, via the
+    documented chain. `hkl` is the layout of the thread that receives the
+    keys; None asks for the calling thread's (GetKeyboardLayout(0)).
+
+    ToUnicodeEx runs with a zeroed key state on purpose: the bridge resolves
+    the *base* character and leaves the captured modifier flags alone, so
+    Shift never has to be reversed -- the same reason event.code was chosen
+    over event.key in the original design.
+    """
+    if hkl is None:
+        hkl = user32.GetKeyboardLayout(0)
+    from ctypes import c_ubyte, create_unicode_buffer
+
+    def view(code: str):
+        vk = _position_vk(code)
+        if vk is None:
+            return None
+        sc = user32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
+        if not sc:
+            return None
+        layout_vk = user32.MapVirtualKeyExW(sc, _MAPVK_VSC_TO_VK_EX, hkl)
+        if not layout_vk:
+            return None
+        buf = create_unicode_buffer(8)
+        # n == 1 is the only clean answer: 0 is unbound, < 0 is a dead key,
+        # > 1 is a ligature or surrogate pair -- all unrepresentable here.
+        n = user32.ToUnicodeEx(
+            layout_vk, sc, (c_ubyte * 256)(), buf, len(buf), 0, hkl
+        )
+        if n != 1:
+            return None
+        return buf.value
+
+    return view
+
+
+def bridge_view():
+    """The view the bridge uses, on this process's input desktop.
+
+    The capture UI lives in the WebView2 window, whose thread's layout is
+    what the user is pressing keys under (layouts are per-thread; the
+    foreground app can differ). None when Win32 is unavailable -- Linux
+    tests and stripped builds get the position-only path, not an exception.
+    """
+    import ctypes
+
+    try:
+        user32 = ctypes.windll.user32
+    except (AttributeError, OSError, ImportError):
+        return None
+    if not win32_available(user32):
+        return None
+    return windows_layout_view(user32)
+
+
+def capture_parts(parts: dict) -> dict:
+    """Enrich a captured DOM key event with the layout's answer.
+
+    Never raises and never errors: any failure degrades to the position
+    mapping with a warn reason (ADR 0002). Position-defined keys (numpad,
+    F-keys, named keys) skip the view entirely -- the layout cannot change
+    what they mean, so consulting it can only add drift.
+    """
+    code = parts.get("code") or ""
+    enriched = dict(parts)
+    try:
+        view = bridge_view()
+        missing_reason = "no-layout"
+    except Exception:
+        view = None
+        missing_reason = "resolver-failed"
+    if view is None:
+        if code and not _is_position_defined(code):
+            return {**enriched, "warn_reason": missing_reason}
+        return enriched
+    resolved = resolve(view, code)
+    if resolved.kind == "layout":
+        enriched["produced"] = resolved.token
+    else:
+        # position-defined keys degrade silently: nothing about them changed.
+        if resolved.reason == "position-defined":
+            enriched.pop("warn_reason", None)
+        else:
+            enriched["warn_reason"] = resolved.reason
+    return enriched
