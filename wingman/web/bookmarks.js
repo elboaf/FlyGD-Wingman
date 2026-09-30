@@ -388,6 +388,25 @@
     send(next);
   }
 
+  // ADR 0002: capture resolves under the user's active layout, and a
+  // position that cannot be resolved (dead key, multi-character result, no
+  // Win32 answer) still binds -- by position -- but says so here, one line,
+  // until the next capture or re-render replaces it.
+  var WARN_TEXT = {
+    'no-layout': 'That key was stored by keyboard position: the active ' +
+      'keyboard layout could not be read.',
+    'resolver-failed': 'That key was stored by keyboard position: the ' +
+      'layout lookup failed.',
+    'not-representable': 'That key produces a character Wingman hotkeys ' +
+      'cannot store, so it was stored by keyboard position.',
+    'position-defined': ''
+  };
+  function showBindWarn(reason) {
+    var row = WM.el('eve-bind-warn');
+    row.hidden = !reason || !WARN_TEXT[reason];
+    row.querySelector('.lab').textContent = WARN_TEXT[reason] || '';
+  }
+
   document.addEventListener('keydown', function (event) {
     if (!capturing) return;
     event.preventDefault();
@@ -414,6 +433,7 @@
       endCapture();
       if (result.error) return;
       setBind(session.id, result.ahk);
+      showBindWarn(result.warn);
     });
   }, true);
 

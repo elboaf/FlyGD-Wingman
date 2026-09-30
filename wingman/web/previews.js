@@ -96,6 +96,9 @@
   var cropRequests = Object.create(null);
   var cropErrors = Object.create(null);
   var cropRosterEdit = null;
+  // The warn line lives directly under the binds card's rows: set by the
+  // capture reply (setCapWarn), painted by render like every other row.
+  var capWarnText = '';
   var host = WM.el('preview-binds');
   if (!host) { return; }
 
@@ -106,6 +109,19 @@
                never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}, sizable: [], layout_sources: []};
   var capturing = null;
+  // ADR 0002: capture resolves under the user's active layout; a
+  // position that cannot be resolved still binds -- by position -- and says
+  // so on this line until the next capture or render replaces it.
+  function setCapWarn(reason) {
+    capWarnText = reason && {
+      'no-layout': 'That key was stored by keyboard position: the active ' +
+        'keyboard layout could not be read.',
+      'resolver-failed': 'That key was stored by keyboard position: the ' +
+        'layout lookup failed.',
+      'not-representable': 'That key produces a character Wingman hotkeys ' +
+        'cannot store, so it was stored by keyboard position.'
+    }[reason] || '';
+  }
   // One main-page lifetime; never persisted with settings or screenshot state.
   var captureSequence = 0;
   var markerFields = Object.create(null);
@@ -2646,6 +2662,13 @@
       offline.forEach(paint);
     }
 
+    // The capture warn (ADR 0002), one hint line under the rows. Painted
+    // here rather than poked into the DOM from the capture reply so a
+    // re-render cannot detach or duplicate it.
+    if (capWarnText) {
+      host.appendChild(WM.make('div', 'hint', capWarnText));
+    }
+
     paintRosterAvailability(list);
     renderLockBlock();
     renderNeverMinimizeBlock();
@@ -3166,6 +3189,9 @@
     }).then(function (result) {
       if (!result || result.error === 'modifier-only') { return; }
       if (capturing !== session) { return; }
+      // Before the error branch, so a failed press also clears a previous
+      // line (an undefined warn hides it).
+      setCapWarn(result.warn);
       if (result.error) {
         endCapture();
         WM.send('alert_bookmarks',
