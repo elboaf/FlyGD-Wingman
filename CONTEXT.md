@@ -64,3 +64,66 @@ The consume-time requirement that character, map, and expected source solar
 system all match the tracked movement; the guard that keeps a stale prime
 from populating the wrong system.
 _Avoid_: jump match, validation
+
+### Region crops (issue #272)
+
+**Crop**:
+An additional floating mirror of a bounded region of one character's client,
+kept live above other windows. Distinct from that character's main preview,
+which mirrors the whole client.
+_Avoid_: secondary preview, additional region preview, overlay
+
+**Crop owner**:
+The character whose client a crop mirrors; the identity a crop is managed
+by. The exact character name, never a window handle.
+_Avoid_: source character, crop character
+
+**Crop id**:
+The stable identity distinguishing one of an owner's crops from their
+others; assigned at creation, persisted, never reused or renumbered after a
+delete. Its creation sequence is also the crop's stable order for display
+("Crop 1") and for global-cap tiebreaks.
+_Avoid_: crop index, crop slot, crop name
+
+**Crop definition**:
+The persisted record of one crop: source region fractions, floating window
+geometry, enabled flag. Versioned; malformed entries are dropped
+individually, never poisoning siblings.
+_Avoid_: crop settings
+
+**Live crop**:
+An enabled crop whose owner currently has a named session and holds one of
+the cap's slots. Live is runtime state; it never changes what is saved.
+_Avoid_: active crop, running crop
+
+**Cap**:
+The fixed maximum number of simultaneously live crops across all characters
+(32). A separate, smaller per-character limit bounds how many crops one
+owner may define.
+_Avoid_: crop limit, MAX_LIVE_CROPS
+
+**Per-character limit**:
+The maximum number of crop definitions one owner may have (4), whether
+enabled or not.
+_Avoid_: crop cap
+
+**Toggle-all**:
+The main-preview right-click gesture over one owner's crops: if any is
+enabled, all become disabled; if none is, all become enabled.
+_Avoid_: hide crops, crop toggle
+
+**Hide-active**:
+The runtime visibility rule that hides the foreground character's preview
+windows (main and crops) without changing any saved enabled flag.
+_Avoid_: toggle-all (that flips saved state), auto-hide
+
+**Master preview switch**:
+The setting that disables all previews and crops together, regardless of
+individual crop enabled flags.
+_Avoid_: preview enabled, global toggle
+
+**Region select**:
+The native drag-out overlay that captures the source region for a crop; used
+identically for first selection and reselection, and reselection never
+disturbs the crop's enabled flag.
+_Avoid_: crop picker, screenshot region
