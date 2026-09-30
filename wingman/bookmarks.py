@@ -105,11 +105,7 @@ def to_ahk(parts: dict) -> dict:
     if code in _MODIFIER_CODES:
         return {"ahk": "", "display": "", "error": "modifier-only", "warn": None}
     produced = parts.get("produced")
-    base = (
-        produced
-        if isinstance(produced, str) and produced
-        else _base_key(code)
-    )
+    base = produced if isinstance(produced, str) and produced else _base_key(code)
     if base is None:
         return {"ahk": "", "display": "", "error": "unmappable", "warn": None}
 

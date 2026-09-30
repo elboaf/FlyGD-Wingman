@@ -27,9 +27,7 @@ class Resolution(NamedTuple):
 # A produced character outside this set (é, a dead key's combining mark, a
 # multi-character ligature) has no storable spelling, so capture degrades to
 # the position-derived key -- ADR 0002's warn-and-degrade rule.
-_STORABLE_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyz0123456789,./;'`-=[]\\"
-)
+_STORABLE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789,./;'`-=[]\\")
 
 _NUMPAD_OPERATORS = frozenset(
     {"NumpadAdd", "NumpadSub", "NumpadMult", "NumpadDiv", "NumpadDot"}
@@ -41,32 +39,41 @@ _NUMPAD_OPERATORS = frozenset(
 # so resolving them can only introduce drift (Numpad4 types "4" on Dvorak;
 # storing "4" would silently move the bind onto the digit row).
 _POSITION_DEFINED = frozenset(
-    {"Space", "Enter", "Tab", "Escape", "Backspace", "Delete", "Insert",
-     "Home", "End", "PageUp", "PageDown",
-     "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"}
+    {
+        "Space",
+        "Enter",
+        "Tab",
+        "Escape",
+        "Backspace",
+        "Delete",
+        "Insert",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+    }
 )
 
 
 def _is_position_defined(code: str) -> bool:
-    if code in _POSITION_DEFINED:
-        return True
-    if code.startswith("Numpad") and len(code) == 7 and code[6:].isdigit():
-        return True
-    if code.startswith("F") and code[1:].isdigit() and 1 <= int(code[1:]) <= 24:
-        return True
-    return False
+    return (
+        code in _POSITION_DEFINED
+        or (code.startswith("Numpad") and len(code) == 7 and code[6:].isdigit())
+        or (code.startswith("F") and code[1:].isdigit() and 1 <= int(code[1:]) <= 24)
+    )
 
 
 def _representable(token: str) -> bool:
-    if len(token) == 1 and token in _STORABLE_CHARS:
-        return True
-    if token in _NUMPAD_OPERATORS:
-        return True
-    if token.startswith("Numpad") and len(token) == 7 and token[6:].isdigit():
-        return True
-    if token.startswith("F") and token[1:].isdigit() and 1 <= int(token[1:]) <= 24:
-        return True
-    return False
+    return (
+        (len(token) == 1 and token in _STORABLE_CHARS)
+        or token in _NUMPAD_OPERATORS
+        or (token.startswith("Numpad") and len(token) == 7 and token[6:].isdigit())
+        or (token.startswith("F") and token[1:].isdigit() and 1 <= int(token[1:]) <= 24)
+    )
 
 
 def resolve(view, code: str) -> Resolution:
@@ -83,7 +90,7 @@ def resolve(view, code: str) -> Resolution:
         return Resolution("position", None, "position-defined")
     try:
         char = view(code)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- degrade, never fail a capture
         return Resolution("position", None, "resolver-failed")
     if char is None:
         return Resolution("position", None, "no-layout")
@@ -95,23 +102,65 @@ def resolve(view, code: str) -> Resolution:
 # --- the Windows layout view ------------------------------------------------
 
 _MAPVK_VK_TO_VSC = 0
-_MAPVK_VSC_TO_VK_EX = 4
+_MAPVK_VSC_TO_VK = 1
+_MAPVK_VSC_TO_VK_EX = 3
 
-# Position -> VK for the consultable punctuation positions. Letters and
-# digits keep their fixed VKs (0x41+, 0x30+); these do too (the OEM-1..8
-# block), but they are the ones with no arithmetic spelling.
-_PUNCT_VK = {
-    "Semicolon": 0xBA,
-    "Equal": 0xBB,
-    "Comma": 0xBC,
-    "Minus": 0xBD,
-    "Period": 0xBE,
-    "Slash": 0xBF,
-    "Backquote": 0xC0,
-    "BracketLeft": 0xDB,
-    "Backslash": 0xDC,
-    "BracketRight": 0xDD,
-    "Quote": 0xDE,
+# DOM position -> physical scancode, the "Writing System Keys" rows of the
+# W3C uievents-code table (US-layout PS/2 Set 1 make codes). event.code
+# names a PHYSICAL key, so this table is layout-independent by definition:
+# it is what makes the view's first leg a position lookup rather than a
+# lookup under the user's own layout (which would be circular -- Dvorak
+# relocates the VKs, and the round trip would collapse into an identity).
+_POSITION_SCAN = {
+    "Backquote": 0x29,
+    "Digit1": 0x02,
+    "Digit2": 0x03,
+    "Digit3": 0x04,
+    "Digit4": 0x05,
+    "Digit5": 0x06,
+    "Digit6": 0x07,
+    "Digit7": 0x08,
+    "Digit8": 0x09,
+    "Digit9": 0x0A,
+    "Digit0": 0x0B,
+    "Minus": 0x0C,
+    "Equal": 0x0D,
+    "KeyQ": 0x10,
+    "KeyW": 0x11,
+    "KeyE": 0x12,
+    "KeyR": 0x13,
+    "KeyT": 0x14,
+    "KeyY": 0x15,
+    "KeyU": 0x16,
+    "KeyI": 0x17,
+    "KeyO": 0x18,
+    "KeyP": 0x19,
+    "BracketLeft": 0x1A,
+    "BracketRight": 0x1B,
+    "Backslash": 0x2B,
+    "KeyA": 0x1E,
+    "KeyS": 0x1F,
+    "KeyD": 0x20,
+    "KeyF": 0x21,
+    "KeyG": 0x22,
+    "KeyH": 0x23,
+    "KeyJ": 0x24,
+    "KeyK": 0x25,
+    "KeyL": 0x26,
+    "Semicolon": 0x27,
+    "Quote": 0x28,
+    "Enter": 0x1C,
+    "KeyZ": 0x2C,
+    "KeyX": 0x2D,
+    "KeyC": 0x2E,
+    "KeyV": 0x2F,
+    "KeyB": 0x30,
+    "KeyN": 0x31,
+    "KeyM": 0x32,
+    "Comma": 0x33,
+    "Period": 0x34,
+    "Slash": 0x35,
+    "Space": 0x39,
 }
 
 
@@ -123,12 +172,31 @@ def win32_available(user32) -> bool:
     )
 
 
-def _position_vk(code: str) -> int | None:
-    if len(code) == 4 and code.startswith("Key"):
-        return 0x41 + ord(code[3].upper()) - ord("A")
-    if len(code) == 6 and code.startswith("Digit") and code[5].isdigit():
-        return 0x30 + int(code[5])
-    return _PUNCT_VK.get(code)
+def _bind_signatures(user32) -> None:
+    """Pin the W-function signatures before first use.
+
+    Without them ctypes marshals HKL as a 32-bit c_int: GetKeyboardLayout's
+    value comes back negative, goes back in half-width, and MapVirtualKeyExW
+    fails with 0 on real x64 Windows -- the failure the injected-fake tests
+    cannot see. HKL travels as c_size_t (unsigned, pointer-sized); every
+    code is c_uint so 0xBA-style VKs never ride as negative ints.
+    """
+    from ctypes import c_int, c_size_t, c_uint, c_void_p, c_wchar_p
+
+    user32.GetKeyboardLayout.argtypes = (c_uint,)
+    user32.GetKeyboardLayout.restype = c_size_t
+    user32.MapVirtualKeyExW.argtypes = (c_uint, c_uint, c_size_t)
+    user32.MapVirtualKeyExW.restype = c_uint
+    user32.ToUnicodeEx.argtypes = (
+        c_uint,
+        c_uint,
+        c_void_p,
+        c_wchar_p,
+        c_int,
+        c_uint,
+        c_size_t,
+    )
+    user32.ToUnicodeEx.restype = c_int
 
 
 def windows_layout_view(user32, hkl=None):
@@ -143,24 +211,25 @@ def windows_layout_view(user32, hkl=None):
     """
     if hkl is None:
         hkl = user32.GetKeyboardLayout(0)
-    from ctypes import c_ubyte, create_unicode_buffer
+    from ctypes import c_ubyte, create_unicode_buffer  # noqa: I001 -- lazy Win32 imports stay at point of use
 
     def view(code: str):
-        vk = _position_vk(code)
-        if vk is None:
+        # Leg 1 is the FIXED position table, not a lookup under the user's
+        # layout: the DOM code names a physical key, and asking this layout
+        # for that key's scancode would relocate it (Dvorak's VKs move) and
+        # collapse the whole chain into an identity.
+        sc = _POSITION_SCAN.get(code)
+        if sc is None:
             return None
-        sc = user32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
-        if not sc:
-            return None
+        # Legs 2 and 3 run under the user's layout: which VK sits at this
+        # physical key, and what character that VK produces.
         layout_vk = user32.MapVirtualKeyExW(sc, _MAPVK_VSC_TO_VK_EX, hkl)
         if not layout_vk:
             return None
         buf = create_unicode_buffer(8)
         # n == 1 is the only clean answer: 0 is unbound, < 0 is a dead key,
         # > 1 is a ligature or surrogate pair -- all unrepresentable here.
-        n = user32.ToUnicodeEx(
-            layout_vk, sc, (c_ubyte * 256)(), buf, len(buf), 0, hkl
-        )
+        n = user32.ToUnicodeEx(layout_vk, sc, (c_ubyte * 256)(), buf, len(buf), 0, hkl)
         if n != 1:
             return None
         return buf.value
@@ -184,6 +253,7 @@ def bridge_view():
         return None
     if not win32_available(user32):
         return None
+    _bind_signatures(user32)
     return windows_layout_view(user32)
 
 
@@ -200,7 +270,7 @@ def capture_parts(parts: dict) -> dict:
     try:
         view = bridge_view()
         missing_reason = "no-layout"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- degrade, never fail a capture
         view = None
         missing_reason = "resolver-failed"
     if view is None:

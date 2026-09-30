@@ -100,7 +100,9 @@ def test_capture_layout_produced_letter_is_stored_verbatim():
 
 
 def test_capture_fallback_carries_the_warn_reason():
-    got = gestures.from_capture({"ctrl": True, "code": "Digit2", "warn_reason": "not-representable"})
+    got = gestures.from_capture(
+        {"ctrl": True, "code": "Digit2", "warn_reason": "not-representable"}
+    )
     assert got["gesture"] == "Ctrl+2"
     assert got["error"] is None
     assert got["warn"] == "not-representable"

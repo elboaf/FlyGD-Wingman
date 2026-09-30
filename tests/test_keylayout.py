@@ -76,23 +76,18 @@ def test_named_keys_keep_position_identity():
 
 # --- the Windows layout view (injected user32; see windows_layout_view) ---
 
-_MAPVK_VK_TO_VSC = 0
-_MAPVK_VSC_TO_VK_EX = 4
-
 
 class _FakeUser32:
-    """Maps by VK-position -> scancode -> layout-VK -> produced character,
-    the same chain the real API performs across the three calls."""
+    """Maps by scancode -> layout-VK -> produced character, the two legs
+    the real API performs under the user's layout (leg 1, the fixed
+    position table, is keylayout's own)."""
 
-    def __init__(self, vk_to_sc, sc_to_vk, vk_to_char):
-        self._vk_to_sc = vk_to_sc
+    def __init__(self, sc_to_vk, vk_to_char):
         self._sc_to_vk = sc_to_vk
         self._vk_to_char = vk_to_char
 
     def MapVirtualKeyExW(self, code, mode, hkl):
-        if mode == _MAPVK_VK_TO_VSC:
-            return self._vk_to_sc.get(code, 0)
-        if mode == _MAPVK_VSC_TO_VK_EX:
+        if mode == keylayout._MAPVK_VSC_TO_VK_EX:
             return self._sc_to_vk.get(code, 0)
         return 0
 
@@ -105,23 +100,25 @@ class _FakeUser32:
 
 
 def test_windows_view_resolves_position_to_produced_character():
-    # Dvorak: the key at the G position (VK 0x47, sc 0x25) types `i`.
-    user32 = _FakeUser32({0x47: 0x25}, {0x25: 0x47}, {0x47: "i"})
+    # Dvorak: the key at the G position (Set 1 scancode 0x22) hosts VK 0x49
+    # (`i`), and that VK produces `i`.
+    user32 = _FakeUser32({0x22: 0x49}, {0x49: "i"})
     view = keylayout.windows_layout_view(user32, hkl=0xF001041)
     got = keylayout.resolve(view, "KeyG")
     assert got == keylayout.Resolution("layout", "i")
 
 
 def test_windows_view_punctuation_position_resolves():
-    # AZERTY: the key at the Semicolon position (VK 0xBA) types `m`.
-    user32 = _FakeUser32({0xBA: 0x27}, {0x27: 0x4D}, {0x4D: "m"})
+    # AZERTY: the key at the Semicolon position (scancode 0x27) hosts VK 0x4D
+    # (`m`), and that VK produces `m`.
+    user32 = _FakeUser32({0x27: 0x4D}, {0x4D: "m"})
     view = keylayout.windows_layout_view(user32, hkl=0x40C)
     got = keylayout.resolve(view, "Semicolon")
     assert got == keylayout.Resolution("layout", "m")
 
 
 def test_windows_view_returns_none_for_unbound_position():
-    user32 = _FakeUser32({}, {}, {})
+    user32 = _FakeUser32({}, {})
     view = keylayout.windows_layout_view(user32, hkl=7)
     assert keylayout.resolve(view, "KeyG").reason == "no-layout"
 
@@ -131,12 +128,12 @@ def test_windows_view_falls_back_to_current_thread_layout():
         def GetKeyboardLayout(self, thread):
             return 0xF0020409
 
-    user32 = WithLayout({0x47: 0x25}, {0x25: 0x47}, {0x47: "i"})
+    user32 = WithLayout({0x22: 0x49}, {0x49: "i"})
     view = keylayout.windows_layout_view(user32)
     assert keylayout.resolve(view, "KeyG").kind == "layout"
 
 
 def test_win32_available_requires_both_functions():
     assert keylayout.win32_available(object()) is False
-    user32 = _FakeUser32({}, {}, {})
+    user32 = _FakeUser32({}, {})
     assert keylayout.win32_available(user32) is True

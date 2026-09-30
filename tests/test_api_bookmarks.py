@@ -141,7 +141,14 @@ def test_a_settings_file_that_cannot_be_written_leaves_state_untouched(
     assert api._state.engine.applied == []
 
 
-def test_capture_and_parse_delegate_to_bookmarks(api):
+def test_capture_and_parse_delegate_to_bookmarks(api, monkeypatch):
+    """The layout view is pinned because capture now resolves under the
+    live layout -- on this machine that is Dvorak, and the point of the
+    fix is that the pin is the only thing keeping the assertion honest.
+    parse_bind passes no view: hand-typed notation is never resolved."""
+    from wingman import keylayout
+
+    monkeypatch.setattr(keylayout, "bridge_view", lambda: {"KeyS": "s"}.get)
     assert (
         api.capture_bind(
             {"ctrl": True, "alt": False, "shift": True, "meta": False, "code": "KeyS"}

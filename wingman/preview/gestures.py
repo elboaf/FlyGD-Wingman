@@ -219,7 +219,9 @@ def from_capture(parts) -> dict:
         return {"gesture": "", "error": "modifier-only", "warn": None}
     produced = parts.get("produced")
     if isinstance(produced, str) and produced:
-        name = produced.upper() if len(produced) == 1 and produced.isalpha() else produced
+        name = (
+            produced.upper() if len(produced) == 1 and produced.isalpha() else produced
+        )
     else:
         name = _code_to_name(code)
     if name is None:
