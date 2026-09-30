@@ -7623,6 +7623,21 @@ class Api:
 
         # update() normalises self._state.settings in place; no rebind
         # needed (see save_settings's comment above for why not).
+        self._sync_bookmark_engine()
+        return {**self.get_bookmarks(), "saved": True}
+
+    def _sync_bookmark_engine(self) -> None:
+        """Regenerate the engine's INI from the live eve_bookmarks section
+        and match the process to the section's enabled flag.
+
+        One owner for every path that changes bookmark settings: the
+        Bookmarks page's save and an applied settings import both land
+        here, so they cannot drift -- which is precisely how #304 happened.
+        The import overwrote disk and page while the engine kept its old
+        registrations until the user re-saved some keybind or toggled the
+        enabled checkbox, each of which was the only remaining caller of
+        this block.
+        """
         clean = self._state.settings["eve_bookmarks"]
 
         engine = self._state.engine
@@ -7632,7 +7647,6 @@ class Api:
                 engine.start()
             elif not clean["enabled"] and engine.is_running():
                 engine.stop()
-        return {**self.get_bookmarks(), "saved": True}
 
     def capture_bind(self, parts) -> dict:
         return bookmarks.to_ahk(parts if isinstance(parts, dict) else {})
@@ -7813,6 +7827,11 @@ class Api:
         so without it the checkbox would move and the lock would not.
         """
         logger.info("Applying an imported settings document to live preview state")
+        # Bookmarks first: the engine was the one live consumer an import
+        # never reached (#304), and the slow preview adoption below should
+        # not outrun it. Failures are swallowed by import_apply's wrapper,
+        # as for every live-refresh failure after a durable apply.
+        self._sync_bookmark_engine()
         section = self._preview_config.snapshot()
         self._preview_layout_store.discard_pending_layouts()
         if self._preview_host is not None:
