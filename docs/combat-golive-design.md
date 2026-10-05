@@ -1,8 +1,10 @@
 # Combat-triggered Discord Go Live: automatic stream start on combat
 
-Status: proposed — this is the spec the user asked for after feasibility
-research; nothing is implemented. The verdict it records: **possible, one
-good mechanism, several hard product constraints that shape it.**
+Status: proposed, **revision 2** — revision 1 assumed Discord's stream
+source could follow the focused EVE client. Field testing found it cannot:
+source selection pins per game entry. Revision 2 changes the mechanism
+(Wingman presents the streamable window) but keeps revision 1's consent
+design, guard stack and SendInput chord mechanism unchanged.
 
 ## The request
 
@@ -16,288 +18,276 @@ finding the Go Live button while taking damage. The ask is latency
 which is the same argument PRODUCT.md records for alerts interrupting at
 all.
 
+## What testing found (the constraint revision 1 missed)
+
+Multiboxing breaks Discord's game capture in two independent ways:
+
+1. **Detection is per executable.** Discord streams a game it recognizes;
+   an unrecognized window offers only screen/window capture. EVE Online is
+   recognized (it ships in Discord's game list), so `eve.exe` qualifies.
+2. **The pinned window never follows focus.** With several `eve.exe`
+   processes, Discord's game capture binds to **one** top-level window per
+   game entry — empirically the first-launched client — and keeps it for
+   the life of the stream. Streaming "whoever is in trouble" is therefore
+   impossible with stock detection: the fleet watches a pilot who may not
+   be fighting.
+
+The inversion that fixes both at once: **make Wingman the registered
+game.** Discord then pins one window forever — a window Wingman owns,
+whose *content* follows focus. Discord never has to switch anything;
+the fleet always sees the pilot who is flying.
+
 ## Why Discord cannot be told to start a stream
 
-The research this spec rests on (checked 2026, current client):
+Unchanged from revision 1, still true:
 
 - Discord's documented local API — RPC over a named pipe
-  (`\\.\pipe\discord-ipc-{0..9}`), commands AUTHENTICATE, SELECT_VOICE_CHANNEL,
-  GET_SELECTED_VOICE_CHANNEL, SET_VOICE_SETTINGS, SET_ACTIVITY — has no
-  command that starts Go Live. The community-maintained protocol reference
-  (discord-userdoccers), which documents even the undocumented commands, lists
-  none either. Deep links go to channels, never into a stream.
-- The user-facing surface that does start one is a **user-configured global
+  (`\\.\pipe\discord-ipc-{0..9}`) — has no command that starts Go Live;
+  the community protocol reference (discord-userdoccers) lists none
+  among the undocumented commands either. Deep links go to channels,
+  never into a stream.
+- The user-facing surface that starts one is the **user-configured global
   keybind**: User Settings → Keybinds → **Toggle Screen Share**. Global
-  keybinds are system-wide (RegisterHotKey); they fire with any window
-  focused, including EVE. This is supported user configuration, not a
-  hack — but automating it from a third-party process is an unofficial
+  keybinds are system-wide; they fire with any window focused, including
+  EVE. Automating it from a third-party process is an unofficial
   integration surface and could change in any client update.
-- "If you're in a voice channel" self-resolves: the keybind no-ops when no
-  stream is possible. Detection would need the RPC app-approval dance; it
-  is deliberately out of scope.
+- "If you're in a voice channel" self-resolves: the keybind no-ops when
+  no stream is possible. Detection would need the RPC app-approval dance;
+  out of scope.
 
-So the only mechanism is: Wingman synthesizes the user's own Discord
-keybind chord with `SendInput` (pure `ctypes`, the house Win32 style —
-same lazy-bind approach as `preview/win32.py`, no new dependency). Discord
-does the streaming; Wingman only presses a key the user mapped.
+So the start mechanism stays: Wingman synthesizes the user's own Discord
+keybind chord with `SendInput` (pure `ctypes`, house Win32 style, no new
+dependency). Discord does the streaming; Wingman only presses a key the
+user mapped.
 
-## The hard lines it touches, and how it stays inside them
+## The mechanism, revision 2
 
-PRODUCT.md's "What it must not become" contains the two lines this feature
-collides with. Both are quoted there verbatim; this is the resolution the
-implementation must satisfy, not a reinterpretation of the lines:
+Two independent parts; either is valuable alone, the feature needs both.
+
+### Part II — the streamable window: a focus-following mirror
+
+A single Wingman-owned top-level window that presents, via a DWM
+thumbnail, **the currently focused EVE client**:
+
+- **The mirror window is Wingman's own window** — headless in purpose,
+  but a real top-level window so Discord can register and capture it.
+  No Wingman chrome beyond a minimal caption (a captionless window may
+  be harder for Discord's picker to treat as a game window; confirm in
+  the probe).
+- **Content:** one `DwmRegisterThumbnail` binding, re-targeted when focus
+  changes. All the parts exist in the house style: `preview/thumbnail.py`
+  wraps register/update/release; `preview/host.py:3297` already runs an
+  `EVENT_SYSTEM_FOREGROUND` hook on a real message-pump thread; focused-
+  client identification exists (`evewindows.py:list_eve_windows`,
+  `focused_eve_title`).
+- **Rebind semantics:** on foreground change to an admitted EVE client,
+  unregister + re-register the thumbnail at the new `hwnd` (DWM has no
+  retarget call). On desktop/browser focus: keep the last client — never
+  blank the fleet's view, and never mirror non-EVE content (privacy and
+  the product line: Wingman mirrors EVE clients, nothing else).
+- **Independence:** the mirror follows focus regardless of the alert
+  feature; it is useful by itself (fleet sees whoever is flying). The
+  Go Live automation is one consumer of it, not its reason to exist.
+- **Not a preview:** none of the preview window behaviors (click-through,
+  crop, hide-on-focus-loss, companion rules) apply. One fixed window,
+  no placement logic beyond first-run default. PRODUCT.md's no-EVE-geometry
+  line is untouched: DWM thumbnails read pixels and modify nothing about
+  the source — previews already prove this daily.
+
+### Part I — starting the stream: the recorded chord (unchanged from rev 1)
+
+On the gated combat alert (see guards), one `SendInput` of the user's
+recorded Toggle-Screen-Share chord. Discord goes live capturing the
+registered "game" — the mirror — which is showing the focused client,
+i.e. the client in combat if the user was flying it.
+
+### Setup ceremony (one-time, per install)
+
+1. User adds Wingman's installed exe to Discord's Registered Game list
+   (Settings → Registered Games; the manual "Add it" path with the
+   installer's exe path — registration data is user-scope registry +
+   Discord settings, not admin).
+2. User starts the mirror from Settings → Alerts ("Start stream mirror"),
+   picks it in Discord's stream source picker once, manually — after
+   which Discord pins the mirror permanently.
+3. User maps Toggle Screen Share to a chord in Discord, then records the
+   same chord in Wingman (this recording is the consent gate, below).
+4. Done. In combat: chord fires, Discord starts the mirror, mirror shows
+   the fighting pilot.
+
+## Capture-visibility gate (resolve before any other work)
+
+**The one unknown revision 2 rests on:** whether Discord's game capture
+path sees DWM-composited thumbnail content, or reads the window's own
+pixels via `Windows.Graphics.Capture`/ DXGI and gets a black/empty mirror.
+
+A 5-minute manual probe decides it, before writing any feature code:
+spare Python process registers a DWM thumbnail of Notepad into a plain
+top-level window; add that process to Registered Games; start streaming
+it; look.
+
+- **Tier A — thumbnail visible to Discord:** build as specified.
+- **Tier B — black capture, but screen/window capture of the mirror
+  works:** ship with documented Tier-B setup (user picks the mirror via
+  screen capture instead of game capture; detection's per-process pin
+  problem then has a stable single source, which is the part that
+  matters).
+- **Tier C — neither:** abandon; revision 1 is unshippable for
+  multiboxers (its pinned-source flaw), so the feature waits for a
+  Discord-side change. Document in the issue; no code lands.
+
+The feature is not started until the probe reports A or B.
+
+## The hard lines it touches (unchanged resolution, one addition)
+
+PRODUCT.md's "What it must not become" lines, quoted in revision 1:
 
 1. *"It must not upload anything the user did not select. Nothing leaves
    the machine without an explicit action."*
 2. *"It must not automate gameplay. It sends keystrokes the user pressed,
    to a window the user is looking at. It does not act for them."*
 
-The resolution: **the user pressed that chord — once, in advance — and
-selected the stream source in Discord, once, in advance.** The feature is
-a held-open gate on an explicit configuration, not an autonomous action.
-The counterfactual test: if Wingman is closed mid-combat, nothing happens
-that the user did not already configure; Discord and the keybind behave
-exactly as before. What Wingman adds is only *when* the configured chord
-is pressed.
+The resolution is revision 1's, verbatim: **the user pressed that chord —
+once, in advance — and selected the stream source once, in advance.**
+Wingman adds only *when*. Counterfactual test: close Wingman mid-combat
+and nothing happens that the user did not already configure.
 
-Three rules keep the letter of line 2:
+Three rules keep the letter of line 2, unchanged:
 
-- **The chord is the user's own Discord keybind**, read from a Wingman
-  setting, not a fixed one Wingman chose. Wingman never invents a chord;
-  the user maps it in Discord first, then records it here.
-- **A capture, not a broadcast:** the chord is sent to whatever window has
-  focus exactly like a user keypress (no target-window routing, no
-  activation of the Discord window). The focus rule of PRODUCT.md's
-  automation line is preserved mechanically: if the user is looking at
-  Wingman or a browser, that is where their keys land, which is also why
-  the confirm-loop below exists.
-- **Never stop a stream.** The bind is a toggle; a blind keypress when
-  already live ends the fleet's feed. V1 has no auto-stop at all — the
-  stream runs until the user stops it (phase 2 could consult local RPC for
-  stream state, behind the same app-approval modal already out of scope).
+- **The chord is the user's own Discord keybind**, recorded by the user;
+  Wingman never invents one.
+- **A capture, not a broadcast:** the chord goes to the focused window
+  exactly like a user keypress; no window routing, no Discord activation.
+- **Never stop a stream:** the bind toggles; V1 has no auto-stop and no
+  second chord while armed (guards below make the first chord the only
+  one per fight).
 
-## What the feature is
+Addition for the mirror, line 3 of "must not become" (EVE geometry):
+untouched — the mirror is Wingman's window; DWM thumbnails modify nothing
+on the source. The mirror never sends input to EVE and never changes a
+client's position, size, or z-order.
 
-A per-character (per-client), gated, one-shot action on the existing
-combat alert — not a new alerts event, not an automation system, and not a
-fourth anything. Structurally it is to alerts what the combat-log webhook
-is to the Uploader: a conditional leg on an existing trigger.
+## Guard design (carried from revision 1, unchanged)
 
-- **Trigger:** the existing, already-gated combat alert
-  (`wingman/alerts/service.py:AlertPolicy.handle`, the single funnel at
-  its `self._on_alert(...)` dispatch) — this inherits the PvE filter and
-  per-event cooldown for free. It must be the gated alert, not the raw
-  `AlertEvent` stream in `telemetry/coordinator.py`: an NPC shooting a
-  sleeper site must never press keys.
-- **Action:** one `SendInput` of the user's recorded chord, once per
-  combat episode, per client (character).
-- **Never targets EVE input:** the chord goes to the OS like any pressed
-  key; EVE is not addressed, activated, or moved. (PRODUCT.md's no-EVE-input
-  rule stands; the Fleet Bar's "never sends input to one" phrasing is the
-  sibling of this.)
-
-## Guard design: consent, episode-latch, confirmation
-
-Three mechanisms, in the order the code should read them:
-
-1. **Consent gate (the spec's load-bearing wall).** Enabling the feature
-   is one explicit opt-in whose value is *not a checkbox* — it is the
-   keybind itself. The user must first map Toggle Screen Share in Discord,
-   then press-and-record that exact chord in Wingman's settings. Recording
-   reuses the existing keybind-capture machinery (the layout-aware
-   resolver from ADR 0002, `capture_bind` path). No chord recorded = no
-   consent = feature inert. This is the shape PRODUCT.md requires for
-   anything that leaves the machine: the explicit action is the recording
-   of the chord, and it doubles as proof the user did their half of the
-   Discord setup.
-2. **Episode latch (the anti-thrash guard).** Combat alerts repeat every
-   1s (`combat` cooldown is 1s). The action fires only on
-   alert→combat **transition** per character: first gated combat alert
-   after a quiet period (default 300s of no gated combat alert for that
-   character). While latched, the character can take damage, alert, be
-   shot at — no further chords. The latch releases on the quiet-period
-   expiry, not on any "combat ended" signal (gamelogs have none that is
-   dependable; PRODUCT.md already accepts this shape for EWAR expiry).
-3. **Confirmation.** Two layers, both required before the chord is sent:
-   - **Runtime gate:** the character's client must be an
-     admitted, running preview client (the app already tracks admitted
-     clients), and — since global keybinds land on whatever is focused —
-     the chord is sent only if the user is not already interacting with
-     Discord's window (focus check via existing `evewindows.py`-style
-     enumeration; if Discord is foreground, the user is mid-Discord and a
-     synthetic chord there is an input-desert event).
-   - **A visible state row.** The Alerts settings card gains one row:
-     stream coupling state, one sentence, e.g. "Combat → Go Live armed
-     for Kuan Dai: chord Ctrl+Alt+D fires once per fight; last fired 12:41
-     into X-702." It names the character, shows the chord, and carries the
-     last-fired fact. PRODUCT.md's corollary — "an alert you configured
-     and cannot tell is running is the failure mode" — applies verbatim to
-     a background key-presser. A fired chord also raises the existing
-     preview pulse on that client, so mid-fleet the user sees *something*
-     happen.
-     (DESIGN.md's "Only Live and Waiting for source use pills" — no pills
-     here, a plain sentence row.)
-
-## What it is not (non-goals)
-
-- Not a new alert event, not a custom rule: it reuses the gated combat
-  alert; no new `EVENTS` entry in `alerts/patterns.py`.
-- Not a stream manager: no quality, no source picker, no
-  channel selection, no auto-stop, no re-stream-on-disconnect.
-- Not Discord rich presence. SET_ACTIVITY is explicitly out of scope.
-- Not a Fleet Bar or telemetry feature; it reads nothing from fleet
-  sharing.
-- Not generalized hotkey injection: the injected send is one chord, from
-  one recorded setting, behind one latch, and nothing else may reuse the
-  primitive without revisiting this spec.
+1. **Consent gate.** Enabling = recording the Discord keybind chord in
+   Wingman's settings (layout-aware capture machinery, ADR 0002). No
+   chord recorded = inert. No separate on/off checkbox; presence of the
+   chord *is* the enabled state; clearing it is the explicit off.
+2. **Episode latch + process-wide arm/disarm.** Fires only on the first
+   gated combat alert after a quiet period (default 300s per character).
+   The first fired chord disarms **all** characters until every latch has
+   expired — the spec's most important behavioral sentence: **one stream
+   per fight, Wingman presses once.** A second chord while live is the
+   toggle that ends the fleet's feed; the guards exist to make it
+   unreachable from Wingman.
+3. **Confirmation.** Focus gate (no chord while the user is typing into
+   a text field is unknowable; but no chord while Discord itself is
+   foreground) + a visible state row in Settings → Alerts: armed
+   characters, chord, last-fired time and character. "An alert you
+   configured and cannot tell is running is the failure mode" applies
+   verbatim to a background key-presser. Trigger is the gated combat
+   alert only (`AlertPolicy.handle` funnel — PvE filter inherited); NPC
+   fire never reaches it.
 
 ## Settings surface
 
-Settings → Alerts gains one card (or card-section), per existing Alerts
-settings shape (`preview.alerts.*`):
+Settings → Alerts, one card (name pending decision):
 
 ```
 Stream coupling
-  [x] Combat starts a Discord stream          (armed only when a keybind is recorded)
-      Keybind: [Ctrl+Alt+D] (capture button)  ← consent: recording = enabling
-      Quiet period before re-arm: [300] seconds
-      ────────────────────────────────────────────
-      Armed for: Kuan Dai, xX_Sigma_Xx        ← admitted preview clients
-      Last fired: 12:41 Kuan Dai · in combat 12:41
+  Stream mirror: [Not running — Start mirror]   (Wingman-owned window Discord pins)
+  Keybind: [Ctrl+Alt+D] (capture button)        ← recording = consent
+  Quiet period before re-arm: [300] seconds
+  ──────────────────────────────────────────────
+  Armed for: Kuan Dai, xX_Sigma_Xx
+  Last fired: 12:41 · Kuan Dai
 ```
 
-Keys under `preview.alerts.stream_coupling`:
-`enabled`(derived from chord presence — see below), `chord` (AHK-style
-notation, same stored format as bookmark binds, `^!d`), `quiet_s` (60–900,
-default 300).
-
-Deliberate choice: **no separate enabled boolean.** Presence of a recorded
-chord *is* the enabled state; this kills an entire class of "checkbox on,
-chord empty" dead states and makes the consent story single-token. The
-card's armed-row shows per-client armed state; disabling = clearing the
-chord (an explicit action).
-
-Settings keys are read live by `AlertPolicy` through its existing
-callable-inputs pattern (see `set_alert_pve_filter`'s docstring) — no
-restart, no reconcile for the chord value; the controller reads it per
-alert.
+Keys under `preview.alerts.stream_coupling`: `chord` (AHK-style, `^!d`),
+`quiet_s` (60–900, default 300), `mirror_on` (the one toggle that is not
+consent — the mirror alone is useful). The Go Live automation remains
+chord-derived.
 
 ## Architecture
 
-Follows the controller/ports template (`evesettings/controller.py`,
-PR #175; `AlertsPorts` today):
+- **Mirror:** new `wingman/streaming/mirror.py` (if the capture probe
+  requires sharing the preview host's pump thread, `preview/host.py`
+  gains a second hook consumer instead — decide at implementation, the
+  host already owns the only legal thread shape). Rebind = unregister +
+  register via `preview/thumbnail.py` wrappers. Consumes foreground
+  events only; no polling loop beyond the existing shared scan fallback.
+- **Controller:** `wingman/alerts/streamcoupling.py` behind the
+  controller/ports template (`AlertsPorts` gains one port or a sibling
+  ports object): owns latches, reads chord/quiet settings live, owns the
+  send. Imports nothing from `ui`; the send and the thumbnail calls are
+  injected seams (Linux-unit-testable like every other subsystem); sends
+  happen on the controller's own worker thread, never the telemetry
+  dispatcher thread.
+- **Bridge:** semantic pushes only (`stream_coupling_state`,
+  `stream_coupling_fired`), mirrored to the floating sig bar per the
+  standing rule; `test_bridge_contract.py` must see every
+  `_push("literal")`.
+- **Wire-in:** `__main__.py:build_alert_policy` (dispatch into the
+  alert chain), `ui/api.py:_build_alerts_controller`, settings defaults +
+  validator in `settings.py`.
 
-- New port on `AlertsPorts` (or a sibling `StreamCouplingPorts` if the
-  alerts ports object should stay presentation-only — decide at
-  implementation): `dispatch_combat_stream(character: str) -> None`,
-  implemented by the new controller.
-- New controller `wingman/alerts/streamcoupling.py` (name may change to
-  match house naming at implementation): owns the episode latches
-  (per-character), the quiet-period bookkeeping, the confirm gate, and
-  the send. It imports nothing from `ui`, never holds the window, and is
-  unit-testable on Linux with an injected send-callable — the send seam
-  is a constructor parameter, like `discord.py`'s `transport=`. Tests
-  inject a fake and assert chord, once-per-episode semantics, consent
-  refusal, focus-gate refusal.
-- The send itself: `SendInput` with `KEYEVENTF_` flags for the recorded
-  chord, `ctypes` through an injected seam (no windll import at module
-  top; matches `preview/win32.py` house style), called on a **worker
-  thread** owned by the controller — never on the telemetry dispatcher
-  thread (AGENTS.md: nothing slow runs there).
-- Bridge visibility only: pushes are semantic events
-  (`stream_coupling_state`, `stream_coupling_fired`), mirrored to the
-  floating sig bar window per the standing push rule. Sort order, row
-  focus and selection never cross.
-- Wire-in points: `wingman/__main__.py:build_alert_policy` (pass the
-  controller's dispatch into `AlertPolicy(on_alert=...)` chain),
-  `ui/api.py:_build_alerts_controller`, settings defaults/validator in
-  `wingman/settings.py` (`_alerts_defaults`, `validated_alerts`), bridge
-  facades in `ui/api.py` (`set_stream_coupling_chord` capture flow, one
-  line each, keeping every `_push("literal")` visible to
-  `test_bridge_contract.py`).
+## Failure modes
 
-## Failure modes and what the code must do about them
-
-- **Discord not running / not in voice:** keybind no-ops downstream.
-  Wingman cannot tell and does not try: the armed row says "armed", not
-  "live". Wording must never claim the stream exists — PRODUCT.md tone:
-  say what happened, not what was hoped.
-- **Chord collides with an EVE or Windows binding:** the recorded chord
-  is pressed exactly as a user chord; if the user mapped the same chord
-  in EVE, both fire. Mitigation is user education in the capture
-  flow (one-line warning after capture: "This chord also fires in EVE
-  while EVE is focused"), not prevent-from-send logic — Wingman cannot
-  enumerate Discord's registration, and guessing is worse than warning.
-  Suggest-but-do-not-enforce a default of Ctrl+Alt+D in the capture UI's
-  helper text.
-- **Discord changes the keybind or its behavior:** the integration breaks
-  quietly (no stream appears). Same answer as not-running: armed ≠ live;
-  last-fired row is the diagnostic. This is accepted, documented risk of
-  building on the only user-facing surface Discord exposes.
-- **The user is typing / holding keys at fire time:** `SendInput` injects
-  chord-down, chord-up with no dwell; modifiers held by the user at that
-  instant are not part of the chord and do not corrupt it — but an EVE
-  chat box focused at fire time receives the chord and may act on it.
-  Accepted risk, listed in the one-line capture warning (same mitigation
-  as collision: warn, don't prevent).
-- **Rapid re-engagement:** latch + quiet period covers it; the latch is
-  per character, so a two-client fight arms twice (each client's own
-  first combat), which is correct: two previews, two clients, one stream
-  (Discord dedupes; a second chord while live is the toggle hazard —
-  see below).
-- **Second chord while live (the toggle hazard):** real and harmful —
-  it stops the fleet's feed. V1 accepts it: multi-client fights are
-  exactly the multiboxing case, and V1's latch is per character. The
-  episode latch therefore needs a **process-wide arm/disarm at the
-  first fire** (single global latch overlaying the per-character ones):
-  the first fired chord disarms every character until the quiet period
-  expires **for all of them**. This is the spec's most important
-  behavioral sentence: **one stream per fight, Wingman presses once.**
-  (Phase 2, via local RPC + Discord application approval, could query
-  live-state and re-arm safely; V1 does not.)
+- **Capture probe fails (Tier C):** feature does not start; documented.
+- **Discord stops seeing the registered game** (exe moved, Discord
+  settings reset): stream start silently no-ops; armed row stays armed —
+  the row must say armed, never live. Setup ceremony in the card's
+  helper text is the diagnostic.
+- **Mirror source dies** (client closes): thumbnail release is routine
+  (`thumbnail.py` already treats it so); rebind waits for the next
+  foreground client. Fleet sees a frozen last frame until then — same
+  behavior as a streamer going static, acceptable.
+- **Chord collision with EVE/Windows binds:** warn at capture time (one
+  line: "This chord also fires in EVE while EVE is focused"); never
+  prevent.
+- **Text field focused at fire time:** chord lands there like a user
+  keypress. Accepted risk, same warning line.
+- **User already streaming when combat starts:** the process-wide latch
+  cannot know; the user pressed Go Live themselves, and the fight's chord
+  is suppressed only by the latch, not by stream state. V1 accepts this
+  (documented); phase 2's RPC state query is the real fix.
 
 ## Verification plan
 
-- Unit (Linux, no Windows APIs imported): controller tests inject a fake
-  send and assert — consent refusal with no chord; fire-once-per-episode;
-  process-wide disarm after first fire; quiet-period re-arm; focus-gate
-  refusal when the chord's target is foreground; live-update of armed
-  row payload.
-- Native seam test (Windows-only, skipped on Linux like other seams):
-  `SendInput` round-trip via `GetAsyncKeyState` or a test AHK listener —
-  the same kind of native seam test the repo already carries for hotkeys.
-- Settings round-trip: chord round-trips through
-  `settings.update()`/`validated_alerts`, capture flow validates against
-  the layout-aware resolver (ADR 0002) and degrades with the same
-  visible one-line warning shape.
-- Hand pass against `docs/smoke-checklist.md` for the settings card:
-  capture button, armed row, quiet-period control, and the "no chord =
-  inert" state.
+1. **Probe first:** the DWM-capture test above; result recorded in #312.
+   No implementation work before A/B.
+2. Unit (Linux): controller tests with injected send — consent refusal,
+   once-per-episode, process-wide disarm, quiet-period re-arm, focus-gate
+   refusal, armed-row payload updates.
+3. Unit (Linux): mirror logic with injected thumbnail libs — rebind on
+   foreground change, sticky last client on non-EVE focus, release on
+   source death. Shape follows `preview/`'s existing fake-lib tests.
+4. Native seam test (Windows-only, skippable like existing seams):
+   SendInput round-trip; thumbnail register/release round-trip.
+5. Hand pass against `docs/smoke-checklist.md`: card states, mirror
+   start/stop, capture flow, armed row.
 
-## Phase 2 candidates (not in V1, listed so V1 doesn't grow them)
+## Phase 2 candidates (unchanged)
 
-- Local-RPC voice/stream-state detection (requires Discord application +
-  one-time user approval modal): query `GET_SELECTED_VOICE_CHANNEL`,
-  potentially a live-state query, enabling safe re-arm mid-fight and
-  in-voice preconditioning ("armed only when in voice").
-- Auto-stop after quiet period (toggle-off risk returns; needs the same
-  RPC state query).
-- Fleet-coordination semantics (who streams when three wingmen's Wingman
-  installs all see the same fight — out of scope, probably belongs to
-  fleet sharing, not local keybinds).
+- Local-RPC stream/voice state detection (app-approval modal): safe
+  re-arm mid-fight, "only fire when actually not streaming", in-voice
+  preconditioning.
+- Auto-stop after quiet period (toggle-off risk; needs the same query).
+- Fleet coordination ("who streams") — belongs to fleet sharing, not
+  local keybinds.
 
-## Open questions for the human
+## Open questions for the human (revised)
 
-1. Name: "Stream coupling" is this spec's working term (it couples the
-   stream start to an alert event); "Combat → Go Live" reads plainer.
-   Which do users call it?
-2. Does the quiet period default of 300s match how often your fleet
-   refights? 60–900s is the range.
-3. Single-monitor setups: stream source is whatever Discord last used;
-   if that was "Entire Screen" on a single-monitor box, the stream shows
-   the desktop, not EVE. Is that acceptable for V1, or does the capture
-   flow need a "check Discord's last source" checkbox step in setup?
-4. Should the feature live in Settings → Alerts, or in Settings →
-   Uploading beside Combat logs (it is stream-to-viewers, not alerting)?
-   This spec assumes Alerts (the trigger is the alert funnel; the feature
-   produces no screen of its own), but Uploading is arguable.
+1. ~~Name~~ — pending: "Stream coupling" vs "Combat → Go Live".
+2. Quiet-period default 300s — pending.
+3. ~~Single-monitor Entire Screen risk~~ — dissolved by the mirror: the
+   stream source is the mirror window, never the desktop. (Superseded in
+   the issue's checkbox list by the probe result.)
+4. ~~Alerts vs Uploading placement~~ — pending, spec assumes Alerts.
+5. **New:** should the mirror be always-available (a small always-on
+   Wingman window, like the Fleet Bar) or launched on demand from
+   Settings? Spec assumes on-demand + "keep running" sticky.
+6. **New:** when no EVE client is focused at chord time, the mirror
+   shows the last client, which may not be the one in combat (user was
+   alt-tabbed into a browser). Acceptable, or hold the chord until an
+   EVE client is focused again (fires late, potentially minutes)?
