@@ -69,11 +69,29 @@ Two independent parts; either is valuable alone, the feature needs both.
 A single Wingman-owned top-level window that presents, via a DWM
 thumbnail, **the currently focused EVE client**:
 
-- **The mirror window is Wingman's own window** — headless in purpose,
-  but a real top-level window so Discord can register and capture it.
-  No Wingman chrome beyond a minimal caption (a captionless window may
-  be harder for Discord's picker to treat as a game window; confirm in
-  the probe).
+- **The mirror window is Wingman's own window, and the only top-level
+  window the Wingman process is willing to have Discord see.** Discord's
+  per-process pinning (field-tested: it pinned the first-launched
+  `eve.exe` window and never re-targeted) picks a window of the
+  registered process by its own heuristic with no user choice — so the
+  design does not compete with the heuristic, it removes the choice:
+  the Wingman exe presents exactly one game-like top-level window, the
+  mirror. Real window, with a caption (Discord's game list displays a
+  window title; a captionless window is a probe question, not a
+  default), normal show state — never toolwindow-styled, never
+  `WS_EX_NOACTIVATE`, nothing that makes capture enumerators skip it.
+- **Placement: bottom of the z-order, off-screen.** Created at the
+  bottom (`SetWindowPos` with `HWND_BOTTOM` before first show, or
+  created hidden and shown with `SWP_NOACTIVATE | SWP_NOZORDER` after
+  a `HWND_BOTTOM` position), parked off the desktop edge or across the
+  secondary monitor. It must never take focus (the mirror has no
+  interaction; a `WM_MOUSEACTIVATE` returning `MA_NOACTIVATE` plus
+  no click-through keeps it from stealing the pilot's focus mid-fight)
+  and never minimize (visibility states below). The user's exposure to
+  it: one window in Alt-Tab, nothing on the desktop unless they look
+  for it. If Alt-Tab presence is unacceptable, the documented
+  `WS_EX_TOOLWINDOW` trade-off (invisible to capture enumerators) is
+  exactly the risk the probe's step 3 rules in or out.
 - **Content:** one `DwmRegisterThumbnail` binding, re-targeted when focus
   changes. All the parts exist in the house style: `preview/thumbnail.py`
   wraps register/update/release; `preview/host.py:3297` already runs an
@@ -152,6 +170,24 @@ So the answer to "must the user see it": **on one monitor, yes, it will
 occupy screen area that can be covered but not closed; with two or more
 monitors, the mirror parks off-screen or on the secondary and the user
 never looks at it.** Never minimized.
+
+Field evidence already narrows this probe. Tested against real
+`eve.exe` clients: Discord streams the **covered** window (its capture
+path reads occluded window content — the occlusion worry is dead), and
+it picks **one window per registered process by its own heuristic**,
+with no per-window choice offered at stream start. What the probe still
+must answer:
+
+1. **Tier:** does DWM-composited thumbnail content survive Discord's
+   game capture at all (vs black)?
+2. **Pinning heuristic:** with exactly one streamable window in the
+   registered process, does the pin land on the mirror — including
+   when the mirror was created *after* the game was registered, sits
+   at the bottom of the z-order, and was never focused?
+3. **Style sweep:** if step 2 fails for a normal window, does window
+   styling (caption strip, toolwindow flag) change the outcome — i.e.
+   what does Discord's enumerator prefer or skip? This step rules
+   styles in or out; it does not license shipping them by default.
 
 - **Tier A — thumbnail visible to Discord:** build as specified.
 - **Tier B — black capture, but screen/window capture of the mirror
