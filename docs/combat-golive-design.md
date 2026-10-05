@@ -1,10 +1,14 @@
 # Combat-triggered Discord Go Live: automatic stream start on combat
 
-Status: proposed, **revision 2** — revision 1 assumed Discord's stream
-source could follow the focused EVE client. Field testing found it cannot:
-source selection pins per game entry. Revision 2 changes the mechanism
-(Wingman presents the streamable window) but keeps revision 1's consent
-design, guard stack and SendInput chord mechanism unchanged.
+Status: proposed, **revision 3** — revision 1 assumed Discord's stream
+source could follow the focused EVE client (it cannot: source pins per
+game entry). Revision 2 made Wingman the registered game presenting a
+focus-following DWM mirror. Revision 3 moves the mirror into its own
+single-window process (`wingman-mirror.exe`) registered as the game, so
+Discord's per-process pin has exactly one window to choose — by
+construction, not by hoping its heuristic skips Wingman's other
+windows. Consent design, guard stack and SendInput chord mechanism are
+unchanged since revision 1.
 
 ## The request
 
@@ -69,17 +73,20 @@ Two independent parts; either is valuable alone, the feature needs both.
 A single Wingman-owned top-level window that presents, via a DWM
 thumbnail, **the currently focused EVE client**:
 
-- **The mirror window is Wingman's own window, and the only top-level
-  window the Wingman process is willing to have Discord see.** Discord's
-  per-process pinning (field-tested: it pinned the first-launched
-  `eve.exe` window and never re-targeted) picks a window of the
-  registered process by its own heuristic with no user choice — so the
-  design does not compete with the heuristic, it removes the choice:
-  the Wingman exe presents exactly one game-like top-level window, the
-  mirror. Real window, with a caption (Discord's game list displays a
-  window title; a captionless window is a probe question, not a
-  default), normal show state — never toolwindow-styled, never
-  `WS_EX_NOACTIVATE`, nothing that makes capture enumerators skip it.
+- **The mirror lives in its own short, single-window process**
+  (`wingman-mirror.exe`, packaged by the same installer). Revision 3
+  change: revision 2 trusted Discord's window heuristic to skip the
+  main process's WebView2 host, sig bar, previews and crop windows —
+  a hope, not a guarantee. A dedicated process makes "exactly one
+  game-like top-level window" true **by construction**: whatever rule
+  the pin applies — first window, largest window, only window,
+  focused-at-registration — it lands on the mirror, because there is
+  nothing else in the process for it to land on. The registered game
+  is the mirror exe; never the main `wingman.exe`. Wingman supervises
+  the process exactly like the AutoHotkey engine (spawn + kernel Job
+  object + status file + orphan recovery, the `HotkeyEngine` pattern);
+  the mirror reads its source-client instructions from the same kind
+  of status/INI file channel the engine uses, not a new IPC design.
 - **Placement: bottom of the z-order, off-screen.** Created at the
   bottom (`SetWindowPos` with `HWND_BOTTOM` before first show, or
   created hidden and shown with `SWP_NOACTIVATE | SWP_NOZORDER` after
@@ -121,13 +128,15 @@ i.e. the client in combat if the user was flying it.
 
 ### Setup ceremony (one-time, per install)
 
-1. User adds Wingman's installed exe to Discord's Registered Game list
+1. User adds the **mirror exe** to Discord's Registered Game list
    (Settings → Registered Games; the manual "Add it" path with the
-   installer's exe path — registration data is user-scope registry +
-   Discord settings, not admin).
-2. User starts the mirror from Settings → Alerts ("Start stream mirror"),
-   picks it in Discord's stream source picker once, manually — after
-   which Discord pins the mirror permanently.
+   installed `wingman-mirror.exe` path — registration data is
+   user-scope registry + Discord settings, not admin). Never the main
+   `wingman.exe`: registering it would put every Wingman-owned window
+   — WebView2 host, sig bar, previews — inside Discord's heuristic.
+2. User starts the mirror from Settings → Alerts ("Start stream
+   mirror"), picks it in Discord's stream source picker once, manually
+   — after which Discord pins the mirror permanently.
 3. User maps Toggle Screen Share to a chord in Discord, then records the
    same chord in Wingman (this recording is the consent gate, below).
 4. Done. In combat: chord fires, Discord starts the mirror, mirror shows
@@ -273,12 +282,19 @@ chord-derived.
 
 ## Architecture
 
-- **Mirror:** new `wingman/streaming/mirror.py` (if the capture probe
-  requires sharing the preview host's pump thread, `preview/host.py`
-  gains a second hook consumer instead — decide at implementation, the
-  host already owns the only legal thread shape). Rebind = unregister +
-  register via `preview/thumbnail.py` wrappers. Consumes foreground
-  events only; no polling loop beyond the existing shared scan fallback.
+- **Mirror process:** new `wingman/streaming/mirror.py` — module used
+  both as the mirror exe's `__main__` and (its logic half) as the
+  unit-tested seam: window creation at `HWND_BOTTOM`, no-activate,
+  never-minimize; thumbnail rebind via the `preview/thumbnail.py`
+  wrappers; foreground consumption via the same
+  `EVENT_SYSTEM_FOREGROUND` shape `preview/host.py:3297` runs (own
+  message-pump thread — the host already proves the only legal thread
+  shape). Source-client instructions via status/INI file, engine-style.
+- **Supervision:** `HotkeyEngine`'s job-object pattern: spawn, bind to
+  kernel Job object (dies with Wingman, no orphans), status-file
+  handshake, orphan recovery on restart. New `wingman/streaming/
+  mirrorsupervisor.py`, or an extension of `hotkeys.py`'s generic
+  pieces — decide at implementation.
 - **Controller:** `wingman/alerts/streamcoupling.py` behind the
   controller/ports template (`AlertsPorts` gains one port or a sibling
   ports object): owns latches, reads chord/quiet settings live, owns the
@@ -297,6 +313,10 @@ chord-derived.
 ## Failure modes
 
 - **Capture probe fails (Tier C):** feature does not start; documented.
+- **Mirror process fails or never starts** (missing exe, DLL error):
+  supervisor restarts it like the engine (bounded retries, then shows
+  the error in the mirror card row); feature stays inert without a
+  mirror window to pin.
 - **Discord stops seeing the registered game** (exe moved, Discord
   settings reset): stream start silently no-ops; armed row stays armed —
   the row must say armed, never live. Setup ceremony in the card's
