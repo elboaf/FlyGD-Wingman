@@ -10,6 +10,15 @@ construction, not by hoping its heuristic skips Wingman's other
 windows. Consent design, guard stack and SendInput chord mechanism are
 unchanged since revision 1.
 
+Decisions recorded 2026-10-05 (#312 review): split naming (card titled
+for streaming, "Combat auto-start" as the section inside); quiet period
+default 300 s; placement in a new top-level Streaming section (the
+trigger remains fed by the alert chain); sticky on-demand mirror
+lifecycle (`mirror_on` persists, restored at launch, default off); chord
+fires even when no EVE client is focused (mirror shows the last client;
+hold-until-focus rejected). The open-questions section below is retired
+into that record.
+
 ## The request
 
 "Whenever the combat log detects combat, Discord automatically starts
@@ -254,7 +263,7 @@ client's position, size, or z-order.
    unreachable from Wingman.
 3. **Confirmation.** Focus gate (no chord while the user is typing into
    a text field is unknowable; but no chord while Discord itself is
-   foreground) + a visible state row in Settings → Alerts: armed
+   foreground) + a visible state row in the card (Streaming section): armed
    characters, chord, last-fired time and character. "An alert you
    configured and cannot tell is running is the failure mode" applies
    verbatim to a background key-presser. Trigger is the gated combat
@@ -263,22 +272,27 @@ client's position, size, or z-order.
 
 ## Settings surface
 
-Settings → Alerts, one card (name pending decision):
+New top-level **Streaming** section (decision, 2026-10-05: a dedicated
+section rather than Settings -> Alerts, which earlier revisions assumed;
+the combat trigger remains fed by the alert chain regardless). One card,
+split-named per the same decision:
 
 ```
-Stream coupling
-  Stream mirror: [Not running — Start mirror]   (Wingman-owned window Discord pins)
-  Keybind: [Ctrl+Alt+D] (capture button)        ← recording = consent
+Discord streaming
+  Stream mirror: [Not running - Start mirror]   (wingman-mirror.exe; what Discord pins)
+  Keybind: [Ctrl+Alt+D] (capture button)        <- recording = consent
+  -- Combat auto-start --------------------------------------
   Quiet period before re-arm: [300] seconds
-  ──────────────────────────────────────────────
+  -----------------------------------------------------------
   Armed for: Kuan Dai, xX_Sigma_Xx
-  Last fired: 12:41 · Kuan Dai
+  Last fired: 12:41 . Kuan Dai
 ```
 
 Keys under `preview.alerts.stream_coupling`: `chord` (AHK-style, `^!d`),
-`quiet_s` (60–900, default 300), `mirror_on` (the one toggle that is not
-consent — the mirror alone is useful). The Go Live automation remains
-chord-derived.
+`quiet_s` (60-900, default **300**), `mirror_on` (the one toggle that is
+not consent - the mirror alone is useful; per the lifecycle decision it
+**persists and is restored at Wingman launch**, shipped default off).
+The Go Live automation remains chord-derived.
 
 ## Architecture
 
@@ -359,20 +373,42 @@ chord-derived.
 - Fleet coordination ("who streams") — belongs to fleet sharing, not
   local keybinds.
 
-## Open questions for the human (revised)
+## Decisions (2026-10-05, #312 review)
 
-1. ~~Name~~ — pending: "Stream coupling" vs "Combat → Go Live".
-2. Quiet-period default 300s — pending.
-3. ~~Single-monitor users see the mirror on their only monitor (covered
-   is fine, minimized is not — see visibility states above). Is that
-   acceptable for V1, or does the mirror need a hide-theater mode?~~
-   Partially dissolved by the visibility states: covered works. Single-
-   monitor is now a UX preference, not a feasibility question.
-4. ~~Alerts vs Uploading placement~~ — pending, spec assumes Alerts.
-5. **New:** should the mirror be always-available (a small always-on
-   Wingman window, like the Fleet Bar) or launched on demand from
-   Settings? Spec assumes on-demand + "keep running" sticky.
-6. **New:** when no EVE client is focused at chord time, the mirror
-   shows the last client, which may not be the one in combat (user was
-   alt-tabbed into a browser). Acceptable, or hold the chord until an
-   EVE client is focused again (fires late, potentially minutes)?
+1. **Name — split.** The card is "Discord streaming" (mirror as the
+   card's subject) with a "Combat auto-start" section inside. "Stream
+   coupling" remains the settings-key namespace and internal name.
+2. **Quiet-period default: 300 s** (range 60-900 unchanged). The
+   asymmetry decided it: too short risks the mid-fight toggle-off that
+   ends the fleet's feed; too long only misses a second fight the user
+   can start by hand.
+3. **Placement: new top-level Streaming section**, not Settings ->
+   Alerts. The card hosts the mirror as its subject; the combat trigger
+   keeps its alert-chain feeding and armed-row language regardless.
+4. **Mirror lifecycle: sticky on-demand.** `mirror_on` persists; when
+   Wingman launches it restores the mirror if it was on. Shipped default
+   off. Closes the reboot trap (configured user, mirror not running,
+   chord fires into nothing) without an always-on helper process for
+   installs that never use Discord.
+5. **Chord with no EVE client focused: fire anyway.** The mirror shows
+   the last client; the fleet sees something at contact, which is the
+   ask's core. Hold-until-focus was rejected: it needs
+   hold-without-consuming-latch machinery (a hold that consumes the
+   episode latch is just a silent skip) and can leave the fleet with
+   nothing for a whole fight - the failure the feature exists to
+   prevent. The armed row is the user's visibility into what the mirror
+   would show.
+
+(Also resolved by the visibility states, recorded earlier: single-
+monitor users see a mirror they can cover but not minimize - a UX
+preference, not a feasibility question.)
+
+## Probe harness
+
+`scripts/capture_visibility_probe.py` + `docs/combat-golive-probe.md`
+implement the capture-visibility gate's manual probe: the throwaway
+process builds the rev-3 mirror faithfully (top-level, captioned,
+HWND_BOTTOM at creation, never activated, never minimized) and walks the
+tier leg, the pin leg, the style sweep and the minimize confirmation.
+Result template lives in the runbook; the tier result is recorded in
+#312 and gates all feature work.
