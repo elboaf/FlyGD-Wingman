@@ -124,7 +124,34 @@ pixels via `Windows.Graphics.Capture`/ DXGI and gets a black/empty mirror.
 A 5-minute manual probe decides it, before writing any feature code:
 spare Python process registers a DWM thumbnail of Notepad into a plain
 top-level window; add that process to Registered Games; start streaming
-it; look.
+it; look. **Run each of the three visibility states once — front,
+covered, back; add minimized only to confirm the known failure.**
+
+Visibility states and their expectations (user-side visibility of the
+mirror window, per Windows capture behavior):
+
+- **Front (focused, nothing over it):** trivially works.
+- **Covered:** the compositor still composites occluded windows;
+  screen-region capture shows the mirror wherever it sits in the z-order.
+  Expected to work; the probe confirms for Discord specifically.
+- **Back / off-screen (on another monitor, or parked off the desktop
+  edge):** the mirror window is composed and its thumbnail is live; WGC
+  maintains per-window surfaces for occluded top-level windows. OBS
+  window capture of background windows is established practice; the
+  probe confirms Discord's game capture path agrees. No user-visible
+  screen area is required.
+- **Minimized:** fails by design — Windows stops compositing a
+  minimized window's surface (documented OBS behavior across capture
+  methods). The mirror must never minimize. Enforce in the mirror
+  window: strip `WS_MINIMIZEBOX` and ignore `SC_MINIMIZE` in
+  `WM_SYSCOMMAND`, mirroring how the preview host already pins its own
+  window states. A "minimize to nothing" desire is satisfied by
+  off-screen parking instead.
+
+So the answer to "must the user see it": **on one monitor, yes, it will
+occupy screen area that can be covered but not closed; with two or more
+monitors, the mirror parks off-screen or on the secondary and the user
+never looks at it.** Never minimized.
 
 - **Tier A — thumbnail visible to Discord:** build as specified.
 - **Tier B — black capture, but screen/window capture of the mirror
@@ -280,9 +307,11 @@ chord-derived.
 
 1. ~~Name~~ — pending: "Stream coupling" vs "Combat → Go Live".
 2. Quiet-period default 300s — pending.
-3. ~~Single-monitor Entire Screen risk~~ — dissolved by the mirror: the
-   stream source is the mirror window, never the desktop. (Superseded in
-   the issue's checkbox list by the probe result.)
+3. ~~Single-monitor users see the mirror on their only monitor (covered
+   is fine, minimized is not — see visibility states above). Is that
+   acceptable for V1, or does the mirror need a hide-theater mode?~~
+   Partially dissolved by the visibility states: covered works. Single-
+   monitor is now a UX preference, not a feasibility question.
 4. ~~Alerts vs Uploading placement~~ — pending, spec assumes Alerts.
 5. **New:** should the mirror be always-available (a small always-on
    Wingman window, like the Fleet Bar) or launched on demand from
