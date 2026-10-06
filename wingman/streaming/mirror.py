@@ -75,6 +75,11 @@ CLASS_NAME = "WingmanMirrorProbe"
 WINDOW_TITLE = "Wingman mirror"
 PHASE_LABELS = {0: "STATIC", 1: "FOLLOW", 3: "PARKED+FOLLOW"}
 
+# Probe-build diagnostics: --debug-log PATH tees every say() line (and a
+# bounded pump trace) to a file, so a silent death leaves a last will.
+# The shipped mirror logs through the house logger instead.
+DEBUG_LOG_PATH = None
+
 
 def _stamp():
     return time.strftime("%H:%M:%S")
@@ -246,7 +251,14 @@ class Mirror:
         return buf.value
 
     def say(self, text):
-        print(f"[{_stamp()}] {text}", flush=True)
+        line = f"[{_stamp()}] {text}"
+        print(line, flush=True)
+        if DEBUG_LOG_PATH:
+            try:
+                with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except OSError:
+                pass
 
     def _is_target(self, hwnd):
         if not hwnd:
@@ -485,6 +497,9 @@ def main(argv=None):
             off_screen = True
         elif a == "--quit-after":
             quit_after = float(next(it))
+        elif a == "--debug-log":
+            global DEBUG_LOG_PATH
+            DEBUG_LOG_PATH = next(it)
 
     libs = win32.bind()
     _bind_extras(libs)
@@ -537,10 +552,9 @@ def main(argv=None):
             )
         if src_iconic:
             mirror.say("!! source MINIMIZED: thumbnail is a frozen frame")
-
-    # TIMERPROC is a wndproc-shaped callback: return 0 or ctypes raises
-    # "NoneType cannot be interpreted as an integer" on every tick.
-    return 0
+        # TIMERPROC is a wndproc-shaped callback: return 0 or ctypes raises
+        # "NoneType cannot be interpreted as an integer" on every tick.
+        return 0
 
     timer_cb = win32.wndproc_type()(on_timer)
     win32._KEEPALIVE.append(timer_cb)
