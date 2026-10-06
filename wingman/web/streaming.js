@@ -18,6 +18,19 @@
 
   var toggleBtn = WM.el('mirror-toggle');
   var errorEl = WM.el('mirror-error');
+  // The ceremony (#321): the register/start/pick walk under the mirror row
+  // with its never-main-exe warning, the resolved exe path Discord's Add-it
+  // dialog needs, and the chord-side map instruction plus the diagnostic
+  // that lives next to the armed row it explains. All hide with their
+  // halves of the card when the installation has no mirror -- setup text
+  // for a feature that cannot run is its own failure mode.
+  var ceremonyEl = WM.el('mirror-ceremony');
+  var exeWarningEl = WM.el('mirror-exe-warning');
+  var exePathEl = WM.el('mirror-exe-path');
+  var groupEl = WM.el('combat-autostart-group');
+  var enableHintEl = WM.el('chord-enable-hint');
+  var chordCeremonyEl = WM.el('chord-ceremony');
+  var diagnosticEl = WM.el('chord-diagnostic');
   var chordClear = WM.el('chord-clear');
   var collisionEl = WM.el('chord-collision');
   var msgEl = WM.el('chord-msg');
@@ -36,8 +49,18 @@
       stateEl.textContent = 'Not available in this installation';
       toggleBtn.hidden = true;
       errorEl.textContent = '';
+      ceremonyEl.hidden = true;
+      exeWarningEl.hidden = true;
+      exePathEl.hidden = true;
       return;
     }
+    ceremonyEl.hidden = false;
+    exeWarningEl.hidden = false;
+    // The registration path (#321): resolved by Python -- the installed
+    // location is not one a user could guess. Hidden when the resolution
+    // failed so the ceremony never points at a line that is not there.
+    exePathEl.textContent = payload.exe_path || '';
+    exePathEl.hidden = !payload.exe_path;
     toggleBtn.hidden = false;
     if (payload.state === 'running') {
       stateEl.textContent = 'Running';
@@ -73,11 +96,17 @@
     if (!payload || !payload.available) {
       // No mirror process in this installation means no combat auto-start
       // either: unavailable hides the section's controls with the mirror
-      // row's, not just the toggle.
+      // row's, not just the toggle. #321 extends that to the section's
+      // words too -- the header, the enable hint and the ceremony text
+      // are instructions for a feature that cannot run.
       chordBtn.hidden = true;
       chordClear.hidden = true;
       collisionEl.hidden = true;
       sendableEl.hidden = true;
+      groupEl.hidden = true;
+      enableHintEl.hidden = true;
+      chordCeremonyEl.hidden = true;
+      diagnosticEl.hidden = true;
       quietInput.parentNode.hidden = true;
       couplingStateEl.parentNode.hidden = true;
       latchedEl.parentNode.hidden = true;
@@ -87,6 +116,10 @@
     }
     chordBtn.hidden = false;
     chordClear.hidden = false;
+    groupEl.hidden = false;
+    enableHintEl.hidden = false;
+    chordCeremonyEl.hidden = false;
+    diagnosticEl.hidden = false;
     chordDisplay = payload.chord_display || '';
     applyChord();
     showMsg('');

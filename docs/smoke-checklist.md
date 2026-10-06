@@ -15,6 +15,70 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Combat Go Live ceremony (#321) — Windows acceptance NOT RUN (2026-10-06)
+
+The one-time setup ceremony and the feature's acceptance pass, run on a
+fresh machine (no earlier Wingman install, a real Discord account in a
+voice channel). The card's helper text is the only setup documentation the
+product ships, so a step no card text covers is a defect of this pass even
+when the step itself works. The trigger section below pins the trigger's
+deep behavior (refusals, quiet-period clamps); this pass exercises the
+whole ceremony end to end on the packaged install, where the exe the
+ceremony registers is the frozen `wingman-mirror.exe` the installer ships.
+
+- [ ] **The card walks the ceremony.** Fresh install, Streaming section:
+      the four steps appear in order at the controls that perform them —
+      register the mirror exe in Discord's Registered Games, start the
+      mirror and pick it once in Go Live's source picker (under the mirror
+      row); map Toggle Screen Share in Discord, then record the same chord
+      here (in the Combat auto-start block); and the lost-registration
+      recovery sits next to the armed row. Nothing names a Discord surface
+      this Discord build does not have.
+- [ ] **"Never the main exe" is visible where the user registers.** The
+      warning against registering `wingman.exe` is a plain visible line at
+      the registration step, not behind a disclosure, and states the
+      consequence (every Wingman window inside Discord's game detection).
+- [ ] **The registration path is the real installed exe.** The path shown
+      under the mirror row is selectable text and matches where the
+      installer actually put `wingman-mirror.exe`; browsing to it in
+      Discord's Add-it dialog works; a path that long wraps without
+      pushing the card wider than the window.
+- [ ] **Register → start → pick.** Add the mirror in Discord's Registered
+      Games, press Start mirror, start a Go Live and pick the mirror once:
+      the stream comes up showing the mirror (parked bottom-of-z-order;
+      covered by other windows is fine). Back in the card the mirror row
+      says Running and the armed row has flipped from "Standing by" to
+      "Armed".
+- [ ] **Map → record.** Map Toggle Screen Share to a chord in Discord,
+      record the same chord on the card: the row shows it and the collision
+      line appears. Escape cancels a capture without changing the stored
+      chord; Clear empties it and the armed row returns to Off until a
+      chord is recorded again. (The #319 fork note in the trigger section
+      applies here too — record which capture path won on real Discord.)
+- [ ] **The ceremony fires end to end.** In a voice channel, take a fight
+      with alerts enabled: Discord goes live exactly once, the armed row
+      read Holding during the fight and "Last fired HH:MM — <character>"
+      after, and a second account in the fleet sees the client that was
+      focused at contact. Sustained combat presses no second chord.
+- [ ] **Lost registration is diagnosable from the card.** Remove
+      `wingman-mirror.exe` from Discord's Registered Games, wait out the
+      quiet period, take a fight: the armed row stays Armed, nothing
+      streams, and no error appears anywhere — the known silent no-op.
+      The card's diagnostic text is what walks the operator through the
+      recovery (re-add the mirror exe, pick it in the source picker once
+      more), and following it restores a working fire on the next fight.
+- [ ] **Mirror start/stop and out-of-band recovery.** Stop mirror takes
+      the streamable window away and the armed row returns to "Standing
+      by"; Start mirror restores both. Kill `wingman-mirror.exe` from Task
+      Manager while the mirror should be running: the supervisor brings it
+      back within the poll cadence, with no manual start and no error.
+- [ ] **Unavailable installation stays quiet.** (Developer checkout with
+      no `packaging/bin/wingman-mirror.exe`; not reachable on a real
+      install.) The mirror row says "Not available in this installation"
+      and the ceremony text, the path row, the warning and every Combat
+      auto-start control — divider header included — hide with it: no
+      setup instructions for a feature that cannot run.
+
 ## Combat Go Live trigger (#319/#320) — Windows acceptance NOT RUN (2026-10-06)
 
 The Streaming card's Combat auto-start: record the Discord Toggle Screen

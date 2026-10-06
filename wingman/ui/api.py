@@ -7302,6 +7302,7 @@ class Api:
                 "state": "unavailable",
                 "error": None,
                 "mirror_on": False,
+                "exe_path": None,
                 **self._chord_fields(coupling),
             }
         status = supervisor.status(enabled=bool(coupling.get("mirror_on")))
@@ -7311,6 +7312,9 @@ class Api:
             "state": status.state,
             "error": status.last_error,
             "mirror_on": bool(coupling.get("mirror_on")),
+            # The ceremony's registration path (#321): what Discord's
+            # Add-it dialog must be pointed at, resolved once at launch.
+            "exe_path": supervisor.exe_path,
             **self._chord_fields(coupling),
         }
 

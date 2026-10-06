@@ -821,6 +821,9 @@
     return Promise.resolve({
       available: true, running: false, state: 'stopped',
       error: null, mirror_on: false,
+      // The ceremony's registration path (#321) -- a plausible installed
+      // shape, so the path row and its wrapping render under ?dev=1.
+      exe_path: 'C:\\Program Files\\FlyGD Wingman\\_internal\\bin\\wingman-mirror.exe',
       chord: devChord, chord_display: devChordDisplay()
     });
   };

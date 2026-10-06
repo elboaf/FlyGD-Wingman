@@ -89,6 +89,14 @@ class MirrorSupervisor:
 
     # -- public surface (the card and the launcher) ---------------------
     @property
+    def exe_path(self):
+        """The exe this supervisor was built for (paths.mirror_exe()'s
+        resolution, or None) -- the setup ceremony's registration path,
+        shown on the card because the installed location (_internal\\bin)
+        is not one a user could guess (#321)."""
+        return self._guard.exe_path()
+
+    @property
     def last_error(self):
         return self._guard.last_error
 

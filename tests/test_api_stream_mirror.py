@@ -14,11 +14,14 @@ from wingman import settings
 
 
 class FakeSupervisor:
-    def __init__(self, running=False, error=None):
+    def __init__(self, running=False, error=None, exe=None):
         self._running = running
         self.started = 0
         self.stopped = 0
         self.last_error = error
+        # The ceremony's registration path (#321): the real supervisor
+        # exposes the exe paths.mirror_exe() resolved at launch.
+        self.exe_path = exe
 
     def start(self):
         self.started += 1
@@ -60,12 +63,17 @@ def api_with_mirror(tmp_path, supervisor, coupling=None):
 
 
 def test_state_read_reflects_a_running_mirror(tmp_path):
-    api = api_with_mirror(tmp_path, FakeSupervisor(running=True))
+    api = api_with_mirror(
+        tmp_path, FakeSupervisor(running=True, exe="C:\\x\\wingman-mirror.exe")
+    )
     state = api.stream_mirror_state()
     assert state["available"] is True
     assert state["running"] is True
     assert state["state"] == "running"
     assert state["mirror_on"] is True
+    # The card's registration path (#321): the supervisor's own resolution,
+    # because that is the exe Wingman would actually supervise.
+    assert state["exe_path"] == "C:\\x\\wingman-mirror.exe"
 
 
 def test_state_read_reports_stopped_with_the_supervisor_error(tmp_path):
@@ -92,6 +100,7 @@ def test_state_read_without_a_supervisor_is_unavailable_not_fatal(tmp_path):
         "state": "unavailable",
         "error": None,
         "mirror_on": False,
+        "exe_path": None,
         "chord": "",
         "chord_display": "",
     }
