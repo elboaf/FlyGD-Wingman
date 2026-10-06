@@ -21,9 +21,15 @@
   var chordClear = WM.el('chord-clear');
   var collisionEl = WM.el('chord-collision');
   var msgEl = WM.el('chord-msg');
+  var sendableEl = WM.el('chord-sendable');
+  var quietInput = WM.el('coupling-quiet');
+  var couplingStateEl = WM.el('coupling-state');
+  var latchedEl = WM.el('coupling-latched');
+  var lastFiredEl = WM.el('coupling-last-fired');
   var visible = false;
   var capturing = false;
   var chordDisplay = '';
+  var quietDraft = null;
 
   function renderMirror(payload) {
     if (!payload || !payload.available) {
@@ -71,6 +77,11 @@
       chordBtn.hidden = true;
       chordClear.hidden = true;
       collisionEl.hidden = true;
+      sendableEl.hidden = true;
+      quietInput.parentNode.hidden = true;
+      couplingStateEl.parentNode.hidden = true;
+      latchedEl.parentNode.hidden = true;
+      lastFiredEl.parentNode.hidden = true;
       showMsg('');
       return;
     }
@@ -81,10 +92,89 @@
     showMsg('');
   }
 
+  // The armed row (#320): the user's visibility into a background
+  // key-presser. It says armed, never live -- nothing Python-side knows
+  // whether Discord is actually streaming, and this row must never claim
+  // to. Tick-pushed like the mirror rows: it carries no draft except the
+  // quiet field's, which the draft rule below protects.
+  function renderCoupling(payload) {
+    if (!payload) return;
+    var lines = {
+      'inert': 'Off',
+      'standby': 'Standing by \u2014 start the mirror to arm',
+      'armed': 'Armed',
+      'held': 'Holding'
+    };
+    couplingStateEl.textContent = lines[payload.state] || 'Checking\u2026';
+    var latched = payload.latched || [];
+    if (payload.state === 'held' && latched.length) {
+      latchedEl.textContent = 'Episode running for ' + latched.join(', ') +
+        ' \u2014 ' + formatRemaining(payload.latched_remaining_s) + ' left';
+      latchedEl.hidden = false;
+    } else {
+      latchedEl.textContent = '';
+      latchedEl.hidden = true;
+    }
+    if (payload.last_fired_character) {
+      lastFiredEl.textContent = 'Last fired ' + payload.last_fired_display +
+        ' \u2014 ' + payload.last_fired_character;
+      lastFiredEl.hidden = false;
+    } else {
+      lastFiredEl.textContent = '';
+      lastFiredEl.hidden = true;
+    }
+    // A chord recorded but untypeable would sit armed and never fire --
+    // the exact failure this card exists to make visible. Anything but
+    // inert without a sendable chord gets the line, display or not.
+    sendableEl.hidden = !(payload.state !== 'inert' && !payload.chord_sendable);
+    if (!quietEditing) {
+      quietInput.value = payload.quiet_s;
+    }
+  }
+
+  function formatRemaining(seconds) {
+    var whole = Math.max(0, Math.floor(seconds || 0));
+    var m = Math.floor(whole / 60);
+    var s = whole % 60;
+    return m + ':' + (s < 10 ? '0' + s : s);
+  }
+
+  function commitQuiet() {
+    // Enter-commit only (the settings rule for free text): a draft is
+    // what the user typed and it persists exactly when they say so.
+    if (quietDraft === null) return;
+    WM.send('stream_quiet_set', quietDraft).then(function (result) {
+      if (!result) return;
+      if (result.applied === false) { showMsg(result.error); return; }
+      quietDraft = null;
+      // The clamped value, echoed: what the field shows is what is stored.
+      quietInput.value = result.quiet_s;
+      showMsg('');
+    });
+  }
+
+  var quietEditing = false;
+  quietInput.addEventListener('focus', function () { quietEditing = true; });
+  quietInput.addEventListener('blur', function () { quietEditing = false; });
+  quietInput.addEventListener('input', function () {
+    quietDraft = quietInput.value;
+  });
+  quietInput.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commitQuiet();
+  });
+
   function refresh() {
     WM.send('stream_mirror_state').then(function (payload) {
       renderMirror(payload);
       renderChord(payload);
+    });
+    WM.send('stream_coupling_state').then(function (payload) {
+      // Re-entry is a fresh read: a draft typed before leaving dies here,
+      // the same rule the chord row's msg line follows on re-render.
+      quietDraft = null;
+      renderCoupling(payload);
     });
   }
 
@@ -179,6 +269,24 @@
     // Mirror rows only: the chord row renders on entry and on its own
     // commits, never under a tick that would fight an armed capture.
     if (visible) { renderMirror(payload); }
+  });
+
+  WM.handle('onStreamCouplingState', function (payload) {
+    // Same visibility rule. The armed row carries no capture state, so
+    // the tick may write it; the quiet field's draft is protected inside
+    // renderCoupling, not by suppressing the push.
+    if (visible) { renderCoupling(payload); }
+  });
+
+  WM.handle('onStreamCouplingFired', function (payload) {
+    // The one-chord-per-fight event. The state push right behind it
+    // carries the same last-fired line; this marks the moment even if a
+    // tick somehow ate the state diff in between.
+    if (visible && payload && payload.character) {
+      lastFiredEl.textContent = 'Last fired ' + (payload.display || '') +
+        ' \u2014 ' + payload.character;
+      lastFiredEl.hidden = false;
+    }
   });
 
   document.addEventListener('wm:section', function (ev) {

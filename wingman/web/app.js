@@ -60,6 +60,7 @@
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
                  'onMirrorStatus',
+                 'onStreamCouplingState', 'onStreamCouplingFired',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
                  'onFittingsScreenshotState', 'onFleetSharingState', 'onTheme'];

@@ -252,6 +252,51 @@ def windows_layout_view(user32, hkl=None):
     return view
 
 
+def char_vk(char: str):
+    """The layout's own answer to "which key types this character".
+
+    Returns ``(vk, shift)`` -- the virtual key VkKeyScanExW binds the
+    character to under the foreground thread's layout, and whether that
+    binding includes Shift. None when Win32 is unavailable (Linux tests
+    and stripped builds), the character is not exactly one WCHAR, or no
+    key on the layout produces it.
+
+    The stream coupling's send (#320) needs this direction: the stored
+    chord holds the character the layout PRODUCED at capture time (ADR
+    0002), and replaying it faithfully means pressing the key this
+    layout types it with -- not the US-layout guess a static table
+    would make (";" sits elsewhere on half the layouts). The reverse
+    direction is windows_layout_view above.
+    """
+    if not isinstance(char, str) or len(char) != 1:
+        return None
+    import ctypes
+
+    try:
+        user32 = ctypes.windll.user32
+    except (AttributeError, OSError, ImportError):
+        return None
+    if not win32_available(user32):
+        return None
+    from ctypes import c_short, c_size_t, c_wchar
+
+    try:
+        user32.VkKeyScanExW.argtypes = (c_wchar, c_size_t)
+        user32.VkKeyScanExW.restype = c_short
+    except AttributeError:
+        return None
+    hkl = _foreground_hkl(user32)
+    # Low byte is the VK, bit 0 of the high byte is Shift (2=Ctrl, 4=Alt).
+    # -1 (c_short) means the layout cannot produce the character.
+    result = user32.VkKeyScanExW(char, hkl)
+    if result == -1:
+        return None
+    vk = result & 0xFF
+    if not vk:
+        return None
+    return (vk, bool(result & 0x0100))
+
+
 # One built view per layout HKL, so a capture costs two syscalls, not a
 # signature re-pin and a closure per keystroke. Layouts are per-thread and
 # switched rarely; the dict is bounded by how many layouts the user has.

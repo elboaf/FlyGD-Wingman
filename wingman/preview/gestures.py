@@ -145,8 +145,13 @@ def _code_to_name(code: str):
     return None
 
 
-def _vk(token: str):
-    """Resolve a key token: a name, a VK_ name, or a hex literal."""
+def vk_for(token: str):
+    """Resolve a key token: a name, a VK_ name, or a hex literal.
+
+    Public because the stream coupling (#320) spells its stored chord into
+    SendInput VKs from this one table -- a second table would drift from
+    it exactly the way hand-kept copies have drifted before.
+    """
     if token in _KEYS:
         return _KEYS[token]
     upper = token.upper()
@@ -187,7 +192,7 @@ def parse(text):
         mods |= flag
     if not mods:
         return None  # a bare chord would be claimed desktop-wide
-    vk = _vk(key)
+    vk = vk_for(key)
     if vk is None:
         return None
     return Gesture(mods | MOD_NOREPEAT, vk)

@@ -186,6 +186,18 @@ reached through injected seams or lazy `windll` binding):
   `state.py` (what an alert does over time), `service.py` (focus gating and
   sound dispatch), `sound.py`. The focus gate fails closed: EVE broadcasts
   warp lines fleet-wide, so an alert with no proven owner must not fire.
+  `streamcoupling.py` is the combat trigger (#320): every dispatched
+  `combat` alert rides the `AlertPolicy.handle` funnel into its queue (the
+  dispatcher never waits), and its own worker thread decides — every gated
+  combat alert refreshes its character's episode latch, the chord fires
+  only when NO latch is active (quiet period, read live, 60–900 default
+  300) and the mirror is actually running, Discord-foreground refuses
+  (an unprovable foreground counts as Discord — fail closed), no EVE
+  focus never refuses. The send is an injected seam spelling the stored
+  chord through `spell_chord` (produced characters resolve through
+  `keylayout.char_vk`, position tokens through `preview.gestures.vk_for`
+  — one VK table, not two). It imports nothing from `ui`; push literals
+  live in `ui/api.py`.
 - `streaming/` — the combat Go Live mirror (#312): `mirror.py` is the
   streamable window Discord pins — one borderless `WS_POPUP` window created
   at `HWND_BOTTOM`, never activated (`MA_NOACTIVATE`), never minimized
@@ -317,6 +329,11 @@ entry and its own commits — a poll tick must never fight an armed
 capture. Chord capture is page-level (the Bookmarks pattern) through the
 one ADR 0002 seam; if a real Discord swallows or double-fires the
 keydown, the fallback is the previews' native-armed capture path.
+The armed row (#320) is status, not a draft: tick-pushed while visible
+(the worker's transitions plus the re-arm the clock flips), saying
+armed/held/standby and who fired — never live. The quiet field is the
+scoped exception to tick-rendering: a held draft is never overwritten
+by a push, and it commits on Enter only, clamped value echoed back.
 Uploading and Previews also have
 static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`
 without section re-entry or reads; `WM.openSettingsSection(section, tab)` supports

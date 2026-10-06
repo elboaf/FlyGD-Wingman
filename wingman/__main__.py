@@ -315,6 +315,14 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
     except Exception:
         logger.exception("Mirror status push failed.")
     try:
+        # The re-arm transition happens in wall-clock time, which no
+        # combat dispatch observes: the tick is what flips the armed row
+        # back to armed after the last latch expires (pushes dedup
+        # inside the Api, so a quiet row costs nothing).
+        api._push_stream_coupling_tick()
+    except Exception:
+        logger.exception("Stream coupling status push failed.")
+    try:
         ready = w.poll_once()
         uploading = api._busy()
         if ready:
@@ -725,7 +733,47 @@ def build_alerts_controller(state, host, api_box) -> AlertsController:
     )
 
 
-def build_alert_policy(state, host, alerts_controller=None):
+def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
+    """The combat trigger (#320), built before the Api whose push adapters
+    it borrows -- the ports resolve through api_box lazily, the same way
+    build_alerts_controller's health ports do."""
+    from .alerts.streamcoupling import (
+        StreamCouplingController,
+        StreamCouplingPorts,
+        foreground_process_name,
+        send_keystrokes,
+    )
+    from .keylayout import char_vk as layout_char_vk
+
+    # The committed reader, retained for this document's lifetime: the
+    # worker reads the coupling through it on every decision, so a quiet
+    # period or chord change lands without a restart and no reader can
+    # observe a half-normalized settings document mid-update.
+    committed = settings_mod.committed_preview(state.settings)
+
+    def mirror_running():
+        return mirror_supervisor is not None and mirror_supervisor.is_running()
+
+    return StreamCouplingController(
+        StreamCouplingPorts(
+            coupling=lambda: (
+                (committed.get("alerts") or {}).get("stream_coupling") or {}
+            ),
+            mirror_running=mirror_running,
+            foreground_process=foreground_process_name,
+            char_vk=layout_char_vk,
+            send=send_keystrokes,
+            publish_state=lambda payload: api_box["api"]._push_stream_coupling_state(
+                payload
+            ),
+            publish_fired=lambda payload: api_box["api"]._publish_stream_coupling_fired(
+                payload
+            ),
+        )
+    )
+
+
+def build_alert_policy(state, host, alerts_controller=None, stream_coupling=None):
     """Alert decisions without a private file-reader thread."""
     if host is None:
         return None
@@ -745,6 +793,9 @@ def build_alert_policy(state, host, alerts_controller=None):
             ),
             custom_current=(
                 alerts_controller.is_current if alerts_controller is not None else None
+            ),
+            stream_trigger=(
+                stream_coupling.observe_combat if stream_coupling is not None else None
             ),
         )
     except Exception:
@@ -1122,7 +1173,14 @@ def main() -> int:
     )
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
-    alert_policy = build_alert_policy(state, preview_host, alerts_controller)
+    # The combat trigger (#320) is built before the policy whose funnel
+    # feeds it and before the Api whose push adapters it borrows.
+    stream_coupling = build_stream_coupling_controller(
+        state, api_box, mirror_supervisor=mirror_supervisor
+    )
+    alert_policy = build_alert_policy(
+        state, preview_host, alerts_controller, stream_coupling
+    )
     from .fleetsharing.timing import TimingContext
 
     # One process lifetime, including lazy telemetry retries and worker restarts.
@@ -1148,6 +1206,7 @@ def main() -> int:
         fleet_sharing=sharing_worker,
         fleet_clock=fleet_clock,
         alerts_controller=alerts_controller,
+        stream_coupling=stream_coupling,
         telemetry_factory=lambda: build_telemetry(
             state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
         ),
@@ -1400,6 +1459,10 @@ def main() -> int:
         # The pinned mirror outliving Wingman is the same class of
         # orphan as the engine: stop it on every exit path.
         _teardown_step("stream mirror", lambda: shutdown_mirror(mirror_supervisor))
+        # The trigger's worker owns the send seam; close it before the
+        # deeper teardowns so a final combat dispatch can never fire
+        # into a machine already standing down.
+        _teardown_step("stream coupling", stream_coupling.close)
         # Close updater state before subsystem teardown. This suppresses late
         # worker pushes and removes a ready file on ordinary Quit while retaining
         # the persistent on-disk marker/file pair already handed to Setup.

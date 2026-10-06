@@ -45,6 +45,7 @@ class AlertPolicy:
         *,
         runtime_snapshot: Callable[[], AlertRuntimeSnapshot] | None = None,
         custom_current: Callable[[str, int, int], bool] | None = None,
+        stream_trigger: Callable[[list[str]], None] | None = None,
     ):
         self._config = config
         self._sound = sound
@@ -52,6 +53,7 @@ class AlertPolicy:
         self._on_alert = on_alert
         self._runtime_snapshot = runtime_snapshot
         self._custom_current = custom_current
+        self._stream_trigger = stream_trigger
         # (character, event) -> monotonic time it last dispatched.
         self._cooldowns = {}
         self._custom_cooldowns: dict[tuple[str, str, int], float] = {}
@@ -181,6 +183,17 @@ class AlertPolicy:
                 continue
             self._sound(alert.spec["sound"], volume)
             break
+        if self._stream_trigger is not None and dispatched:
+            # The combat trigger (#320) rides this same funnel: everything
+            # in `dispatched` already passed the enabled, PvE and cooldown
+            # gates, so NPC fire never reaches it and the trigger inherits
+            # the user's alert configuration for free. The trigger is a
+            # queue put -- the dispatcher thread never waits on it.
+            combat = [
+                character for character, event, _ in dispatched if event == "combat"
+            ]
+            if combat:
+                self._stream_trigger(combat)
         return dispatched
 
     def _plan_custom(

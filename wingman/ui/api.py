@@ -406,6 +406,7 @@ class Api:
         fleet_clock=time.monotonic,
         telemetry_factory=None,
         alerts_controller=None,
+        stream_coupling=None,
         authority=None,
         fittings=None,
         authority_warnings=(),
@@ -601,6 +602,12 @@ class Api:
             if alerts_controller is not None
             else self._build_alerts_controller()
         )
+        # The combat trigger (#320), built in main() before this Api --
+        # its publish ports resolve back into the two _push adapters
+        # below. None only in bridge-level tests that build an Api by
+        # hand; every consumer treats None as the inert payload.
+        self._stream_coupling = stream_coupling
+        self._last_coupling_push = None
         self._eve_runtime_lock = threading.RLock()
         self._eve_runtime_closed = False
         self._eve_runtime_stop_requested = False
@@ -7439,6 +7446,96 @@ class Api:
             document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
                 "stream_coupling", {}
             )["mirror_on"] = mirror_on
+
+    # ---- Combat auto-start (#320) ----------------------------------------
+
+    def stream_coupling_state(self) -> dict:
+        """The armed row's read: state, chord, latched characters, last fire.
+
+        A read on section entry, like stream_mirror_state -- the
+        controller exists before the window, so a state discovered at
+        launch would be pushed into nothing. After entry the row is
+        kept honest by pushes (worker transitions plus the poll tick).
+        """
+        if self._stream_coupling is None:
+            return {
+                "state": "inert",
+                "chord_display": "",
+                "chord_sendable": False,
+                "quiet_s": 300,
+                "latched": [],
+                "latched_remaining_s": 0,
+                "last_fired_character": None,
+                "last_fired_display": None,
+            }
+        return self._stream_coupling.state_payload()
+
+    def stream_quiet_set(self, value) -> dict:
+        """Persist the quiet period before re-arm (60-900 seconds).
+
+        The card's free-text rule: commits on Enter only, through this
+        one endpoint. A non-numeric value is refused with the range in
+        the message; a numeric one is clamped to the same range the
+        load validator enforces and the clamped value rides back so the
+        field shows exactly what was stored -- forgiving, but visible.
+        """
+        if isinstance(value, bool):
+            number = None
+        elif isinstance(value, int):
+            number = value
+        elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            number = int(value.strip())
+        else:
+            number = None
+        if number is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": "Enter a number of seconds between 60 and 900.",
+            }
+        clamped = max(60, min(900, number))
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["quiet_s"] = clamped
+        # The worker reads the coupling live on its next decision; this
+        # push only refreshes the row's own quiet figure immediately.
+        self._push_stream_coupling_tick()
+        return {
+            "applied": True,
+            "persisted": True,
+            "error": None,
+            "quiet_s": clamped,
+        }
+
+    def _push_stream_coupling_state(self, payload) -> None:
+        """The worker's publish port, and the poll tick's: one deduped
+        chokepoint so a transition and the next tick cannot double-push
+        the same row. The countdown during an episode changes every
+        second, so a held row pushes once per tick; an idle row's
+        payload is stable and pushes only on real change."""
+        if payload != self._last_coupling_push:
+            self._last_coupling_push = payload
+            self._push("onStreamCouplingState", payload)
+
+    def _push_stream_coupling_tick(self) -> None:
+        """The poll tick's re-arm observation: latches expire in wall
+        time, and nothing else watches the clock flip a held row back to
+        armed. No-op without a controller (hand-built test Apis)."""
+        if self._stream_coupling is None:
+            return
+        try:
+            self._push_stream_coupling_state(self._stream_coupling.state_payload())
+        except Exception:
+            logger.debug("Stream coupling tick push failed", exc_info=True)
+
+    def _publish_stream_coupling_fired(self, payload) -> None:
+        """Literal adapter for the controller's publish_fired port: the
+        semantic one-chord-per-fight event, distinct from the row push
+        so the card can mark the moment without diffing state."""
+        self._push("onStreamCouplingFired", payload)
 
     # ---- Where a preview opens ------------------------------------------
 

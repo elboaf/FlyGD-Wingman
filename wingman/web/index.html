@@ -1845,6 +1845,23 @@
           This chord also fires in EVE while EVE is focused.
         </p>
         <p class="hint" id="chord-msg" hidden></p>
+        <p class="hint" id="chord-sendable" hidden>
+          Wingman cannot type this chord &mdash; record a different one.
+        </p>
+        <div class="row">
+          <span class="lab" id="quiet-label">Quiet period before re-arm</span>
+          <input class="field" id="coupling-quiet" type="text" inputmode="numeric"
+                 autocomplete="off" spellcheck="false">
+          <span class="hint">seconds</span>
+        </div>
+        <div class="row">
+          <span class="lab">Auto-start</span>
+          <span id="coupling-state" role="status">Checking&hellip;</span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-latched"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-last-fired"></span></div>
       </section>
     </div>
     <div class="settings" id="section-general">

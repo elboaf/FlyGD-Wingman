@@ -15,6 +15,49 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Combat Go Live trigger (#319/#320) — Windows acceptance NOT RUN (2026-10-06)
+
+The Streaming card's Combat auto-start: record the Discord Toggle Screen
+Share keybind (that recording IS the consent), set the quiet period, and
+one gated combat alert fires the chord exactly once per fight. Needs real
+Discord (registered `wingman-mirror.exe`, mapped Toggle Screen Share
+keybind) and a real fight for the fire steps.
+
+- [ ] **Fully inert with no chord.** With the keybind row showing
+      "Not set": fly into combat with alerts enabled. No keys are pressed
+      anywhere, the armed row says Off, and Discord never starts
+      streaming. Record a chord, then Clear it and repeat: still nothing.
+- [ ] **The armed row states.** Chord recorded, mirror stopped: the row
+      says "Standing by — start the mirror to arm". Start the mirror
+      (and add it to Discord's Registered Games once, if a fresh
+      install): the row flips to "Armed". This is also the #319 fork
+      test: if recording the chord here does nothing while a real
+      Discord window is focused (swallowed or double-fired keydown), the
+      page-level capture loses to the previews' native-armed path —
+      record which way it went.
+- [ ] **One chord per fight.** In a voice channel, fly into combat with
+      alerts enabled. Discord starts streaming the mirror exactly once;
+      sustained combat (further combat alerts, other characters in fleet
+      firing) never presses the chord again — a second press would end
+      the fleet's feed. The armed row showed "Holding — episode running
+      for …" during the fight and "Last fired HH:MM — <character>" after.
+- [ ] **Quiet-period re-arm.** After the fight has been quiet past the
+      quiet period, the row reads "Armed" again without a restart, and a
+      NEW fight fires the chord once more.
+- [ ] **Quiet period commits on Enter, clamped visibly.** Type 45 and
+      press Enter: the field shows 60 (the clamp, echoed). Type 5000:
+      the field shows 900. Type "soon" and press Enter: the field keeps
+      the stored value and one message line names the 60–900 range.
+      Clicking elsewhere never commits a draft.
+- [ ] **Discord foreground is refused.** Focus the Discord window, then
+      take a fight: the row goes to Holding, no chord is pressed while
+      Discord is focused (nothing lands in your chat box), and the
+      stream does not start from Wingman. Returning to EVE and fighting
+      again after the quiet period fires normally.
+- [ ] **No EVE client focused still fires.** With a browser focused
+      (NOT Discord), take a fight: the chord fires — the mirror shows
+      the last client it had.
+
 ## Screenshot UX step 7 — installed Windows acceptance NOT RUN
 
 Formations and Setup import use synthetic presentation checks at 1015×633 and

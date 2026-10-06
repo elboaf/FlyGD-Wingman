@@ -54,7 +54,7 @@ def _config(**over):
     return cfg
 
 
-def _policy(config=None, sounds=None, alerts=None, focused=None):
+def _policy(config=None, sounds=None, alerts=None, focused=None, stream_trigger=None):
     cfg = config or _config()
     return AlertPolicy(
         config=lambda: cfg,
@@ -63,6 +63,7 @@ def _policy(config=None, sounds=None, alerts=None, focused=None):
         ),
         focused=focused or (lambda: None),
         on_alert=lambda *args: (alerts if alerts is not None else []).append(args),
+        stream_trigger=stream_trigger,
     )
 
 
@@ -262,3 +263,35 @@ def test_focus_probe_failure_does_not_drop_alert(caplog):
 
     assert policy.handle([Event("Alice", "combat", PLAYER)], 0.0)
     assert "Could not read the focused client" in caplog.text
+
+
+def test_the_stream_trigger_receives_dispatched_combat_characters():
+    """The combat trigger rides the policy funnel (#320): only alerts that
+    actually dispatched -- enabled, PvE-filtered, cooldown-elapsed -- reach
+    it, so NPC fire is structurally unreachable from the chord."""
+    triggered = []
+    policy = _policy(stream_trigger=triggered.append)
+    policy.handle(
+        [Event("Alice", "combat", PLAYER), Event("Bob", "combat", PLAYER)], 10.0
+    )
+    assert triggered == [["Alice", "Bob"]]
+
+
+def test_the_stream_trigger_never_sees_other_events():
+    triggered = []
+    policy = _policy(stream_trigger=triggered.append)
+    policy.handle([Event("Alice", "warp_scramble", PLAYER)], 10.0)
+    policy.handle([Event("Alice", "decloak", PLAYER)], 10.1)
+    assert triggered == []
+
+
+def test_the_stream_trigger_never_sees_npc_or_disabled_combat():
+    triggered = []
+    policy = _policy(stream_trigger=triggered.append)
+    policy.handle([Event("Alice", "combat", NPC)], 10.0)  # PvE filter blocks it
+    assert triggered == []
+    disabled = _config()
+    disabled["events"]["combat"]["enabled"] = False
+    policy = _policy(config=disabled, stream_trigger=triggered.append)
+    policy.handle([Event("Alice", "combat", PLAYER)], 10.0)
+    assert triggered == []
