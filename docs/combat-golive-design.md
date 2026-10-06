@@ -1,3 +1,9 @@
+# Implemented on spec/combat-golive
+
+> **Branch state: `spec/combat-golive` @ `0092e48` already contains the full #316 mirror implementation** (harvest + review fixes; see the #316 comments). Everything below remains the binding spec for #317-#321. **All work on this feature stays on the `spec/combat-golive` branch** - `main` does not receive any of it until a real test-build of the packaged app confirms the feature works end to end (human-run, per the 2026-10-05 decision). Do not open PRs into `main` and do not merge anything to `main` from this feature.
+
+---
+
 # Combat-triggered Discord Go Live: automatic stream start on combat
 
 Status: proposed, **revision 3** — revision 1 assumed Discord's stream
