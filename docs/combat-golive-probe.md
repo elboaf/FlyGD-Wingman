@@ -28,9 +28,21 @@ A or B.
 - Two windows to mirror. EVE clients are the real subject; a second-best
   stand-in is any two windows whose titles share a substring (two Notepad
   windows titled `alpha` / `bravo`).
-- From the repo checkout: `python scripts/capture_visibility_probe.py`.
+- The test build of the mirror (issue #315): from the repo checkout,
 
-The probe window is the mirror under test: top-level, captioned, created
+  ```
+  python -m PyInstaller packaging/mirror.spec --noconfirm \
+      --distpath build/mirror-dist --workpath build/mirror-work
+  ```
+
+  The exe is `build/mirror-dist/wingman-mirror/wingman-mirror.exe`. The
+  probe script (`scripts/capture_visibility_probe.py`) remains as the
+  reference implementation, but do **not** register `python.exe`: the
+  dedicated image name is the point of the rev-3 design, and registering
+  an interpreter makes every Python process on the box the "game" — a
+  pin leg could then land on the wrong process and poison the evidence.
+
+The mirror window is the mirror under test: top-level, captioned, created
 at the bottom of the z-order, never activated, never minimized (it swallows
 its own minimize unless you explicitly run step 6). The thumbnail it shows
 is the house DWM wrapper, the exact mechanism the real mirror will use.
@@ -38,10 +50,13 @@ is the house DWM wrapper, the exact mechanism the real mirror will use.
 ## Step 0 — launch and orient
 
 ```
-python scripts/capture_visibility_probe.py
+build\mirror-dist\wingman-mirror\wingman-mirror.exe --src-title "EVE -"
 ```
 
-- The console registers `python.exe`'s path — you need it in step 1.
+Run it from a normal console so the commands are typable (double-clicking
+works too, but you lose the console). `--src-title` defaults to `Notepad`.
+
+- The console prints the exe's own path — you need it in step 1.
 - A 800×600 window appears showing the first matching source
   (default: a window with `Notepad` in the title; override with
   `--src-title "EVE -"` to go straight at EVE clients).
@@ -52,10 +67,10 @@ python scripts/capture_visibility_probe.py
 ## Step 1 — register the game
 
 Discord → User Settings → Registered Games → **Add it** → browse to the
-`python.exe` path the probe printed. Discord should then show the probe
-process as a detected game. If it instead shows it under "no game
-detected", use the "Add it" path anyway — that is the manual registration
-the spec's setup ceremony assumes.
+`wingman-mirror.exe` path the console printed. Discord should then show
+the mirror process as a detected game. If it instead shows it under "no
+game detected", use the "Add it" path anyway — that is the manual
+registration the spec's setup ceremony assumes.
 
 ## Step 2 — start the stream at the mirror
 
