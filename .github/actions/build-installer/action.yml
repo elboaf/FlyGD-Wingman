@@ -307,6 +307,19 @@ runs:
       shell: pwsh
       run: uv run python -m PyInstaller packaging/uploader.spec --noconfirm
 
+    - name: Build the stream mirror executable
+      # The registered game (#312 rev 3) is its own small frozen process,
+      # built by its own spec and collected INTO the app tree at
+      # _internal/bin -- the exact path paths.mirror_exe() resolves. The
+      # distpath aims the COLLECT there because installer.iss ships
+      # dist/Wingman/* recursively; no installer edit. Strictly AFTER the
+      # app build: that build's COLLECT resets dist/Wingman and would
+      # delete the mirror. console=False is load-bearing, not cosmetic --
+      # a console would be a second top-level window in the process whose
+      # whole point is holding exactly one (packaging/mirror.spec header).
+      shell: pwsh
+      run: uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/Wingman/_internal
+
     - name: Verify setup YAML is bundled
       # overview_yaml imports yaml statically; yaml.cyaml imports yaml._yaml
       # statically too. Neither needs a speculative hiddenimport. Check the
@@ -486,6 +499,26 @@ runs:
         }
         $exe = "dist/Wingman/_internal/bin/AutoHotkeyU64.exe"
         if (-not (Test-Path $exe -PathType Leaf)) { throw "AutoHotkey interpreter missing from the bundle" }
+
+    - name: Verify the stream mirror was collected
+      # Same trap as the engine check above, one build later: the mirror is
+      # a second PyInstaller run whose COLLECT lands at
+      # _internal/bin/wingman-mirror.exe -- the path paths.mirror_exe()
+      # resolves and the file the setup ceremony (#321) has the user
+      # register in Discord. PyInstaller exits 0 when a COLLECT silently
+      # fails to land, so a green build with no exe here means the
+      # Streaming card reports a missing mirror and there is nothing to
+      # register. -PathType Leaf: prove a *file* landed, not a directory.
+      shell: pwsh
+      run: |
+        $exe = "dist/Wingman/_internal/bin/wingman-mirror.exe"
+        if (-not (Test-Path $exe -PathType Leaf)) {
+          throw "wingman-mirror.exe missing from the bundle - the mirror COLLECT did not land, and the registered game has no exe"
+        }
+        $runtime = "dist/Wingman/_internal/bin/_internal"
+        if (-not (Test-Path $runtime -PathType Container)) {
+          throw "wingman-mirror.exe runtime tree missing from the bundle - the exe would fail to bootstrap at launch"
+        }
 
     - name: Verify the app icon is bundled
       # Same failure shape as the two checks above: uploader.spec lists the

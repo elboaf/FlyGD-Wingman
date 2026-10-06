@@ -201,7 +201,11 @@ reached through injected seams or lazy `windll` binding):
   (`tests/test_streaming_mirror.py`); `main()` owns only window + pump +
   hook, and the supervisor (#317) owns process lifetime. The mirror never
   sends input to EVE and never touches a client's position, size or
-  z-order.
+  z-order. Packaged as its own frozen build (`packaging/mirror.spec`,
+  windowed — the registered process must hold exactly one top-level
+  window), collected into `dist/Wingman/_internal/bin` by the shared
+  build action strictly after the app build — the path
+  `paths.mirror_exe()` resolves (#318).
 - `eveauth/` — shared EVE SSO: identities, grants, PKCE, JWT validation, the
   loopback listener, DPAPI wrapping. Capability-agnostic; Skills and
   Fittings both authenticate here and neither imports the other. The
