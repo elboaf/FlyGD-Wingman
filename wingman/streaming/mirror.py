@@ -351,11 +351,29 @@ class Mirror:
             )
 
     # -- enumeration ------------------------------------------------------
+    def _is_excluded(self, hwnd):
+        """Windows the picker must never bind or offer: the mirror itself
+        (a thumbnail of itself is undefined), and console windows -- which
+        include the very cmd/terminal running this exe, whose title
+        normally echoes the command line, needle and all (the self-match
+        that shipped first). Real targets are content windows: EVE, apps."""
+        if hwnd == self.mirror_hwnd:
+            return True
+        cls = ctypes.create_unicode_buffer(64)
+        self.libs.user32.GetClassNameW(hwnd, cls, 64)
+        # conhost (cmd), Windows Terminal, ConEmu, mintty -- every console
+        # that could be running this exe with the command line in its title.
+        return bool(
+            cls.value.startswith(
+                ("Console", "CASCADIA_HOSTING", "VirtualConsole", "mintty")
+            )
+        )
+
     def list_targets(self):
         found = []
 
         def on_window(hwnd, _lparam):
-            if not self.libs.user32.IsWindowVisible(hwnd):
+            if not self.libs.user32.IsWindowVisible(hwnd) or self._is_excluded(hwnd):
                 return True
             attr = wintypes.DWORD()
             hr = self.libs.dwmapi.DwmGetWindowAttribute(
@@ -378,7 +396,7 @@ class Mirror:
         needle = self.source_substring.lower()
 
         def on_window(hwnd, _lparam):
-            if not self.libs.user32.IsWindowVisible(hwnd):
+            if not self.libs.user32.IsWindowVisible(hwnd) or self._is_excluded(hwnd):
                 return True
             title = self.window_title(hwnd)
             if needle in title.lower():
@@ -520,6 +538,10 @@ def main(argv=None):
         if src_iconic:
             mirror.say("!! source MINIMIZED: thumbnail is a frozen frame")
 
+    # TIMERPROC is a wndproc-shaped callback: return 0 or ctypes raises
+    # "NoneType cannot be interpreted as an integer" on every tick.
+    return 0
+
     timer_cb = win32.wndproc_type()(on_timer)
     win32._KEEPALIVE.append(timer_cb)
     libs.user32.SetTimer(mirror.mirror_hwnd, WM_TIMER_WATCH, 5000, timer_cb)
@@ -572,6 +594,7 @@ def main(argv=None):
 
     mirror.teardown()
     mirror.say("mirror ended")
+    return 0
 
 
 if __name__ == "__main__":
