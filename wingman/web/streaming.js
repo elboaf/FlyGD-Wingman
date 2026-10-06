@@ -43,9 +43,14 @@
   var capturing = false;
   var chordDisplay = '';
   var quietDraft = null;
+  // The last mirror payload the card rendered: the toggle reads it to
+  // decide which half it is sending, and a refused toggle leaves it
+  // untouched so the row keeps showing what is true.
+  var lastMirror = null;
 
   function renderMirror(payload) {
     if (!payload || !payload.available) {
+      lastMirror = null;
       stateEl.textContent = 'Not available in this installation';
       toggleBtn.hidden = true;
       errorEl.textContent = '';
@@ -56,6 +61,7 @@
     }
     ceremonyEl.hidden = false;
     exeWarningEl.hidden = false;
+    lastMirror = payload;
     // The registration path (#321): resolved by Python -- the installed
     // location is not one a user could guess. Hidden when the resolution
     // failed so the ceremony never points at a line that is not there.
@@ -229,6 +235,38 @@
     chordBtn.textContent = chordDisplay || 'Not set';
   }
 
+  // The mirror toggle is the card's one writer of mirror_on: start
+  // persists the sticky ask, stop clears it. Which half it sends comes
+  // from the last rendered state, not the button label -- same data, but
+  // parsing copy couples the send to a wording change. A refused toggle
+  // writes the error row and leaves the state to the tick; a taken one
+  // re-reads, so the row never shows a state this click invented. The
+  // pending guard collapses double-clicks into one ask -- pywebview runs
+  // each bridge call on its own thread, so a second click would interleave
+  // a stop into the start's round trip.
+  //
+  // This listener was MISSING until the #321 build test: the button
+  // rendered and re-labelled but nothing sent anything, and no lexical
+  // guard can see a listener that was never attached -- which is why the
+  // streaming page runtime exists to click the real module.
+  var mirrorPending = false;
+  toggleBtn.addEventListener('click', function () {
+    if (!visible || mirrorPending || !lastMirror) return;
+    mirrorPending = true;
+    var stopping = lastMirror.state === 'running';
+    WM.send(stopping ? 'stream_mirror_stop' : 'stream_mirror_start').then(
+      function (result) {
+        mirrorPending = false;
+        if (!result) return;
+        if (result.ok === false) {
+          errorEl.textContent = result.error || '';
+          return;
+        }
+        WM.send('stream_mirror_state').then(renderMirror);
+      }
+    );
+  });
+
   chordBtn.addEventListener('click', function () {
     if (!visible || capturing) return;
     capturing = true;
@@ -302,6 +340,18 @@
     // Mirror rows only: the chord row renders on entry and on its own
     // commits, never under a tick that would fight an armed capture.
     if (visible) { renderMirror(payload); }
+    // An availability flip never happens in a live session (the exe
+    // resolution is a launch-time fact), but if a push ever says
+    // unavailable, the Combat auto-start words go with the mirror rows --
+    // instructions for a feature that cannot run. Hiding only: the chord
+    // controls stay entry/commit-rendered, so nothing here can fight a
+    // capture. (#321 field test: entry hid them, a push did not.)
+    if (visible && (!payload || !payload.available)) {
+      groupEl.hidden = true;
+      enableHintEl.hidden = true;
+      chordCeremonyEl.hidden = true;
+      diagnosticEl.hidden = true;
+    }
   });
 
   WM.handle('onStreamCouplingState', function (payload) {
