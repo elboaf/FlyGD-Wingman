@@ -59,8 +59,9 @@ from wingman.preview import thumbnail, win32
 logger = logging.getLogger(__name__)
 
 # --- Constants the preview subsystem never needed -------------------------
-# Self-owned here (win32.py only carries what preview uses); values per the
-# platform SDK.
+# Self-owned here; values per the platform SDK. WM_SYSCOMMAND/SC_MINIMIZE
+# deliberately stay local: tests/test_preview_wiring.py pins those names
+# OUT of preview/win32.py, so they must not be imported from there.
 WM_SYSCOMMAND = 0x0112
 WM_APP_BASE = 0x8000
 SC_MINIMIZE = 0xF020
@@ -68,14 +69,14 @@ HWND_BOTTOM = 1
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
-EVENT_SYSTEM_FOREGROUND = 0x0003
-WINEVENT_OUTOFCONTEXT = 0x0
 DWMWA_CLOAK = 13  # render-but-don't-show (the virtual-desktop mechanism)
 GWL_STYLE = -16
 WS_MINIMIZEBOX = 0x00020000
 
 # Re-exported from the house surface so callers (and tests) read one
 # vocabulary from this module.
+EVENT_SYSTEM_FOREGROUND = win32.EVENT_SYSTEM_FOREGROUND
+WINEVENT_OUTOFCONTEXT = win32.WINEVENT_OUTOFCONTEXT
 WM_MOUSEACTIVATE = win32.WM_MOUSEACTIVATE
 MA_NOACTIVATE = win32.MA_NOACTIVATE
 WM_ERASEBKGND = win32.WM_ERASEBKGND
@@ -98,7 +99,7 @@ CLASS_NAME = "WingmanMirror"
 WINDOW_TITLE = "Wingman mirror"
 
 
-def _declare(libs, fn, restype, argtypes):
+def _declare(fn, restype, argtypes):
     """Idempotent local argtypes/restype declaration (see win32.py's
     docstring: an undeclared call marshals handles as 32-bit ints and
     fails far away from the cause)."""
@@ -110,26 +111,18 @@ def _declare(libs, fn, restype, argtypes):
 def _bind_extras(libs):
     """Declarations this module needs that preview's bind() doesn't
     already carry. Must run before the first call, not at import."""
+    _declare(libs.user32.SetProcessDPIAware, wintypes.BOOL, [])
     _declare(
-        libs,
-        libs.user32.SetProcessDPIAware,
-        wintypes.BOOL,
-        [],
-    )
-    _declare(
-        libs,
         libs.user32.GetWindowLongW,
         ctypes.c_long,
         [wintypes.HWND, ctypes.c_int],
     )
     _declare(
-        libs,
         libs.user32.SetWindowLongW,
         ctypes.c_long,
         [wintypes.HWND, ctypes.c_int, ctypes.c_long],
     )
     _declare(
-        libs,
         libs.dwmapi.DwmSetWindowAttribute,
         ctypes.c_long,  # HRESULT
         [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD],
@@ -177,6 +170,10 @@ class Mirror:
 
     def __init__(self, libs, sources=("EVE - ",), size=MIRROR_SIZE_DEFAULT):
         self.libs = libs
+        # sources exists so a test or future caller can widen admission,
+        # but the default must stay the house prefix: is_engine_window_title
+        # is the single rule for what counts as an EVE client window, and
+        # the mirror must never mirror what the rest of Wingman refuses.
         self.sources = tuple(sources)
         self.size = size
         self.mirror_hwnd = None
@@ -184,16 +181,15 @@ class Mirror:
         self.src_hwnd = None
         self.park_mode = "cloak"  # "cloak" | "visible"; set_cloak keeps honest
         self.cloaked = False
-        self.match_source_shape = True  # field finding: no letterbox bars
         self.hook = None
-        self._keepalive = []
 
     # -- admission ---------------------------------------------------------
     def admitted(self, title):
-        """The house rule, not a substring: exactly the titles the engine
-        and every other EVE list already accept. One rule everywhere, or
-        the mirror would mirror a window the rest of Wingman refuses to
-        call an EVE client."""
+        """The house rule: exactly the titles the engine and every other
+        EVE list already accept (``EVE - `` prefix, no ``=`` -- see
+        bookmarks.is_engine_window_title, which this mirrors deliberately:
+        bookmarks is pure keybind/INI logic and must not gain streaming
+        imports, so the parity test below pins the two together instead)."""
         return bool(title) and title.startswith(self.sources) and "=" not in title
 
     def window_title(self, hwnd):
@@ -203,11 +199,10 @@ class Mirror:
 
     # -- window -------------------------------------------------------------
     def create_mirror(self):
-        style = (
-            win32.WS_POPUP
-            if self.match_source_shape
-            else (win32.WS_CAPTION | win32.WS_SYSMENU)
-        )
+        # Borderless, always: the mirror is resized to the bound source's
+        # outer rect on every bind (field finding, #315: a fixed-size or
+        # captioned mirror letterboxes -- Discord streams the white bars).
+        style = win32.WS_POPUP
         self.mirror_hwnd = self.libs.user32.CreateWindowExW(
             0,
             CLASS_NAME,
@@ -308,8 +303,7 @@ class Mirror:
             return
         self.release_thumbnail()
         self.src_hwnd = int(src_hwnd)
-        if self.match_source_shape:
-            self.match_source_rect()
+        self.match_source_rect()
         self.thumb = thumbnail.Thumbnail.register(
             self.libs, self.mirror_hwnd, self.src_hwnd
         )
@@ -379,9 +373,13 @@ class Mirror:
 
     def install_hook(self):
         """EVENT_SYSTEM_FOREGROUND on this thread (the pump thread the
-        caller owns); the callback only posts -- see MSG_FOREGROUND."""
+        caller owns); the callback only posts -- see MSG_FOREGROUND. The
+        callback object goes into the house ``win32._KEEPALIVE``: every
+        callback handed to Windows lives in that one list (the instance
+        alone must not be the keeper -- the pump's global wndproc
+        references it, but the discipline is one list, not two)."""
         cb = win32.winevent_proc_type()(self._on_foreground)
-        self._keepalive.append(cb)
+        win32._KEEPALIVE.append(cb)
         self.hook = self.libs.user32.SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,

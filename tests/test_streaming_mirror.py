@@ -19,6 +19,7 @@ anything Discord-side. The fakes implement only what Mirror calls; a fake
 missing a method fails loudly instead of silently passing.
 """
 
+from wingman import bookmarks
 from wingman.streaming import mirror
 
 EVE_A = 0x1001
@@ -165,10 +166,6 @@ def _mirror(libs, **kw):
     return m
 
 
-def hwnd_of(m):
-    return m.mirror_hwnd
-
-
 # --- 1. lifecycle ---------------------------------------------------------
 
 
@@ -232,6 +229,28 @@ def test_failed_registration_is_not_a_crash_and_stays_sticky():
 
     assert m.thumb is None
     assert m.src_hwnd == EVE_A
+
+
+def test_admission_stays_pinned_to_the_house_rule():
+    """One admitted-title rule across Wingman: the mirror's predicate must
+    agree with bookmarks.is_engine_window_title on every title that rule
+    answers about -- a drift here mirrors a window the rest of Wingman
+    refuses to call an EVE client. The delegation is by value, not import
+    (bookmarks is pure keybind/INI logic and gains no streaming imports);
+    this test is the pin that keeps the two honest."""
+    samples = [
+        "EVE - Kuan Dai",
+        "EVE - Kuan Dai = extra",
+        "EVE - ",
+        "Notepad",
+        "EVE - Sigma [offline]",
+        "",
+        "eVE - lowercase",
+    ]
+    for title in samples:
+        assert mirror.Mirror(_mirror_libs()).admitted(title) == (
+            bookmarks.is_engine_window_title(title)
+        ), title
 
 
 # --- 2. window contract ----------------------------------------------------
