@@ -89,9 +89,10 @@ the viewer sees — live content, frozen frame, or black:
 |---|----------------------|-------------|
 | 3a | mirror in front, untouched | |
 | 3b | cover the mirror completely with another window | |
-| 3c | `3` (parks the mirror off-screen, bottom z-order) | |
+| 3c | `s` (parks on-desktop bottom-left, behind windows) | |
+| 3d | `3` (off-desktop, known to freeze — demonstration only) | |
 
-- **3a/3b/3c show live content → Tier A.** Thumbnail content survives
+- **3a/3b/3s show live content → Tier A.** Thumbnail content survives
   game capture. Build as specified.
 - **Black in all three, but the mirror is visible on your own monitor →
   candidate Tier B.** Confirm with one extra check: stop the stream,
@@ -111,7 +112,7 @@ had to:
 
 | # | Action | Pin landed on mirror? | Needed re-pick? |
 |---|--------|----------------------|-----------------|
-| 4a | Register first, then launch probe (already done above) | | |
+| 4a | Register first, then launch mirror (already done above) | | |
 | 4b | Quit probe (`q`), restart it, watch the existing stream | | |
 | 4c | Stop stream; launch a *second* probe instance; stream; note which instance Discord pinned | | |
 | 4d | With the stream live, focus other apps for 30 s (never the mirror); does the stream survive focus churn? | | |
@@ -147,7 +148,7 @@ Paste the console log's key lines plus this filled template into #312:
 ```
 Probe result (#312 capture-visibility gate)
 - Tier: A / B / C            (step 3; B requires the window-capture check)
-- States live / covered / off-screen: ... / ... / ...
+- States live / covered / on-desktop park / off-desktop: ... / ... / ... / ...
 - Pin: lands / re-pick needed / wrong window   (step 4a–d)
 - Focus churn survival: yes / no
 - Style sweep: n/a | toolwindow: ... | captionless: ...  (step 5)

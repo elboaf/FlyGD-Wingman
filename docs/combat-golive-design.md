@@ -96,11 +96,14 @@ thumbnail, **the currently focused EVE client**:
   object + status file + orphan recovery, the `HotkeyEngine` pattern);
   the mirror reads its source-client instructions from the same kind
   of status/INI file channel the engine uses, not a new IPC design.
-- **Placement: bottom of the z-order, off-screen.** Created at the
+- **Placement: bottom of the z-order, on the desktop.** Created at the
   bottom (`SetWindowPos` with `HWND_BOTTOM` before first show, or
   created hidden and shown with `SWP_NOACTIVATE | SWP_NOZORDER` after
-  a `HWND_BOTTOM` position), parked off the desktop edge or across the
-  secondary monitor. It must never take focus (the mirror has no
+  a `HWND_BOTTOM` position), parked **on** the desktop -- behind
+  everything, or on a secondary monitor's visible area. Revision 3
+  assumed off-desktop-edge parking kept the window composed; the probe
+  run falsified that (field evidence below), so the design parks
+  on-desktop: covered is proven to stream. It must never take focus (the mirror has no
   interaction; a `WM_MOUSEACTIVATE` returning `MA_NOACTIVATE` plus
   no click-through keeps it from stealing the pilot's focus mid-fight)
   and never minimize (visibility states below). The user's exposure to
@@ -170,24 +173,31 @@ mirror window, per Windows capture behavior):
 - **Covered:** the compositor still composites occluded windows;
   screen-region capture shows the mirror wherever it sits in the z-order.
   Expected to work; the probe confirms for Discord specifically.
-- **Back / off-screen (on another monitor, or parked off the desktop
-  edge):** the mirror window is composed and its thumbnail is live; WGC
-  maintains per-window surfaces for occluded top-level windows. OBS
-  window capture of background windows is established practice; the
-  probe confirms Discord's game capture path agrees. No user-visible
-  screen area is required.
+- **Covered (on-desktop, behind other windows):** the compositor keeps
+  compositing occluded top-level windows; the probe run confirmed
+  Discord's capture reads them. This is the shipping park.
+- **Off-desktop-edge (beyond the virtual screen):** **falsified by the
+  probe run** -- the composed surface stops updating the moment the
+  window leaves the desktop, and the stream froze on the last frame.
+  The design no longer parks there; the probe build keeps the `3`
+  command only as a reproducible demonstration.
+- **Secondary monitor (visible area):** expected to behave like
+  covered -- composed, streamed; on-desktop parking with the advantage
+  that nothing sits under the pilot's windows. Confirm on the
+  two-monitor box before relying on it.
 - **Minimized:** fails by design — Windows stops compositing a
   minimized window's surface (documented OBS behavior across capture
   methods). The mirror must never minimize. Enforce in the mirror
   window: strip `WS_MINIMIZEBOX` and ignore `SC_MINIMIZE` in
   `WM_SYSCOMMAND`, mirroring how the preview host already pins its own
-  window states. A "minimize to nothing" desire is satisfied by
-  off-screen parking instead.
+  window states. A "minimize to nothing" desire is satisfied by covered
+  on-desktop parking instead.
 
 So the answer to "must the user see it": **on one monitor, yes, it will
-occupy screen area that can be covered but not closed; with two or more
-monitors, the mirror parks off-screen or on the secondary and the user
-never looks at it.** Never minimized.
+occupy screen area that can be covered but not closed (never minimized,
+never off the desktop edge).** With two or more monitors, the mirror
+parks on the secondary's visible area and the user never looks at it.
+Never minimized.
 
 Field evidence already narrows this probe. Tested against real
 `eve.exe` clients: Discord streams the **covered** window (its capture
