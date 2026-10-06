@@ -309,16 +309,27 @@ runs:
 
     - name: Build the stream mirror executable
       # The registered game (#312 rev 3) is its own small frozen process,
-      # built by its own spec and collected INTO the app tree at
-      # _internal/bin -- the exact path paths.mirror_exe() resolves. The
-      # distpath aims the COLLECT there because installer.iss ships
-      # dist/Wingman/* recursively; no installer edit. Strictly AFTER the
-      # app build: that build's COLLECT resets dist/Wingman and would
-      # delete the mirror. console=False is load-bearing, not cosmetic --
-      # a console would be a second top-level window in the process whose
-      # whole point is holding exactly one (packaging/mirror.spec header).
+      # built by its own spec and copied INTO the app tree at
+      # _internal/bin -- the exact path paths.mirror_exe() resolves;
+      # installer.iss ships dist/Wingman/* recursively, so no installer
+      # edit. Built into a SCRATCH distpath and copied in additively:
+      # PyInstaller --noconfirm REMOVES the COLLECT's output directory
+      # before writing it, and the spec's COLLECT is named "bin" -- so a
+      # distpath of dist/Wingman/_internal deleted the app's own
+      # _internal/bin (ffmpeg, ffprobe, the codec, AutoHotkey) on its way
+      # in; run 37530006761 failed on exactly that. Still strictly AFTER
+      # the app build: that build's COLLECT resets dist/Wingman and would
+      # delete the mirror, so the copy must follow it. The explicit exit
+      # check is the house rule for native commands; Copy-Item is a
+      # cmdlet and throws under the runner's ErrorActionPreference.
+      # console=False is load-bearing, not cosmetic -- a console would be
+      # a second top-level window in the process whose whole point is
+      # holding exactly one (packaging/mirror.spec header).
       shell: pwsh
-      run: uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/Wingman/_internal
+      run: |
+        uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/mirror-build
+        if ($LASTEXITCODE -ne 0) { throw "the mirror build failed" }
+        Copy-Item -Recurse -Force dist/mirror-build/bin/* dist/Wingman/_internal/bin/
 
     - name: Verify setup YAML is bundled
       # overview_yaml imports yaml statically; yaml.cyaml imports yaml._yaml

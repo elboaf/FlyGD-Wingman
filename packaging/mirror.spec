@@ -17,12 +17,16 @@
 # interactive probe lives on unworn as scripts/capture_visibility_probe.py.
 # The build command in docs/combat-golive-probe.md produces this exe.)
 #
-# Built by the shared build action AFTER the app build, with
-# --distpath dist/Wingman/_internal, aiming the COLLECT at
+# Built by the shared build action AFTER the app build into a scratch
+# distpath (dist/mirror-build), then copied ADDITIVELY into
 # dist/Wingman/_internal/bin. After, because the app build's own COLLECT
-# resets dist/Wingman and would take the mirror with it. installer.iss
-# ships dist/Wingman/* recursively, so the exe needs no installer-script
-# edit.
+# resets dist/Wingman and would take the mirror with it; scratch, because
+# PyInstaller --noconfirm removes its output directory before collecting,
+# and this spec's COLLECT writes name="bin" -- aimed at the app tree it
+# would delete the app's own _internal/bin on its way in (ffmpeg, the
+# codec, AutoHotkey; run 37530006761 died on "ffmpeg.exe missing from the
+# bundle"). installer.iss ships dist/Wingman/* recursively, so the exe
+# needs no installer-script edit.
 #
 # One-folder like the main app, for the same reasons uploader.spec records:
 # one-file unpacks to temp on every launch and trips antivirus heuristics

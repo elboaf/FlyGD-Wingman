@@ -10,9 +10,12 @@ prove because the build only happens in CI:
 - the exe is windowed -- the registered process must hold exactly ONE
   top-level window for Discord's pin to land on by construction, and a
   console would be a second;
-- the COLLECT is named bin and the shared build action aims it at
-  dist/Wingman/_internal strictly AFTER the app build, whose COLLECT
-  resets dist/Wingman and would delete the mirror;
+- the COLLECT is named bin, built into a scratch distpath strictly AFTER
+  the app build (whose COLLECT resets dist/Wingman and would delete the
+  mirror) and copied ADDITIVELY into dist/Wingman/_internal/bin --
+  PyInstaller --noconfirm removes its output directory before collecting,
+  so aiming the COLLECT at the app tree would delete the app's own bin
+  (ffmpeg, the codec, AutoHotkey; run 37530006761 died on it);
 - the post-build assertion checks the real path, next to the engine's;
 - installer.iss still ships dist/Wingman recursively -- the premise that
   makes "no installer-script edit" true.
@@ -61,15 +64,28 @@ def test_spec_builds_the_windowed_mirror_exe():
 
 def test_action_builds_the_mirror_after_the_app_and_verifies_it():
     action = ACTION.read_text(encoding="utf-8")
-    # The exact command, distpath included: a COLLECT aimed anywhere but
-    # dist/Wingman/_internal lands the exe where paths.mirror_exe() and
-    # the installer's recursive copy both miss it.
-    build = "uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/Wingman/_internal"
+    # A scratch distpath, then an ADDITIVE copy: PyInstaller --noconfirm
+    # removes the COLLECT's output directory before writing it, and the
+    # spec's COLLECT is named "bin" -- a distpath of
+    # dist/Wingman/_internal would delete the app's own _internal/bin
+    # (ffmpeg, ffprobe, the codec, AutoHotkey) on its way in (run
+    # 37530006761: "ffmpeg.exe missing from the bundle").
+    build = "uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/mirror-build"
     assert build in action
     assert action.index("packaging/uploader.spec --noconfirm") < action.index(
         "packaging/mirror.spec --noconfirm"
     ), (
         "the mirror build must come after the app build, whose COLLECT resets dist/Wingman"
+    )
+    copy = (
+        "Copy-Item -Recurse -Force dist/mirror-build/bin/* dist/Wingman/_internal/bin/"
+    )
+    assert copy in action, (
+        "the mirror built into the scratch distpath must be copied into "
+        "the app tree, or paths.mirror_exe() and the installer both miss it"
+    )
+    assert action.index("packaging/mirror.spec --noconfirm") < action.index(copy), (
+        "the copy must follow the mirror build it publishes"
     )
     assert "dist/Wingman/_internal/bin/wingman-mirror.exe" in action, (
         "no post-build assertion for the mirror exe -- PyInstaller exits 0 "
