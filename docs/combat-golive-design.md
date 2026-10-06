@@ -285,6 +285,13 @@ client's position, size, or z-order.
    verbatim to a background key-presser. Trigger is the gated combat
    alert only (`AlertPolicy.handle` funnel — PvE filter inherited); NPC
    fire never reaches it.
+   *(Decided 2026-10-06: the Discord-foreground gate is REMOVED — the
+   chord is the user's own Discord bind, so firing with Discord focused
+   equals the user pressing their own keybind. The gate's read also
+   never worked: it looked `QueryFullProcessImageNameW` up on user32
+   (kernel32 owns it) and called `GetForegroundWindow` unpinned, which
+   truncates the 64-bit HWND — 30/30 live reads returned None on the
+   field box. The state row and the funnel above are unchanged.)*
 
 ## Settings surface
 

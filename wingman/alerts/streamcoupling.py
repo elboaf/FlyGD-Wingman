@@ -27,11 +27,19 @@ press unreachable from Wingman:
   for Discord to pin, and a chord pressed anyway would toggle off a
   stream the user started by hand. The spec's failure-modes table calls
   the feature inert without a mirror window; this is that line.
-- **Confirmation gate.** No chord while Discord itself is foreground --
-  the user may be typing there, and the chord must not land in their
-  chat. The read fails closed: a foreground that cannot be proven is
-  treated as Discord. No EVE client focused is NOT a refusal (decided,
-  2026-10-05): fire anyway -- the mirror shows the last client.
+- **No foreground gate (decided, 2026-10-06).** The original
+  confirmation gate -- no chord while Discord is foreground, failing
+  closed on an unprovable read -- is gone at the user's call: the
+  chord IS their Discord bind, so pressing it with Discord focused is
+  the user pressing their own keybind. The gate never fired a refusal
+  that helped, either: its read was doubly broken (it looked
+  QueryFullProcessImageNameW up on user32 when it lives in kernel32 --
+  the AttributeError was swallowed into None -- and it called
+  GetForegroundWindow unpinned, truncating the 64-bit HWND to a
+  32-bit int, the mangling evewindows._enumerate documents), so live
+  proof 2026-10-06 was 30/30 reads None and every fire refused as "an
+  unprovable window". Any future foreground read re-pins every
+  signature and imports from the right DLL.
 
 The send is an injected seam executed on this controller's own worker
 thread -- never the telemetry dispatcher's, never the policy's. The
@@ -218,48 +226,6 @@ def send_keystrokes(plan: ChordPlan) -> None:
         )
 
 
-def foreground_process_name():
-    """Lowercase exe basename of the foreground window, or None when it
-    cannot be proven. The caller fails closed on None: an unreadable
-    foreground is treated as Discord (see the confirmation gate)."""
-    import ctypes
-    from ctypes import wintypes
-
-    try:
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-    except (AttributeError, OSError, ImportError):
-        return None
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    try:
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            return None
-        pid = wintypes.DWORD(0)
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if not pid.value:
-            return None
-        handle = kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
-        )
-        if not handle:
-            return None
-        try:
-            size = wintypes.DWORD(1024)
-            buf = ctypes.create_unicode_buffer(size.value)
-            if not user32.QueryFullProcessImageNameW(
-                handle, 0, buf, ctypes.byref(size)
-            ):
-                return None
-            return buf.value.rsplit("\\", 1)[-1].lower()
-        finally:
-            kernel32.CloseHandle(handle)
-    except Exception:
-        # The gate fails closed on any read failure.
-        logger.debug("Could not read the foreground process", exc_info=True)
-        return None
-
-
 @dataclass(frozen=True)
 class StreamCouplingPorts:
     """Injected seams. ``coupling`` re-reads the live committed settings
@@ -268,7 +234,6 @@ class StreamCouplingPorts:
 
     coupling: Callable[[], dict]
     mirror_running: Callable[[], bool]
-    foreground_process: Callable[[], str | None]
     char_vk: Callable[[str], tuple[int, int] | None] | None
     send: Callable[[ChordPlan], None]
     publish_state: Callable[[dict], None]
@@ -417,9 +382,9 @@ class StreamCouplingController:
             )
 
     def _try_fire(self, chord: str, characters: tuple[str, ...]):
-        """Every gate passed the consent check; run the mirror, spelling
-        and confirmation gates. Returns (character, wall time) when the
-        chord went out, None when a gate refused."""
+        """Every gate passed the consent check; run the mirror and
+        spelling gates. Returns (character, wall time) when the chord
+        went out, None when a gate refused."""
         if not self._ports.mirror_running():
             # The spec's failure-modes line: the feature stays inert
             # without a mirror window to pin -- and a chord pressed with
@@ -430,15 +395,6 @@ class StreamCouplingController:
         plan = spell_chord(chord, char_vk=self._ports.char_vk)
         if plan is None:
             logger.info("The recorded stream chord cannot be spelled for SendInput")
-            return None
-        foreground = self._safe_foreground()
-        if foreground is None or "discord" in foreground.lower():
-            # Fail closed: an unreadable foreground might be Discord, and
-            # the chord must not land in the user's chat.
-            logger.info(
-                "Combat auto-start held: %s is foreground",
-                foreground or "an unprovable window",
-            )
             return None
         try:
             self._ports.send(plan)
@@ -469,14 +425,6 @@ class StreamCouplingController:
             "chord": chord if isinstance(chord, str) else "",
             "quiet_s": max(self._QUIET_MIN, min(self._QUIET_MAX, quiet)),
         }
-
-    def _safe_foreground(self):
-        try:
-            return self._ports.foreground_process()
-        except Exception:
-            # The confirmation gate fails closed.
-            logger.debug("Foreground read failed", exc_info=True)
-            return None
 
     def _chord_sendable(self, chord: str) -> bool:
         if not chord:

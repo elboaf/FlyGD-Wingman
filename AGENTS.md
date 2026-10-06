@@ -191,9 +191,11 @@ reached through injected seams or lazy `windll` binding):
   dispatcher never waits), and its own worker thread decides — every gated
   combat alert refreshes its character's episode latch, the chord fires
   only when NO latch is active (quiet period, read live, 60–900 default
-  300) and the mirror is actually running, Discord-foreground refuses
-  (an unprovable foreground counts as Discord — fail closed), no EVE
-  focus never refuses. The send is an injected seam spelling the stored
+  300) and the mirror is actually running. No foreground gate (decided
+  2026-10-06): the chord is the user's own Discord bind, so it fires
+  wherever focus is — its original Discord-foreground check never
+  worked (wrong DLL plus the unpinned-HWND truncation) and was removed
+  rather than repaired. The send is an injected seam spelling the stored
   chord through `spell_chord` (produced characters resolve through
   `keylayout.char_vk`, position tokens through `preview.gestures.vk_for`
   — one VK table, not two). It imports nothing from `ui`; push literals

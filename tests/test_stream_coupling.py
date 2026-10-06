@@ -41,14 +41,12 @@ class Harness:
             dict(coupling) if coupling is not None else {"chord": "^!d", "quiet_s": 300}
         )
         self.mirror_running = True
-        self.foreground = "eve.exe"
         self.sent = []
         self.pushes = []
         self.now = 1000.0
         kwargs = dict(
             coupling=lambda: self.coupling,
             mirror_running=lambda: self.mirror_running,
-            foreground_process=lambda: self.foreground,
             char_vk=None,
             send=self._send,
             publish_state=lambda payload: self.pushes.append(
@@ -185,30 +183,6 @@ def test_ongoing_combat_extends_the_hold():
     h.now += 300 + 1
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 2
-
-
-def test_discord_foreground_refusal():
-    h = Harness()
-    h.foreground = "Discord.exe"
-    h.observe(["Kuan Dai"])
-    assert h.sent == []
-    # The refusal does not consume the episode silently: the combat
-    # alert still started the latch, and the row says held.
-    assert h.state()["state"] == "held"
-
-
-def test_an_unprovable_foreground_fails_closed():
-    h = Harness()
-    h.foreground = None
-    h.observe(["Kuan Dai"])
-    assert h.sent == []
-
-
-def test_fire_anyway_with_no_eve_client_focused():
-    h = Harness()
-    h.foreground = "chrome.exe"
-    h.observe(["Kuan Dai"])
-    assert len(h.sent) == 1
 
 
 def test_no_mirror_stands_by_instead_of_firing():

@@ -740,7 +740,6 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
     from .alerts.streamcoupling import (
         StreamCouplingController,
         StreamCouplingPorts,
-        foreground_process_name,
         send_keystrokes,
     )
     from .keylayout import char_vk as layout_char_vk
@@ -760,7 +759,6 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
                 (committed.get("alerts") or {}).get("stream_coupling") or {}
             ),
             mirror_running=mirror_running,
-            foreground_process=foreground_process_name,
             char_vk=layout_char_vk,
             send=send_keystrokes,
             publish_state=lambda payload: api_box["api"]._push_stream_coupling_state(
