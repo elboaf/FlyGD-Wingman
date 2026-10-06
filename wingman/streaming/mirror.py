@@ -174,6 +174,7 @@ class Mirror:
         self.cloaked = False
         self.toolwindow = False
         self.caption = True
+        self.match_source_shape = True  # probe default; the product wants this
         self.hook = None
         self.last_fg_hwnd = None
         self.last_fg_title = "?"
@@ -182,6 +183,8 @@ class Mirror:
     # -- window ----------------------------------------------------------
     def create_mirror(self):
         style = win32.WS_CAPTION | win32.WS_SYSMENU
+        if self.match_source_shape:
+            style = win32.WS_POPUP
         ex_style = win32.WS_EX_TOOLWINDOW if self.toolwindow else 0
         self.mirror_hwnd = self.libs.user32.CreateWindowExW(
             ex_style,
@@ -279,6 +282,8 @@ class Mirror:
             self.thumb.close()
             self.thumb = None
         self.src_hwnd = int(src_hwnd)
+        if self.match_source_shape:
+            self.match_source_rect()
         self.thumb = thumbnail.Thumbnail.register(
             self.libs, self.mirror_hwnd, self.src_hwnd
         )
@@ -287,6 +292,30 @@ class Mirror:
             return
         self.thumb.update(self.client_rect())
         self.say(f"thumbnail live: {self.window_title(self.src_hwnd)!r} -> mirror")
+
+    def match_source_rect(self):
+        """Size and place the mirror exactly over the source window's outer
+        rect (field finding: a fixed-size mirror letterboxes -- Discord
+        streams the white bars). Borderless + same rect + borderless
+        thumbnail dest = the stream sees the game, full frame."""
+        if not (self.mirror_hwnd and self.src_hwnd):
+            return
+        src = wintypes.RECT()
+        if not self.libs.user32.GetWindowRect(
+            wintypes.HWND(self.src_hwnd), ctypes.byref(src)
+        ):
+            return
+        w = max(1, src.right - src.left)
+        h = max(1, src.bottom - src.top)
+        self.libs.user32.SetWindowPos(
+            self.mirror_hwnd,
+            wintypes.HWND(HWND_BOTTOM),
+            src.left,
+            src.top,
+            w,
+            h,
+            SWP_NOACTIVATE,
+        )
 
     def client_rect(self):
         """Destination rect for the thumbnail: the mirror's client area
@@ -432,7 +461,7 @@ class Mirror:
 
     def refresh_caption(self):
         label = PHASE_LABELS.get(self.phase, "?")
-        if self.mirror_hwnd:
+        if self.mirror_hwnd and not self.match_source_shape:
             self.libs.user32.SetWindowTextW(
                 self.mirror_hwnd, f"{WINDOW_TITLE} [{label}]"
             )
@@ -557,6 +586,10 @@ def banner(exe_path):
     )
     print("  3 = park off-desktop (evidence: surface freezes)", flush=True)
     print("  k = cloak (invisible-but-composited; stream test)", flush=True)
+    print(
+        "  (borderless: the mirror resizes to the bound game window)",
+        flush=True,
+    )
     print("  5 = minimize-confirmation test (watch Discord die)", flush=True)
     print("  t = toggle WS_EX_TOOLWINDOW   c = toggle caption", flush=True)
     print("  r = force rebind to focused target   l = list windows", flush=True)
