@@ -821,7 +821,15 @@ def validated_alerts(raw) -> dict:
         chord = raw_coupling.get("chord")
         # A non-string chord falls back to the empty default: the field is
         # consent, and consent cannot be invented by coercion.
-        if isinstance(chord, str):
+        #
+        # A string that does not parse as storable AHK notation falls back
+        # too -- ALONE (quiet_s and mirror_on survive the same rebuild):
+        # the trigger (#320) spells the SendInput out of this notation, so
+        # nothing anywhere may fire on a chord it cannot spell. The empty
+        # string stays: it IS the explicit off (#319), not a malformed on.
+        if isinstance(chord, str) and (
+            not chord or not bookmarks.parse_ahk(chord)["error"]
+        ):
             coupling["chord"] = chord
         quiet = raw_coupling.get("quiet_s")
         if isinstance(quiet, int) and not isinstance(quiet, bool):

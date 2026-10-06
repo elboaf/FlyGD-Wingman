@@ -57,6 +57,20 @@ def test_a_malformed_section_falls_back_whole():
     assert coupling == {"chord": "", "quiet_s": 300, "mirror_on": False}
 
 
+def test_a_malformed_chord_falls_back_alone():
+    """A string the notation cannot spell is not a chord (#319): it falls
+    back to the empty default ALONE -- quiet_s and mirror_on survive the
+    same rebuild -- because the trigger (#320) spells its SendInput out of
+    this notation and nothing anywhere may fire on a chord it cannot
+    spell. Modifier-only notation names no key, so it is malformed too."""
+    coupling = sc({"chord": "nonsense", "quiet_s": 120, "mirror_on": True})
+    assert coupling["chord"] == ""
+    assert coupling["quiet_s"] == 120
+    assert coupling["mirror_on"] is True
+    assert sc({"chord": "^"})["chord"] == ""
+    assert sc({"chord": "   "})["chord"] == ""
+
+
 def test_validating_alerts_never_drops_the_coupling_section():
     """The same trap validated_alerts' own comment records: a writer that
     rebuilds the section from defaults on every normalize silently reverts

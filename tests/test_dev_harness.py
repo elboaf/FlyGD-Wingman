@@ -626,7 +626,6 @@ def test_every_bridge_method_the_page_calls_has_a_double():
     """
     known_gaps = {
         "bookmarks.js: alert_bookmarks",
-        "bookmarks.js: capture_bind",
         "bookmarks.js: parse_bind",
         "bookmarks.js: reset_binds",
         "bookmarks.js: save_bookmarks",

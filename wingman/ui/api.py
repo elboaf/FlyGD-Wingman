@@ -7262,6 +7262,24 @@ class Api:
 
     # ---- Stream mirror (#317) --------------------------------------------
 
+    def _chord_fields(self, coupling) -> dict:
+        """The consent fields the card shows, derived Python-side so the
+        page holds no notation table of its own (the bookmarks rule).
+
+        A stored chord the notation cannot spell displays as not set --
+        the validator (#319) already drops such values on load, so this
+        only covers a chord written by an older build between load and
+        now, and the honest rendering of an unspellable chord is the same
+        as no chord: nothing may fire on it.
+        """
+        chord = coupling.get("chord") or ""
+        display = ""
+        if chord:
+            parsed = bookmarks.parse_ahk(chord)
+            if not parsed["error"]:
+                display = parsed["display"]
+        return {"chord": chord, "chord_display": display}
+
     def _mirror_state_payload(self):
         """The one state shape both the card read and the push carry."""
         supervisor = self._state.mirror_supervisor
@@ -7277,6 +7295,7 @@ class Api:
                 "state": "unavailable",
                 "error": None,
                 "mirror_on": False,
+                **self._chord_fields(coupling),
             }
         status = supervisor.status(enabled=bool(coupling.get("mirror_on")))
         return {
@@ -7285,6 +7304,7 @@ class Api:
             "state": status.state,
             "error": status.last_error,
             "mirror_on": bool(coupling.get("mirror_on")),
+            **self._chord_fields(coupling),
         }
 
     def ensure_mirror_if_enabled(self) -> None:
@@ -7349,15 +7369,76 @@ class Api:
         self._set_stream_coupling(mirror_on=False)
         return {"ok": True, "running": False, "error": None}
 
+    def stream_chord_set(self, chord) -> dict:
+        """Persist the recorded Discord Toggle-Screen-Share chord (#319) --
+        or, with an empty string, clear it.
+
+        PRESENCE of the chord is the consent gate: no separate on/off
+        checkbox, the empty field is the feature's off switch (the
+        Wanderer prime token's rule), so clearing is an ordinary write of
+        the default, not a special state. A non-empty chord must parse as
+        storable AHK notation -- the same parser the settings validator
+        applies on load -- because the trigger (#320) spells its
+        SendInput out of exactly this notation. A non-string argument
+        writes nothing: only an explicit empty string may clear consent,
+        and consent must never be invented OR erased by a type mismatch.
+
+        Resolution is NOT this method's job: the page resolves the
+        keydown through ``capture_bind`` first, the one ADR 0002 seam --
+        both capture consumers cannot disagree about what a key produces.
+        """
+        if not isinstance(chord, str):
+            return {
+                "ok": False,
+                "error": "That is not a keybind AutoHotkey can register.",
+                **self._chord_fields(
+                    self._state.settings.get("preview", {})
+                    .get("alerts", {})
+                    .get("stream_coupling", {})
+                ),
+            }
+        raw = chord.strip()
+        if raw:
+            parsed = bookmarks.parse_ahk(raw)
+            if parsed["error"] or not parsed["ahk"]:
+                return {
+                    "ok": False,
+                    "error": "That is not a keybind AutoHotkey can register.",
+                    **self._chord_fields(
+                        self._state.settings.get("preview", {})
+                        .get("alerts", {})
+                        .get("stream_coupling", {})
+                    ),
+                }
+            stored = parsed["ahk"]
+        else:
+            stored = ""
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            # setdefault all the way down: production settings always carry
+            # the defaults (load() projects them), but a bridge method must
+            # not KeyError on a section a minimal dict has not built yet.
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["chord"] = stored
+        payload = self._chord_fields(
+            self._state.settings["preview"]["alerts"]["stream_coupling"]
+        )
+        return {"ok": True, "error": None, **payload}
+
     def _set_stream_coupling(self, *, mirror_on) -> None:
         """The one writer of mirror_on, through the house settings.update
         (serialized read-modify-write; a failed save restores memory)."""
         from wingman import settings as settings_mod
 
         with settings_mod.update(self._state.settings) as document:
-            document.setdefault("preview", {}).setdefault("alerts", {})[
-                "stream_coupling"
-            ]["mirror_on"] = mirror_on
+            # setdefault all the way down -- same reason stream_chord_set
+            # does: a minimal settings dict (tests, a caller that skipped
+            # load) must not KeyError the writer.
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["mirror_on"] = mirror_on
 
     # ---- Where a preview opens ------------------------------------------
 

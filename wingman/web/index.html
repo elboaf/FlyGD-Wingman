@@ -1827,6 +1827,24 @@
         </div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="mirror-error" role="alert"></span></div>
+        <div class="bind-group">
+          <span class="bind-group-name">Combat auto-start</span>
+        </div>
+        <p class="hint">
+          When a gated combat alert fires, Wingman presses your Discord Toggle
+          Screen Share keybind once &mdash; the stream comes up showing whoever
+          is flying. Recording that keybind here is what enables combat
+          auto-start; clearing it turns the feature off.
+        </p>
+        <div class="row">
+          <span class="lab" id="chord-label">Screen share keybind</span>
+          <button class="bindbtn" id="chord-capture">Not set</button>
+          <button class="linkbtn" id="chord-clear">Clear</button>
+        </div>
+        <p class="hint" id="chord-collision" hidden>
+          This chord also fires in EVE while EVE is focused.
+        </p>
+        <p class="hint" id="chord-msg" hidden></p>
       </section>
     </div>
     <div class="settings" id="section-general">

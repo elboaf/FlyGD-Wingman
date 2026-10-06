@@ -798,12 +798,37 @@
 
   // stream_mirror_state is a read (see streaming.js). The dev double
   // shows the card's honest not-running row so the section can be
-  // eyeballed under ?dev=1 without launching Python.
+  // eyeballed under ?dev=1 without launching Python. The chord starts
+  // recorded so the Combat auto-start section renders its filled state;
+  // stream_chord_set mutates it, so Record/Clear travel like the real
+  // bridge.
+  var devChord = '^!d';
+  var devChordDisplay = function () {
+    // Crude, on purpose: the real derivation is bookmarks.parse_ahk on
+    // the Python side, so the page holds no notation table. Enough to
+    // eyeball Record/Clear here.
+    var symbols = {'^': 'Ctrl', '!': 'Alt', '+': 'Shift', '#': 'Win'};
+    var parts = [];
+    var i = 0;
+    while (symbols[devChord.charAt(i)]) { parts.push(symbols[devChord.charAt(i)]); i++; }
+    var base = devChord.slice(i);
+    if (!base) { return ''; }
+    parts.push(base.length === 1 ? base.toUpperCase() : base);
+    return parts.join('+');
+  };
   api.stream_mirror_state = function () {
     console.log('DEV api.stream_mirror_state()');
     return Promise.resolve({
       available: true, running: false, state: 'stopped',
-      error: null, mirror_on: false
+      error: null, mirror_on: false,
+      chord: devChord, chord_display: devChordDisplay()
+    });
+  };
+  api.stream_chord_set = function (chord) {
+    console.log('DEV api.stream_chord_set(', chord, ')');
+    devChord = (typeof chord === 'string') ? chord : '';
+    return Promise.resolve({
+      ok: true, error: null, chord: devChord, chord_display: devChordDisplay()
     });
   };
   api.stream_mirror_start = function () {
@@ -5174,6 +5199,27 @@
       short: { FinETag: 'e (end of life)', FinSlash: '/ (half mass)',
                FinS: 'f (frig hole)', FinC: 'c (critical)' } }
   ];
+
+  // The capture seam both bookmarks.js and streaming.js record through
+  // (ADR 0002's one resolver). Fabricates a plausible chord so an armed
+  // capture's keydown travels the whole flow under ?dev=1 -- resolve,
+  // store, render -- instead of dying at the bridge; clearly fake, and
+  // the position warning (warn) has a dedicated streaming.js sentence
+  // worth seeing, so one double carries it.
+  var devCaptureToggle = false;
+  api.capture_bind = function (parts) {
+    console.log('DEV api.capture_bind(', parts, ')');
+    devCaptureToggle = !devCaptureToggle;
+    if (devCaptureToggle) {
+      return Promise.resolve({
+        ahk: '^!p', display: 'Ctrl+Alt+P', error: null, warn: null
+      });
+    }
+    return Promise.resolve({
+      ahk: '^!p', display: 'Ctrl+Alt+P', error: null,
+      warn: 'no-layout'
+    });
+  };
 
   api.get_bookmarks = function () {
     console.log('DEV api.get_bookmarks()');

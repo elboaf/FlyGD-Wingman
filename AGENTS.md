@@ -295,7 +295,7 @@ strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
 `index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `wanderer`, `companions`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
-`firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
+`firstrun`, `streaming`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
 its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
@@ -310,7 +310,14 @@ Enter in the field, or the Test connection click, which carries a pasted
 Bookmark API token draft after the connection write settles. The prime token
 is optional; while blank, Set Root primes nothing and staging stays idle.
 `WM.route` switches destinations, `WM.section` switches
-Settings groups; both have enter/leave contracts. Uploading and Previews also have
+Settings groups; both have enter/leave contracts.
+`streaming.js` owns the Discord streaming card: the mirror row is
+tick-rendered while visible, but the consent chord row renders only on
+entry and its own commits — a poll tick must never fight an armed
+capture. Chord capture is page-level (the Bookmarks pattern) through the
+one ADR 0002 seam; if a real Discord swallows or double-fires the
+keydown, the fallback is the previews' native-armed capture path.
+Uploading and Previews also have
 static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`
 without section re-entry or reads; `WM.openSettingsSection(section, tab)` supports
 explicit subpage links. Hidden panels retain drafts and scroll, but tab changes

@@ -80,7 +80,9 @@ def test_state_read_reports_stopped_with_the_supervisor_error(tmp_path):
 
 def test_state_read_without_a_supervisor_is_unavailable_not_fatal(tmp_path):
     """Off-Windows (or pre-construction): the card must render its
-    unavailable row, not throw off the bridge thread."""
+    unavailable row, not throw off the bridge thread. The consent fields
+    ride the same payload either way (#319) -- settings state, not
+    process state."""
     api = make_api(tmp_path)
     assert api._state.mirror_supervisor is None
     state = api.stream_mirror_state()
@@ -90,6 +92,8 @@ def test_state_read_without_a_supervisor_is_unavailable_not_fatal(tmp_path):
         "state": "unavailable",
         "error": None,
         "mirror_on": False,
+        "chord": "",
+        "chord_display": "",
     }
 
 
