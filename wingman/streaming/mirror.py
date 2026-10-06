@@ -136,21 +136,31 @@ def _bind_extras(libs):
     )
 
 
-class WNDCLASSW(ctypes.Structure):
-    """Local window-class struct (house pattern: each module defines it)."""
+def _window_class():
+    """The window-class struct, built lazily: its _fields_ evaluates
+    ``win32.wndproc_type()``, and WINFUNCTYPE does not exist off Windows
+    (see win32.py's docstring). A module-scope definition would make the
+    import -- and with it every fake-lib unit test -- Linux-dead. Same
+    shape as preview/host.py, which defines its class inside bind()."""
 
-    _fields_ = [
-        ("style", wintypes.UINT),
-        ("lpfnWndProc", win32.wndproc_type()),
-        ("cbClsExtra", ctypes.c_int),
-        ("cbWndExtra", ctypes.c_int),
-        ("hInstance", wintypes.HINSTANCE),
-        ("hIcon", wintypes.HICON),
-        ("hCursor", wintypes.HANDLE),
-        ("hbrBackground", wintypes.HBRUSH),
-        ("lpszMenuName", wintypes.LPCWSTR),
-        ("lpszClassName", wintypes.LPCWSTR),
-    ]
+    class WNDCLASSW(ctypes.Structure):
+        """Local window-class struct (house pattern: each module defines
+        it, lazily for the reason above)."""
+
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", win32.wndproc_type()),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HANDLE),
+            ("hbrBackground", wintypes.HBRUSH),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    return WNDCLASSW
 
 
 class GeoRect(namedtuple("GeoRect", "x y right bottom")):
@@ -440,7 +450,7 @@ def main(argv=None):
 
     proc = win32.wndproc_type()(mirror.handle_message)
     win32._KEEPALIVE.append(proc)
-    cls = WNDCLASSW()
+    cls = _window_class()()
     cls.lpfnWndProc = proc
     cls.hInstance = libs.kernel32.GetModuleHandleW(None)
     cls.lpszClassName = CLASS_NAME
