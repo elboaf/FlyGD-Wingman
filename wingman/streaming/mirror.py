@@ -59,10 +59,13 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 EVENT_SYSTEM_FOREGROUND = 0x0003
 WINEVENT_OUTOFCONTEXT = 0x0
+DWMWA_CLOAK = 13  # render-but-don't-show (the virtual-desktop mechanism)
 
 # Probe-local commands, posted from the input thread into the pump thread.
 CMD_ARM_FOLLOW = WM_APP_BASE + 1
 CMD_PARK = WM_APP_BASE + 2
+CMD_PARK_ONDESKTOP = WM_APP_BASE + 9
+CMD_CLOAK = WM_APP_BASE + 10
 CMD_MINIMIZE_TEST = WM_APP_BASE + 3
 CMD_TOGGLE_TOOLWINDOW = WM_APP_BASE + 4
 CMD_TOGGLE_CAPTION = WM_APP_BASE + 5
@@ -119,6 +122,12 @@ def _bind_extras(libs):
     _declare(libs, libs.user32.SetProcessDPIAware, wintypes.BOOL, [])
     _declare(libs, libs.user32.UnhookWinEvent, wintypes.BOOL, [wintypes.HANDLE])
     _declare(libs, libs.kernel32.GetModuleHandleW, wintypes.HMODULE, [wintypes.LPCWSTR])
+    _declare(
+        libs,
+        libs.dwmapi.DwmSetWindowAttribute,
+        ctypes.c_long,  # HRESULT
+        [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD],
+    )
 
 
 class WNDCLASSW(ctypes.Structure):
@@ -141,9 +150,9 @@ class WNDCLASSW(ctypes.Structure):
 class GeoRect:
     """Geometry in the shape thumbnail.update() wants (x/y + edges)."""
 
-    def __init__(self, rect):
-        self.x, self.y = rect.left, rect.top
-        self.right, self.bottom = rect.right, rect.bottom
+    def __init__(self, x, y, right, bottom):
+        self.x, self.y = x, y
+        self.right, self.bottom = right, bottom
 
 
 class Mirror:
@@ -162,6 +171,7 @@ class Mirror:
         self.src_hwnd = None
         self.phase = 0  # 0 static, 1 focus-follow armed, 3 parked
         self.allow_minimize = False
+        self.cloaked = False
         self.toolwindow = False
         self.caption = True
         self.hook = None
@@ -208,8 +218,26 @@ class Mirror:
             self.libs.user32.DestroyWindow(self.mirror_hwnd)
             self.mirror_hwnd = None
 
-    def park(self):
-        # Fully off the virtual desktop edge: composed, never seen.
+    def park(self, on_desktop=True):
+        if on_desktop:
+            # Field result (#315): beyond the desktop edge the composed
+            # surface stops updating -- the stream froze on the last
+            # frame. On-desktop stays composed: bottom-left of the virtual
+            # screen, bottom of the z-order, behind everything.
+            x = self.libs.user32.GetSystemMetrics(win32.SM_XVIRTUALSCREEN)
+            y = self.libs.user32.GetSystemMetrics(win32.SM_YVIRTUALSCREEN)
+            h = self.libs.user32.GetSystemMetrics(win32.SM_CYVIRTUALSCREEN)
+            self.libs.user32.SetWindowPos(
+                self.mirror_hwnd,
+                wintypes.HWND(HWND_BOTTOM),
+                x,
+                max(0, y + h - self.size[1]),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+            self.say("mirror parked ON-desktop (bottom-left, behind windows)")
+            return
         x = self.libs.user32.GetSystemMetrics(win32.SM_XVIRTUALSCREEN)
         w = self.libs.user32.GetSystemMetrics(win32.SM_CXVIRTUALSCREEN)
         self.libs.user32.SetWindowPos(
@@ -221,7 +249,29 @@ class Mirror:
             0,
             SWP_NOSIZE | SWP_NOACTIVATE,
         )
-        self.say("mirror parked off the virtual-screen edge (composed, unseen)")
+        self.say("mirror parked OFF-desktop (evidence: surface freezes)")
+
+    def set_cloak(self, cloaked):
+        # DWMWA_CLOAK: DWM keeps compositing the window's surface but does
+        # not show it -- the mechanism Windows uses for virtual desktops.
+        # Windows.Graphics.Capture is documented to capture cloaked windows;
+        # whether Discord's game-capture path agrees (and whether its
+        # picker/pin still sees the window) is what this probe leg tests.
+        # The WGC evidence is community, not a spec guarantee.
+        if not self.mirror_hwnd:
+            return
+        val = wintypes.BOOL(1 if cloaked else 0)
+        hr = self.libs.dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(self.mirror_hwnd),
+            wintypes.DWORD(DWMWA_CLOAK),
+            ctypes.byref(val),
+            wintypes.DWORD(ctypes.sizeof(val)),
+        )
+        self.cloaked = cloaked and hr == 0
+        self.say(
+            f"cloak -> {self.cloaked} (hr={hr:#x}) "
+            "-- mirror invisible; does the stream keep UPDATING?"
+        )
 
     # -- thumbnail -------------------------------------------------------
     def bind_source(self, src_hwnd):
@@ -239,10 +289,29 @@ class Mirror:
         self.say(f"thumbnail live: {self.window_title(self.src_hwnd)!r} -> mirror")
 
     def client_rect(self):
+        """Destination rect for the thumbnail: the mirror's client area
+        fitted to the source window's aspect ratio (letterboxed, centered)
+        -- DWM otherwise stretches the thumbnail to whatever the mirror
+        is (field finding: the probe shipped stretched)."""
         rect = wintypes.RECT()
         if not self.libs.user32.GetClientRect(self.mirror_hwnd, ctypes.byref(rect)):
             raise RuntimeError("GetClientRect failed on the mirror")
-        return GeoRect(rect)
+        dest = GeoRect(rect.left, rect.top, rect.right, rect.bottom)
+        src = wintypes.RECT()
+        if self.src_hwnd and self.libs.user32.GetWindowRect(
+            wintypes.HWND(self.src_hwnd), ctypes.byref(src)
+        ):
+            src_w = max(1, src.right - src.left)
+            src_h = max(1, src.bottom - src.top)
+            dst_w = dest.right - dest.x
+            dst_h = dest.bottom - dest.y
+            scale = min(dst_w / src_w, dst_h / src_h)
+            fit_w = int(src_w * scale)
+            fit_h = int(src_h * scale)
+            left = dest.x + (dst_w - fit_w) // 2
+            top = dest.y + (dst_h - fit_h) // 2
+            return GeoRect(left, top, left + fit_w, top + fit_h)
+        return dest
 
     # -- helpers ---------------------------------------------------------
     def window_title(self, hwnd):
@@ -315,7 +384,11 @@ class Mirror:
             )
         elif msg == CMD_PARK:
             self.phase = max(self.phase, 3)
-            self.park()
+            self.park(on_desktop=False)
+            self.refresh_caption()
+        elif msg == CMD_PARK_ONDESKTOP:
+            self.phase = max(self.phase, 3)
+            self.park(on_desktop=True)
             self.refresh_caption()
         elif msg == CMD_MINIMIZE_TEST:
             self.allow_minimize = True
@@ -335,6 +408,8 @@ class Mirror:
             self.caption = not self.caption
             self.say(f"style sweep: caption -> {self.caption} (window recreated)")
             self.recreate()
+        elif msg == CMD_CLOAK:
+            self.set_cloak(not self.cloaked)
         elif msg == CMD_REBIND:
             if self.last_fg_hwnd and self._is_target(self.last_fg_hwnd):
                 self.bind_source(self.last_fg_hwnd)
@@ -476,7 +551,12 @@ def banner(exe_path):
     print(f"    {exe_path}", flush=True)
     print("Then stream it (Go Live -> the mirror entry) and follow", flush=True)
     print("docs/combat-golive-probe.md. Console commands, typed here:", flush=True)
-    print("  2 = arm focus-follow   3 = park off-screen bottom", flush=True)
+    print(
+        "  2 = arm focus-follow   s = park on-desktop bottom-left",
+        flush=True,
+    )
+    print("  3 = park off-desktop (evidence: surface freezes)", flush=True)
+    print("  k = cloak (invisible-but-composited; stream test)", flush=True)
     print("  5 = minimize-confirmation test (watch Discord die)", flush=True)
     print("  t = toggle WS_EX_TOOLWINDOW   c = toggle caption", flush=True)
     print("  r = force rebind to focused target   l = list windows", flush=True)
@@ -578,6 +658,10 @@ def main(argv=None):
                 post(CMD_ARM_FOLLOW, note=True)
             elif cmd == "3":
                 post(CMD_PARK, note=True)
+            elif cmd == "s":
+                post(CMD_PARK_ONDESKTOP, note=True)
+            elif cmd == "k":
+                post(CMD_CLOAK, note=True)
             elif cmd == "5":
                 post(CMD_MINIMIZE_TEST, note=True)
             elif cmd == "t":
@@ -592,7 +676,7 @@ def main(argv=None):
                 post(CMD_QUIT)
                 return
             else:
-                print(f"  unknown command {cmd!r} (2 3 5 t c r l q)", flush=True)
+                print(f"  unknown command {cmd!r} (2 3 5 s k t c r l q)", flush=True)
 
     if sys.stdin is not None and hasattr(sys.stdin, "readline"):
         threading.Thread(target=input_thread, daemon=True).start()
