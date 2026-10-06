@@ -186,6 +186,22 @@ reached through injected seams or lazy `windll` binding):
   `state.py` (what an alert does over time), `service.py` (focus gating and
   sound dispatch), `sound.py`. The focus gate fails closed: EVE broadcasts
   warp lines fleet-wide, so an alert with no proven owner must not fire.
+- `streaming/` — the combat Go Live mirror (#312): `mirror.py` is the
+  streamable window Discord pins — one borderless `WS_POPUP` window created
+  at `HWND_BOTTOM`, never activated (`MA_NOACTIVATE`), never minimized
+  (`WS_MINIMIZEBOX` stripped, `SC_MINIMIZE` swallowed — a minimized mirror
+  stops compositing and the stream pauses), parked cloak-primary
+  (`DWMWA_CLOAK`; `park_mode` stays honest, covered on-desktop is the
+  fallback — never off-desktop, that freezes the composed surface), showing
+  one DWM thumbnail of the focused admitted EVE client (the house title
+  rule, not a substring). Sticky last client on non-EVE focus; source death
+  releases routinely and stays sticky; rebind is unregister + re-register
+  (DWM has no retarget). `Mirror.handle_message` is the wndproc as a plain
+  method — every branch unit-tests on Linux with fake libs
+  (`tests/test_streaming_mirror.py`); `main()` owns only window + pump +
+  hook, and the supervisor (#317) owns process lifetime. The mirror never
+  sends input to EVE and never touches a client's position, size or
+  z-order.
 - `eveauth/` — shared EVE SSO: identities, grants, PKCE, JWT validation, the
   loopback listener, DPAPI wrapping. Capability-agnostic; Skills and
   Fittings both authenticate here and neither imports the other. The
