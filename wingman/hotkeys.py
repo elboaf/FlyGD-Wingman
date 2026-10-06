@@ -7,19 +7,24 @@ rewrite of the integration.
 
 Windows-only at runtime, importable and testable everywhere: the process is
 reached only through an injected spawner.
+
+The spawn/job/pid/orphan quartet lives in procguard (shared with the
+stream-mirror supervisor, #317); this module keeps the engine-specific
+half -- the INI channel, the status document and its bounds, the prime
+record.
 """
 
 import json
 import logging
 import re
 import subprocess
-import sys
+import sys  # noqa: F401 -- tests patch hotkeys.sys.platform
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
-from . import atomicio, bookmarks, paths, procid
+from . import atomicio, bookmarks, paths, procguard, procid
 
 logger = logging.getLogger(__name__)
 
@@ -34,124 +39,22 @@ STALE_AFTER_S = 6.0
 _MAX_STATUS_CHARS = 4096
 
 # CREATE_NO_WINDOW doesn't exist off Windows, and the tests inject a fake
-# spawner -- same shape as stitch.py:27 and library.py:19.
-_NO_WINDOW_KWARGS = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-)
+# spawner -- same shape as stitch.py:27 and library.py:19. Re-exported from
+# procguard (the implementation); tests patch THIS name, and HotkeyEngine
+# reads it at construction so the patch is what the spawn actually uses.
+_NO_WINDOW_KWARGS = procguard.NO_WINDOW_KWARGS
 
 _MISSING = (
     "The bookmark engine is missing from this installation. "
     "Reinstall FlyGD Wingman to restore it."
 )
 
-# KILL_ON_JOB_CLOSE: when the last handle to the job goes away -- which the
-# kernel does even for a terminated process -- every process in the job is
-# killed. This is the only cleanup that survives Wingman being hard-killed;
-# stop() and orphan recovery both require our code to run.
-_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-# JobObjectExtendedLimitInformation, winbase.h.
-_JobObjectExtendedLimitInformation = 9
+# Names this module's tests (and the reclamation path) have always used;
+# the implementations are procguard's now.
+_default_job = procguard.default_job
 
-
-def _default_job():
-    """A kernel job object to bind the engine's life to ours, or None.
-
-    Wingman holds the job handle for the engine's whole lifetime: if this
-    process dies by any means -- clean exit, unhandled exception,
-    TerminateProcess, power loss -- the kernel closes the handle and Windows
-    kills the engine, ending the old arrangement where a crashed Wingman
-    left a live keyboard hook until the next launch (recover_orphan's
-    documented gap).
-
-    None is a deliberate fallback, not an error path: off Windows, or if any
-    kernel32 call fails, start() proceeds exactly as before stop()-only
-    cleanup rather than refusing to run the engine.
-    """
-    if sys.platform != "win32":
-        return None
-    import ctypes
-    from ctypes import wintypes
-
-    class _BasicLimitInfo(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_int64),
-            ("PerJobUserTimeLimit", ctypes.c_int64),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            # ULONG_PTR; c_size_t is the same width everywhere we build.
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class _IoCounters(ctypes.Structure):
-        _fields_ = [
-            (name, ctypes.c_uint64)
-            for name in (
-                "ReadOperationCount",
-                "WriteOperationCount",
-                "OtherOperationCount",
-                "ReadTransferCount",
-                "WriteTransferCount",
-                "OtherTransferCount",
-            )
-        ]
-
-    class _ExtendedLimitInfo(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", _BasicLimitInfo),
-            ("IoInfo", _IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    try:
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.CreateJobObjectW(None, None)
-        if not handle:
-            return None
-        info = _ExtendedLimitInfo()
-        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not kernel32.SetInformationJobObject(
-            handle,
-            _JobObjectExtendedLimitInformation,
-            ctypes.byref(info),
-            ctypes.sizeof(info),
-        ):
-            kernel32.CloseHandle(handle)
-            return None
-        return _KernelJob(kernel32, handle)
-    except Exception:
-        # A job is belt-and-braces on top of stop(); any failure here must
-        # not keep the bookmark engine from starting at all.
-        logger.warning(
-            "Engine job object unavailable; falling back to stop().", exc_info=True
-        )
-        return None
-
-
-class _KernelJob:
-    """The ctypes-bound job handle, narrowed to the two operations used."""
-
-    def __init__(self, kernel32, handle):
-        self._kernel32 = kernel32
-        self._handle = handle
-
-    def assign(self, proc):
-        """Put the child in the job. False is non-fatal (fall back)."""
-        return bool(self._kernel32.AssignProcessToJobObject(self._handle, proc))
-
-    def close(self):
-        self._kernel32.CloseHandle(self._handle)
-
-
-# Basename match, not a substring: a folder merely containing "autohotkey"
-# (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
 _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
+_KernelJob = procguard.KernelJob
 
 
 @dataclass
@@ -271,11 +174,12 @@ def _prime_from_raw(raw):
 class HotkeyEngine:
     """Own the engine process and the files it reads.
 
-    A record left behind by a crashed session is deliberately not cleaned up
-    here: this class can only reason about a process it spawned itself, so
-    deciding whether an on-disk record names a live engine, a dead one, or a
-    pid Windows has since reused belongs to orphan recovery, which verifies
-    the process image and a run token before terminating anything.
+    Process guardianship is procguard's (job object, pid record, orphan
+    recovery, stop escalation); the engine-specific half is apply()'s INI
+    channel and status()'s liveness-driven document read. A record left
+    behind by a crashed session is deliberately not cleaned up here: that
+    decision belongs to recovery, which verifies the process image and the
+    run token before terminating anything.
     """
 
     def __init__(
@@ -288,16 +192,23 @@ class HotkeyEngine:
         token_factory=lambda: uuid.uuid4().hex,
         job_factory=_default_job,
     ):
-        self._exe = exe
-        self._script = Path(script) if script else None
+        # Engine test doubles patch module globals (hotkeys.procid,
+        # hotkeys._NO_WINDOW_KWARGS) before construction; reading them
+        # NOW is what makes those patches reach the spawn.
+        self._guard = procguard.ProcGuard(
+            exe,
+            state_dir,
+            pid_name=paths.engine_pid_file().name,
+            image_name="AutoHotkeyU64.exe",
+            spawner=spawner,
+            token_factory=token_factory,
+            job_factory=job_factory,
+            procid_module=procid,
+            no_window_kwargs=_NO_WINDOW_KWARGS,
+        )
         self._state_dir = Path(state_dir)
-        self._spawner = spawner
-        self._token_factory = token_factory
-        self._job_factory = job_factory
-        self._proc = None
-        self._token = None
-        self._job = None
-        self.last_error: str | None = None
+        self._script = Path(script) if script else None
+        self.last_error = self._guard.last_error
 
     # -- config ------------------------------------------------------
     def apply(self, section: dict) -> None:
@@ -310,123 +221,27 @@ class HotkeyEngine:
 
     # -- lifecycle ---------------------------------------------------
     def start(self) -> bool:
-        if self.is_running():
-            return True
-        self.recover_orphan()
-        if not self._exe or not self._script or not self._script.exists():
-            self.last_error = _MISSING
-            logger.error(
-                "Engine not started: exe=%r script=%r", self._exe, self._script
-            )
-            return False
-
-        self._token = self._token_factory()
-        argv = [str(self._exe), str(self._script), "/token", self._token]
-        try:
-            self._proc = self._spawner(
-                argv, cwd=str(self._state_dir), **_NO_WINDOW_KWARGS
-            )
-        except OSError as exc:
-            self.last_error = f"The bookmark engine could not start: {exc}"
-            logger.exception("Engine spawn failed")
-            self._proc = None
-            return False
-
-        # Bind the child's life to ours before anything else can fail:
-        # every path after this point that used to leave the engine running
-        # now at worst leaves it in a job the kernel empties when we die.
-        # A None or failed assignment falls back to the historical
-        # stop()-only cleanup, never blocks the start.
-        try:
-            self._job = self._job_factory()
-            if self._job is not None and not self._job.assign(self._proc.handle):
-                logger.warning("Could not assign the engine to its job object.")
-                self._job.close()
-                self._job = None
-        except (OSError, AttributeError):
-            # AttributeError covers spawner doubles without a real .handle
-            # (the test seam); a real Popen always has one.
-            logger.warning(
-                "Engine job object setup failed; falling back to stop().", exc_info=True
-            )
-            self._job = None
-
-        try:
-            atomicio.write_atomic(
-                self._pid_path(),
-                json.dumps({"pid": self._proc.pid, "token": self._token}),
-            )
-        except OSError as exc:
-            # The record is what makes this process findable: without it,
-            # is_running() would still report the engine alive (self._proc
-            # is a real, running Popen) while orphan recovery -- and this
-            # session's own stop() on a later attempt -- has no PID to act
-            # on. A live keyboard hook nobody can address is worse than the
-            # one disruptive kill here, so stop() the child now rather than
-            # leave it running unrecorded; that also clears self._proc, so
-            # is_running() agrees with the False this returns.
-            self.last_error = f"The bookmark engine could not start: {exc}"
-            logger.exception("Could not persist engine PID record")
-            self.stop()
-            return False
-        self.last_error = None
-        return True
+        script = self._script
+        ok = self._guard.launch(
+            lambda token: [str(self._guard.exe_path()), str(script), "/token", token],
+            required_paths=(script,),
+            missing_message=_MISSING,
+            failure_message="The bookmark engine could not start",
+        )
+        self.last_error = self._guard.last_error
+        return ok
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Stop the engine and clear its PID record.
-
-        The record clear is in a finally: a process-control call that raises
-        would otherwise leave a record naming a dead pid on disk, which is
-        precisely the ambiguity orphan recovery then has to resolve.
-        """
-        proc, self._proc = self._proc, None
-        job, self._job = self._job, None
-        try:
-            if proc is None or proc.poll() is not None:
-                return
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                # Genuinely gone between the poll above and here.
-                logger.debug("Engine had already exited before terminate.")
-                return
-            except OSError:
-                # terminate() FAILED -- the process is still there. Fall
-                # through to the kill escalation rather than reporting a
-                # clean stop while a keyboard hook is still registered.
-                logger.warning("terminate() failed; escalating to kill.")
-                try:
-                    proc.kill()
-                    proc.wait(timeout=timeout)
-                except (OSError, subprocess.TimeoutExpired):
-                    logger.exception("Engine could not be killed.")
-                return
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                # A hung engine still holds a keyboard hook. Killing it is
-                # the lesser harm.
-                logger.warning("Engine ignored terminate; killing it.")
-                try:
-                    proc.kill()
-                    proc.wait(timeout=timeout)
-                except (OSError, subprocess.TimeoutExpired):
-                    logger.exception("Engine could not be killed.")
-            except OSError:
-                logger.exception("Could not wait on the engine process.")
-        finally:
-            if job is not None:
-                try:
-                    job.close()
-                except OSError:
-                    # Closing a dead handle must not report a failed stop;
-                    # the kill-on-close still fired when the kernel tore
-                    # the handle down with us.
-                    logger.debug("Engine job handle already closed.")
-            self._clear_pid_record()
+        """Stop the engine and clear its PID record (procguard)."""
+        self._guard.stop(timeout=timeout)
 
     def is_running(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        return self._guard.is_running()
+
+    def recover_orphan(self) -> bool:
+        """Terminate an engine left behind by a crashed Wingman
+        (procguard; identity = image name AND run token)."""
+        return self._guard.recover_orphan()
 
     def status(self, enabled: bool, now: float | None = None) -> EngineStatus:
         """Report engine state, driven by liveness rather than file contents.
@@ -475,75 +290,6 @@ class HotkeyEngine:
             failed_binds=[str(b) for b in failed],
             prime=_prime_from_raw(raw.get("prime")),
         )
-
-    def recover_orphan(self) -> bool:
-        """Terminate an engine left behind by a crashed Wingman.
-
-        Identity is the image name AND the run token from the command line.
-        The PID alone is not identity -- Windows reuses PIDs and this runs
-        after an unclean shutdown -- and the image alone is not either,
-        because the bundled interpreter could be running someone else's
-        script. Anything that fails either check is treated as a stale
-        record and discarded rather than killed. The one exception is a
-        failed *lookup* (procid.describe raising, or a failed kill): there
-        we do not know the record is stale, so it is kept for the next
-        start rather than thrown away.
-
-        Note this only ever runs at the next start. The job object binds the
-        engine to this process -- a dead Wingman takes the engine with it --
-        so recovery is mainly a fallback for records left by sessions that
-        predate the job or where the job could not be created; clean
-        shutdown remains what covers the common case.
-        """
-        try:
-            # atomicio.write_atomic writes UTF-8; say so on the way back
-            # in rather than inheriting the locale's codec. The record is
-            # ASCII today (a pid and a hex token) so this is not currently
-            # a bug -- it is the asymmetry that once made the command
-            # channel's sequence adoption fail on Windows, closed here
-            # before it becomes one.
-            record = json.loads(self._pid_path().read_text(encoding="utf-8"))
-            pid = int(record["pid"])
-            token = str(record["token"])
-        except (OSError, ValueError, KeyError, TypeError):
-            self._clear_pid_record()
-            return False
-
-        try:
-            info = procid.describe(pid)
-        except Exception:
-            # describe() feeds a code path that must never prevent the
-            # engine starting. We could not determine liveness/identity,
-            # so leave the record for the next start rather than discard
-            # it -- if we do not know it is stale, deleting it would lose
-            # our only handle on a still-live orphan.
-            logger.exception("Orphan lookup failed; leaving the record alone.")
-            return False
-        if not info:
-            self._clear_pid_record()
-            return False
-
-        image_ok = (
-            PureWindowsPath(info.get("image") or "").name.lower() == _ENGINE_IMAGE_NAME
-        )
-        token_ok = token and token in (info.get("cmdline") or "")
-        if not (image_ok and token_ok):
-            logger.info("PID %s is not our engine; leaving it alone.", pid)
-            self._clear_pid_record()
-            return False
-
-        logger.warning("Terminating orphaned engine %s", pid)
-        try:
-            killed = procid.terminate(pid)
-        except Exception:
-            logger.exception("Could not terminate orphaned engine %s", pid)
-            return False
-        if not killed:
-            # Keep the record: it is the only handle for trying again.
-            logger.error("Orphaned engine %s could not be terminated.", pid)
-            return False
-        self._clear_pid_record()
-        return True
 
     # -- paths -------------------------------------------------------
     def _ini_path(self) -> Path:
