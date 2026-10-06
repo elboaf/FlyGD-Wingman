@@ -796,6 +796,25 @@
     });
   };
 
+  // stream_mirror_state is a read (see streaming.js). The dev double
+  // shows the card's honest not-running row so the section can be
+  // eyeballed under ?dev=1 without launching Python.
+  api.stream_mirror_state = function () {
+    console.log('DEV api.stream_mirror_state()');
+    return Promise.resolve({
+      available: true, running: false, state: 'stopped',
+      error: null, mirror_on: false
+    });
+  };
+  api.stream_mirror_start = function () {
+    console.log('DEV api.stream_mirror_start()');
+    return Promise.resolve({ok: true, running: true, error: null});
+  };
+  api.stream_mirror_stop = function () {
+    console.log('DEV api.stream_mirror_stop()');
+    return Promise.resolve({ok: true, running: false, error: null});
+  };
+
   // NOT generic stubs, for the same reason save_settings above is not: the
   // page guards on `!ok`, and the real bridge returns True even for a
   // no-op. A null here would make plan switching and forget dead in the

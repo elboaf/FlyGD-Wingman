@@ -298,6 +298,26 @@ def engine_exe() -> str | None:
 CODEC_NAME = "wingman-settings-codec"
 
 
+def mirror_exe() -> str | None:
+    """Locate the bundled stream mirror (wingman-mirror.exe), or None.
+
+    Same shape as engine_exe(), and for the same reason NOT
+    resolve_binary(): its shutil.which() fallback would let an unrelated
+    program of the same name on PATH become the window Discord pins and
+    the process Wingman supervises. Absent here means the Streaming card
+    reports a missing mirror; nothing else breaks.
+    """
+    exe = "wingman-mirror" + (".exe" if sys.platform == "win32" else "")
+    frozen = bundle_dir() / "bin" / exe
+    if frozen.exists():
+        return str(frozen)
+    if not hasattr(sys, "_MEIPASS"):
+        candidate = bundle_dir() / "packaging" / "bin" / exe
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 def codec_exe() -> str | None:
     """Path to the bundled EVE settings codec, or None when it is not bundled.
 

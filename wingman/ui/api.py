@@ -361,6 +361,11 @@ class AppState:
     # method that touches it must handle that -- e.g. by no-op'ing rather
     # than crashing the bridge thread on an AttributeError.
     engine: object | None = None
+    # None until main() wires the MirrorSupervisor (#317). Every bridge
+    # method that touches it must handle None (off-Windows, or a card
+    # rendered before construction completes) by no-op'ing or reporting
+    # unavailable, never by raising off the bridge thread.
+    mirror_supervisor: object | None = None
 
 
 @dataclass
@@ -7254,6 +7259,105 @@ class Api:
             "alerts": dict(alerts),
             **reader,
         }
+
+    # ---- Stream mirror (#317) --------------------------------------------
+
+    def _mirror_state_payload(self):
+        """The one state shape both the card read and the push carry."""
+        supervisor = self._state.mirror_supervisor
+        coupling = (
+            self._state.settings.get("preview", {})
+            .get("alerts", {})
+            .get("stream_coupling", {})
+        )
+        if supervisor is None:
+            return {
+                "available": False,
+                "running": False,
+                "state": "unavailable",
+                "error": None,
+                "mirror_on": False,
+            }
+        status = supervisor.status(enabled=bool(coupling.get("mirror_on")))
+        return {
+            "available": True,
+            "running": status.state == "running",
+            "state": status.state,
+            "error": status.last_error,
+            "mirror_on": bool(coupling.get("mirror_on")),
+        }
+
+    def ensure_mirror_if_enabled(self) -> None:
+        """The poll tick's recovery hook: restart an out-of-band death
+        within the supervisor's burst budget, only when the user's
+        mirror_on ask is still standing. Never starts a mirror the user
+        did not ask for."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return
+        coupling = (
+            self._state.settings.get("preview", {})
+            .get("alerts", {})
+            .get("stream_coupling", {})
+        )
+        if coupling.get("mirror_on"):
+            supervisor.ensure_running()
+
+    def _push_mirror_status(self) -> None:
+        """Publish mirror state to the page (poll tick; state changes).
+
+        Like onEveStatus, pushed regardless of route: the mirror can die
+        out-of-band while the user is anywhere in the app.
+        """
+        self._push("onMirrorStatus", self._mirror_state_payload())
+
+    def stream_mirror_state(self) -> dict:
+        """Everything the Streaming card needs, in one read.
+
+        A read, not a push-at-launch, for the reason get_alert_state
+        documents: the supervisor is constructed before the window, so a
+        state discovered at launch would be pushed into a window that is
+        not there yet. The page asks on entering the section.
+        """
+        return self._mirror_state_payload()
+
+    def stream_mirror_start(self) -> dict:
+        """Start the mirror and persist mirror_on (the sticky ask)."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return {
+                "ok": False,
+                "running": False,
+                "error": "The stream mirror is unavailable in this installation.",
+            }
+        ok = supervisor.start()
+        if ok:
+            self._set_stream_coupling(mirror_on=True)
+        payload = self._mirror_state_payload()
+        return {
+            "ok": ok,
+            "running": payload["running"],
+            "error": None if ok else (supervisor.last_error or "could not start"),
+        }
+
+    def stream_mirror_stop(self) -> dict:
+        """Stop the mirror and clear mirror_on (an explicit off)."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return {"ok": False, "running": False, "error": "unavailable"}
+        supervisor.stop()
+        self._set_stream_coupling(mirror_on=False)
+        return {"ok": True, "running": False, "error": None}
+
+    def _set_stream_coupling(self, *, mirror_on) -> None:
+        """The one writer of mirror_on, through the house settings.update
+        (serialized read-modify-write; a failed save restores memory)."""
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {})[
+                "stream_coupling"
+            ]["mirror_on"] = mirror_on
 
     # ---- Where a preview opens ------------------------------------------
 

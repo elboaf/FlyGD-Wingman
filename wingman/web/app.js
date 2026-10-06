@@ -59,6 +59,7 @@
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
+                 'onMirrorStatus',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
                  'onFittingsScreenshotState', 'onFleetSharingState', 'onTheme'];

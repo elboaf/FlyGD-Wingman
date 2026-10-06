@@ -81,6 +81,7 @@ _EXPECTED_FULL_SCREEN_KEYS = (
     "settings-alerts",
     "settings-alerts-advanced",
     "settings-alerts-custom-narrow",
+    "settings-streaming",
     "settings-general",
     "profiles",
     "profiles-copy-scope",
@@ -147,6 +148,7 @@ def test_gate_off_shoots_only_the_reachable_screens():
         "settings-companions-detail-narrow",
         "settings-companions-add",
         "settings-companions-source-narrow",
+        "settings-streaming",
         "settings-general",
         "dialog",
     ]

@@ -75,6 +75,26 @@ _ALERT_EVENT_DEFAULTS = {
 }
 
 
+def _stream_coupling_defaults() -> dict:
+    """The combat Go Live coupling (#312): keys under preview.alerts.
+
+    ``chord`` is the user's own Discord Toggle-Screen-Share keybind,
+    AHK-style, recorded through layout-aware capture. Its PRESENCE is
+    the consent gate -- no separate on/off checkbox; the empty string
+    is the explicit off, and clearing it is how a user disarms the
+    feature.
+
+    ``mirror_on`` is the one toggle here that is NOT consent (the
+    mirror alone is useful; the fleet sees whoever is flying). It
+    persists and is restored at Wingman launch, shipped default off --
+    the sticky on-demand lifecycle decision closes the reboot trap
+    (configured user, mirror not running, chord fires into nothing)
+    without an always-on helper process for installs that never use
+    Discord.
+    """
+    return {"chord": "", "quiet_s": 300, "mirror_on": False}
+
+
 def _alerts_defaults() -> dict:
     """Fresh nested structure every call, like _preview_defaults.
 
@@ -82,6 +102,7 @@ def _alerts_defaults() -> dict:
     top of what previews already pay.
     """
     return {
+        "stream_coupling": _stream_coupling_defaults(),
         "enabled": False,
         # The filter is what makes `combat` mean "a player is shooting
         # you". Without it a Sleeper site alerts continuously on every
@@ -794,6 +815,20 @@ def validated_alerts(raw) -> dict:
     version = raw.get("defaults_version")
     if isinstance(version, int) and not isinstance(version, bool):
         section["defaults_version"] = max(1, version)
+    raw_coupling = raw.get("stream_coupling")
+    coupling = _stream_coupling_defaults()
+    if isinstance(raw_coupling, dict):
+        chord = raw_coupling.get("chord")
+        # A non-string chord falls back to the empty default: the field is
+        # consent, and consent cannot be invented by coercion.
+        if isinstance(chord, str):
+            coupling["chord"] = chord
+        quiet = raw_coupling.get("quiet_s")
+        if isinstance(quiet, int) and not isinstance(quiet, bool):
+            coupling["quiet_s"] = max(60, min(900, quiet))
+        if isinstance(raw_coupling.get("mirror_on"), bool):
+            coupling["mirror_on"] = raw_coupling["mirror_on"]
+    section["stream_coupling"] = coupling
     section["custom_rules"] = validated_custom_rules(raw.get("custom_rules"))
     raw_events = raw.get("events")
     if isinstance(raw_events, dict):

@@ -218,9 +218,9 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     assert not missing, f"EVE_SECTIONS names sections the rail does not have: {missing}"
 
     survivors = [name for name in rail if name not in gated]
-    assert survivors == ["uploading", "companions", "general"], (
+    assert survivors == ["uploading", "companions", "streaming", "general"], (
         "with the EVE gate off the rail should be exactly Uploading, "
-        f"Companions and General -- the independent sections -- but it is {survivors}"
+        f"Companions, Streaming and General -- the independent sections -- but it is {survivors}"
     )
 
     # Hiding the screen you are ON would leave a dead pane with no way back.

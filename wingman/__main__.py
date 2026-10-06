@@ -10,7 +10,17 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import combatlog, discord, hotkeys, obsconfig, paths, raiseipc, stitch, watcher
+from . import (
+    combatlog,
+    discord,
+    hotkeys,
+    mirrorsupervisor,
+    obsconfig,
+    paths,
+    raiseipc,
+    stitch,
+    watcher,
+)
 from . import settings as settings_mod
 from .alerts.controller import AlertsController, AlertsPorts
 from .eveauth import application
@@ -293,6 +303,17 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
         # Its own guard: a status-push failure must not count against the
         # recording watcher's failure counter or skip poll_once.
         logger.exception("Engine status push failed.")
+    # Recovery first, then the honest row: an out-of-band death the
+    # budget can absorb is restarted before the push, so the card
+    # never shows stopped-and-staying-that-way for a mirror_on user.
+    try:
+        api.ensure_mirror_if_enabled()
+    except Exception:
+        logger.exception("Mirror recovery check failed.")
+    try:
+        api._push_mirror_status()
+    except Exception:
+        logger.exception("Mirror status push failed.")
     try:
         ready = w.poll_once()
         uploading = api._busy()
@@ -354,6 +375,49 @@ def reclaim_orphaned_engine(engine) -> None:
         engine.recover_orphan()
     except Exception:
         logger.exception("Orphan reclamation failed; continuing startup.")
+
+
+def reclaim_orphaned_mirror(supervisor) -> None:
+    """Terminate a mirror left behind by a crashed session (#317).
+
+    Same discipline as reclaim_orphaned_engine: runs at startup regardless
+    of the setting, because stop() clears the pid record even when it could
+    not confirm the death, and recovery otherwise runs only from start() --
+    which runs only when mirror_on. Never raises: a failure to reclaim must
+    not stop the app starting.
+    """
+    if supervisor is None:
+        return
+    try:
+        supervisor.recover_orphan()
+    except Exception:
+        logger.exception("Mirror orphan reclamation failed; continuing startup.")
+
+
+def start_mirror_if_enabled(supervisor, coupling) -> None:
+    """Restore the stream mirror only when the user left it on.
+
+    Sticky on-demand (the lifecycle decision): mirror_on persists, shipped
+    default OFF -- an upgrading install must not acquire a background
+    process, or a capture window Discord could pin, by upgrading.
+    """
+    if supervisor is None or not coupling.get("mirror_on"):
+        return
+    supervisor.start()
+
+
+def shutdown_mirror(supervisor) -> None:
+    """Stop the mirror on the way out, whatever else has gone wrong.
+
+    A mirror that outlives Wingman keeps a window Discord pins alive with
+    nothing left to stop it, so this must never be the thing that raises.
+    """
+    if supervisor is None:
+        return
+    try:
+        supervisor.stop()
+    except Exception:
+        logger.exception("Mirror shutdown failed; continuing teardown.")
 
 
 def start_engine_if_enabled(engine, section) -> None:
@@ -1025,6 +1089,20 @@ def main() -> int:
     reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
+    # The stream mirror (#312/#317): constructed even off Windows
+    # (paths.mirror_exe() returns None there and the supervisor reports
+    # a missing mirror rather than breaking the bridge). Same orphan
+    # discipline as the engine -- unconditional reclaim, opt-in restore.
+    mirror_supervisor = mirrorsupervisor.MirrorSupervisor(
+        paths.mirror_exe(), paths.state_dir()
+    )
+    state.mirror_supervisor = mirror_supervisor
+    reclaim_orphaned_mirror(mirror_supervisor)
+    start_mirror_if_enabled(
+        mirror_supervisor,
+        state.settings.get("preview", {}).get("alerts", {}).get("stream_coupling", {}),
+    )
+
     # Retain registration until the host/controller take ownership; the weak
     # registry intentionally does not keep settings documents alive itself.
     _preview_config = settings_mod.committed_preview(state.settings)
@@ -1319,6 +1397,9 @@ def main() -> int:
         if scheduler is not None:
             _teardown_step("scheduler", scheduler.stop)
         shutdown_engine(engine)
+        # The pinned mirror outliving Wingman is the same class of
+        # orphan as the engine: stop it on every exit path.
+        _teardown_step("stream mirror", lambda: shutdown_mirror(mirror_supervisor))
         # Close updater state before subsystem teardown. This suppresses late
         # worker pushes and removes a ready file on ordinary Quit while retaining
         # the persistent on-disk marker/file pair already handed to Setup.

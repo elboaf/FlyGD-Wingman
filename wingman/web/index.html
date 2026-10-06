@@ -451,6 +451,7 @@
            sat below ~70 controls, and the folder the feature actually
            reads was three rail entries away, under Folders. -->
       <button class="rail-item" data-section="alerts">Alerts</button>
+      <button class="rail-item" data-section="streaming">Streaming</button>
       <!-- Last, and directly under the EVE-only entries it removes:
            unticking the switch inside hides Characters, Bookmarks,
            Previews and Alerts (app.js's EVE_SECTIONS) and lands you here,
@@ -1809,6 +1810,25 @@
 
     </div>
 
+    <div class="settings" id="section-streaming">
+      <header class="settings-page-header">
+        <h1>Streaming</h1>
+      </header>
+      <section class="card">
+        <h2>Discord streaming</h2>
+        <p class="hint">The mirror is the window Discord pins (Go Live &rarr; the game source). It shows whoever is flying, follows focus, and never takes focus itself.</p>
+        <div class="row">
+          <span class="lab" id="mirror-status-label">Stream mirror</span>
+          <span id="mirror-state" role="status">Checking&hellip;</span>
+        </div>
+        <div class="row">
+          <span class="lab"></span>
+          <button class="btn" id="mirror-toggle">Start mirror</button>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="mirror-error" role="alert"></span></div>
+      </section>
+    </div>
     <div class="settings" id="section-general">
 
       <section class="card">
@@ -3030,6 +3050,7 @@
   <script src="skills.js"></script>
   <script src="fittings.js"></script>
   <script src="firstrun.js"></script>
+  <script src="streaming.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>

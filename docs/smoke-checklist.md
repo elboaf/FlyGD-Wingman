@@ -2746,7 +2746,7 @@ native behavior below still requires Windows/WebView2 checks.
       bypassed rather than the markup being wrong.
 - [ ] **Settings rail entries, General last** — Uploading, Companion previews,
       EVE Characters, Bookmarks, Previews, Wanderer API, Fleet telemetry, Alerts,
-      General — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
+      Streaming, General — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
       Folders and Discord entries were consolidated under Uploading; the
       Gamelog folder card now lives in Alerts. The Google account, Recording
       folder and Combat log webhook cards must be in Uploading, and
