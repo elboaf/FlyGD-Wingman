@@ -45,8 +45,8 @@ def test_start_binds_the_child_to_the_job_object(tmp_path):
     assigned = []
 
     class Job:
-        def assign(self, proc):
-            assigned.append(proc)
+        def assign(self, handle):
+            assigned.append(handle)
             return True
 
         def close(self):
@@ -56,7 +56,7 @@ def test_start_binds_the_child_to_the_job_object(tmp_path):
     sup = supervisor(tmp_path, spawner, job_factory=Job)
 
     assert sup.start() is True
-    assert assigned == [spawner.proc.handle]
+    assert assigned == [spawner.proc._handle]
 
 
 def test_start_with_a_missing_exe_reports_and_stays_down(tmp_path):

@@ -115,9 +115,9 @@ class KernelJob:
         self._kernel32 = kernel32
         self._handle = handle
 
-    def assign(self, proc):
+    def assign(self, handle):
         """Put the child in the job. False is non-fatal (fall back)."""
-        return bool(self._kernel32.AssignProcessToJobObject(self._handle, proc))
+        return bool(self._kernel32.AssignProcessToJobObject(self._handle, handle))
 
     def close(self):
         self._kernel32.CloseHandle(self._handle)
@@ -214,13 +214,19 @@ class ProcGuard:
         # never blocks the start.
         try:
             self._job = self._job_factory()
-            if self._job is not None and not self._job.assign(self._proc.handle):
+            # The child's process handle is Popen._handle on Windows. No
+            # public `handle` exists on any Python 3 -- that spelling died
+            # with py2, so reading it raised on EVERY real launch and the
+            # job silently never bound while the test doubles (which had
+            # invented .handle) kept the tests green. Field log
+            # 2026-10-06: one "Job object setup failed" per start since
+            # the extraction shipped. AttributeError still covers doubles
+            # that carry no handle attribute at all.
+            if self._job is not None and not self._job.assign(self._proc._handle):
                 logger.warning("Could not assign the child to its job object.")
                 self._job.close()
                 self._job = None
         except (OSError, AttributeError):
-            # AttributeError covers spawner doubles without a real .handle
-            # (the test seam); a real Popen always has one.
             logger.warning(
                 "Job object setup failed; falling back to stop().", exc_info=True
             )

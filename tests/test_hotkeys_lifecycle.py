@@ -10,7 +10,11 @@ from wingman import bookmarks, hotkeys
 class FakeProc:
     def __init__(self, pid=4321):
         self.pid = pid
-        self.handle = object()  # A real Popen exposes the process handle.
+        # The real attribute: a Windows Popen exposes only _handle (the
+        # py2-era public `handle` is gone) -- inventing it here is how the
+        # job stopped binding in production while this fake kept tests
+        # green (field log 2026-10-06).
+        self._handle = object()
         self._alive = True
         self.terminated = False
         self.killed = False
@@ -289,8 +293,8 @@ class FakeJob:
         self.assigned = None
         self.closed = False
 
-    def assign(self, proc):
-        self.assigned = proc
+    def assign(self, handle):
+        self.assigned = handle
         return True
 
     def close(self):
@@ -306,7 +310,7 @@ def test_start_assigns_the_engine_to_a_kill_on_close_job(tmp_path):
     eng = engine(tmp_path, spawner, job_factory=lambda: job)
     eng.apply(section())
     eng.start()
-    assert job.assigned is spawner.proc.handle
+    assert job.assigned is spawner.proc._handle
     assert not job.closed
 
 
