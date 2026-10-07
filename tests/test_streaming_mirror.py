@@ -47,6 +47,7 @@ def _mirror_libs(virtual=(0, 0, 1920, 1080)):
             self.window_pos = []  # (hwnd, after, x, y, w, h, flags)
             self.shown = []
             self.destroyed = []
+            self.ex_styles = []  # CreateWindowExW's exStyle, per call
             self.client = (800, 600)  # CreateWindowExW's initial size
             self.styles = {}  # hwnd -> current GWL_STYLE value
             self.styles[MIRROR] = (
@@ -55,6 +56,7 @@ def _mirror_libs(virtual=(0, 0, 1920, 1080)):
 
         # --- window lifecycle
         def CreateWindowExW(self, ex, cls, title, style, x, y, w, h, a, b, inst, c):
+            self.ex_styles.append(ex)
             return MIRROR
 
         def DestroyWindow(self, hwnd):
@@ -167,6 +169,17 @@ def _mirror(libs, **kw):
 
 
 # --- 1. lifecycle ---------------------------------------------------------
+
+
+def test_the_mirror_is_created_a_tool_window():
+    """The shell gives a visible top-level window a taskbar button, and
+    DWM cloak hides the pixels but not the button -- the user found the
+    mirror's icon sitting in the bar (field, 2026-10-07). TOOLWINDOW:
+    no taskbar button, no alt-tab; Discord's pin is per-process and the
+    tool window is still its one streamable window."""
+    libs = _mirror_libs()
+    _mirror(libs)
+    assert libs.user32.ex_styles == [mirror.WS_EX_TOOLWINDOW]
 
 
 def test_rebind_on_admitted_foreground_changes_the_thumbnail_source():

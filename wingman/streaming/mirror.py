@@ -82,6 +82,7 @@ MA_NOACTIVATE = win32.MA_NOACTIVATE
 WM_ERASEBKGND = win32.WM_ERASEBKGND
 WM_CLOSE = win32.WM_CLOSE
 WS_POPUP = win32.WS_POPUP
+WS_EX_TOOLWINDOW = win32.WS_EX_TOOLWINDOW
 SW_SHOWNOACTIVATE = win32.SW_SHOWNOACTIVATE
 SM_XVIRTUALSCREEN = win32.SM_XVIRTUALSCREEN
 SM_YVIRTUALSCREEN = win32.SM_YVIRTUALSCREEN
@@ -202,9 +203,15 @@ class Mirror:
         # Borderless, always: the mirror is resized to the bound source's
         # outer rect on every bind (field finding, #315: a fixed-size or
         # captioned mirror letterboxes -- Discord streams the white bars).
+        # TOOLWINDOW (field finding, 2026-10-07): without it the shell
+        # gives a visible top-level window a taskbar button, and raw
+        # DWMWA_CLOAK hides the pixels but not the button -- the user
+        # saw the mirror's icon sitting in the bar. A tool window has no
+        # taskbar button and no alt-tab entry; Discord pins the process's
+        # one streamable window either way (the pin is per-process).
         style = win32.WS_POPUP
         self.mirror_hwnd = self.libs.user32.CreateWindowExW(
-            0,
+            win32.WS_EX_TOOLWINDOW,
             CLASS_NAME,
             WINDOW_TITLE,
             style,
