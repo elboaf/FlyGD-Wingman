@@ -104,10 +104,13 @@ def _alerts_defaults() -> dict:
     return {
         "stream_coupling": _stream_coupling_defaults(),
         "enabled": False,
-        # The filter is what makes `combat` mean "a player is shooting
-        # you". Without it a Sleeper site alerts continuously on every
-        # client, and a player landing mid-site is indistinguishable from
-        # the NPCs already firing.
+        # The filter is what makes `combat` mean "a player is involved in
+        # the fight" (the incoming attacker, or the ship your outgoing
+        # shot hit). Without it a Sleeper site alerts continuously on
+        # every client, and a player landing mid-site is indistinguishable
+        # from the NPCs already firing. Unnameable (combat) lines carry no
+        # source for the heuristic and always alert -- the stream trigger
+        # cannot miss a fight (field decision, 2026-10-07).
         "pve_filter": True,
         # An alert that expires while you are in a browser has told you
         # nothing, which is the whole case for the feature.

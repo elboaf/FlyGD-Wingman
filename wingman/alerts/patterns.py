@@ -139,6 +139,17 @@ def match_line(line: str, character: str) -> Match | None:
     for fact in parsed.facts:
         if fact.kind in {"incoming_damage", "incoming_miss"}:
             return Match("combat", fact.source)
+        if fact.kind == "outgoing_damage":
+            # Field decision 2026-10-07: ANY (combat) line is fight
+            # activity -- your own outgoing shots trigger too. The ship
+            # being shot is the fight's other name, so it goes to the
+            # NPC filter exactly like an attacker would.
+            return Match("combat", fact.target or fact.source)
+        if fact.kind == "combat_generic":
+            # An unnameable (combat) line: no source for the heuristic,
+            # and is_likely_npc("") is False, so the PvE filter cannot
+            # eat it -- the line still says a fight is happening.
+            return Match("combat", fact.source)
         if fact.kind in {"incoming_scram", "incoming_point"}:
             return Match("warp_scramble", fact.source)
         if fact.kind == "decloak":

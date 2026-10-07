@@ -189,8 +189,13 @@ class AlertPolicy:
             # gates, so NPC fire never reaches it and the trigger inherits
             # the user's alert configuration for free. The trigger is a
             # queue put -- the dispatcher thread never waits on it.
+            # Warp scrambles count too (field decision 2026-10-07: ANY
+            # combat-category activity arms the stream -- being tackled is
+            # a fight no less than being shot).
             combat = [
-                character for character, event, _ in dispatched if event == "combat"
+                character
+                for character, event, _ in dispatched
+                if event in ("combat", "warp_scramble")
             ]
             if combat:
                 self._stream_trigger(combat)
