@@ -261,7 +261,13 @@ runs:
       # publishes on the asset itself. The script refuses to write
       # packaging/bin/obs-fightrecorder.dll on any mismatch, so what the
       # installer packs is by construction what upstream shipped.
+      #
+      # The token lifts the API call off the anonymous 60/hour-per-IP
+      # budget shared with every other tenant of these runners -- the
+      # 403s that cost a rerun on three test builds (2026-10-06/07).
       shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: python packaging/fetch_fightrecorder.py
 
     - name: Verify the FightRecorder DLL landed
