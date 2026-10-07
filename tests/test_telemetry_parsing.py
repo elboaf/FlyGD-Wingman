@@ -102,9 +102,13 @@ def test_zero_gj_incoming_neut_still_reports_neut_activity():
 
 
 def test_outgoing_neut_is_not_incoming_ewar_even_when_amount_is_zero():
+    """Still not INCOMING ewar -- but since the catch-all (field decision,
+    2026-10-07) every (combat) line yields at least the generic fact."""
     who, line = _fixture_line("incoming_neut.txt", "0xff7fffff><b>0 GJ")
 
-    assert parsing.parse_line(line, who).facts == ()
+    facts = parsing.parse_line(line, who).facts
+    assert [f.kind for f in facts] == ["combat_generic"]
+    assert facts[0].source == ""
 
 
 def test_outgoing_plain_amount_falls_back_to_stripped_text_capture():
@@ -635,7 +639,7 @@ def test_invalid_tackle_timestamp_preserves_named_fact_and_alert(stamp, error):
             "outgoing_damage",
             299,
             "Caldari Navy Scourge Heavy Missile",
-            None,
+            "combat",
             False,
         ),
         (
@@ -644,7 +648,7 @@ def test_invalid_tackle_timestamp_preserves_named_fact_and_alert(stamp, error):
             "outgoing_damage",
             22,
             "Acolyte II",
-            None,
+            "combat",
             False,
         ),
     ],
@@ -657,7 +661,11 @@ def test_non_tackle_fixture_sources_and_alert_decisions_remain_unchanged(
     assert fact.kind == kind
     assert fact.amount == amount
     assert fact.source.encode("utf-8") == source.encode("utf-8")
-    expected_alert = patterns.Match(event, source) if event else None
+    # The field decision (2026-10-07): outgoing lines alert too, with the
+    # ship being shot as the fight's other name.
+    expected_alert = (
+        patterns.Match(event, fact.target or fact.source) if event else None
+    )
     assert patterns.match_line(line, who) == expected_alert
     assert patterns.is_likely_npc(fact.source) is npc
     assert fact.observed_name is None

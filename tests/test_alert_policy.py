@@ -277,12 +277,17 @@ def test_the_stream_trigger_receives_dispatched_combat_characters():
     assert triggered == [["Alice", "Bob"]]
 
 
-def test_the_stream_trigger_never_sees_other_events():
+def test_the_stream_trigger_sees_scramble_but_not_decloak():
+    """Field decision 2026-10-07: any combat-category activity arms the
+    stream -- being tackled is a fight no less than being shot. Decloak
+    stays alert-only (it is not a (combat) line and says nothing about
+    joining a fight)."""
     triggered = []
     policy = _policy(stream_trigger=triggered.append)
     policy.handle([Event("Alice", "warp_scramble", PLAYER)], 10.0)
+    assert triggered == [["Alice"]]
     policy.handle([Event("Alice", "decloak", PLAYER)], 10.1)
-    assert triggered == []
+    assert triggered == [["Alice"]]
 
 
 def test_the_stream_trigger_never_sees_npc_or_disabled_combat():

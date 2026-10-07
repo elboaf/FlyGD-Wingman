@@ -304,6 +304,18 @@ def parse_line(line: str, character: str) -> ParsedLine:
     if "(notify)" in lower and "cloak deactivates" in lower:
         facts.append(ParsedFact(kind="decloak"))
 
+    # The catch-all (field decision, 2026-10-07): every (combat) line is
+    # fight activity, so one the typed matchers above cannot name -- an
+    # outgoing miss, a neutralizer, an exotic weapon line -- still yields
+    # a fact. alerts.match_line maps it to combat; with no name attached
+    # the PvE filter has nothing to call an NPC, so it triggers.
+    # Tackle-shaped lines are EXCLUDED: EVE writes warp-attempt lines
+    # into every fleet member's log naming from and to, and the typed
+    # matcher's ownership gate is what keeps bystanders silent -- the
+    # catch-all must not undo that fail-closed rule.
+    if "(combat)" in lower and not facts and not _is_incoming_tackle(lower):
+        facts.append(ParsedFact(kind="combat_generic"))
+
     return ParsedLine(
         line=line,
         character=character,

@@ -187,8 +187,8 @@ reached through injected seams or lazy `windll` binding):
   sound dispatch), `sound.py`. The focus gate fails closed: EVE broadcasts
   warp lines fleet-wide, so an alert with no proven owner must not fire.
   `streamcoupling.py` is the combat trigger (#320): every dispatched
-  `combat` alert rides the `AlertPolicy.handle` funnel into its queue (the
-  dispatcher never waits), and its own worker thread decides — every gated
+  `combat` or `warp_scramble` alert rides the `AlertPolicy.handle` funnel
+  (the dispatcher never waits), and its own worker thread decides — every gated
   combat alert refreshes its character's episode latch, the chord fires
   only when NO latch is active AND no episode is open (quiet period, read
   live, 60–900 default 300) and the mirror is actually running. The chord
