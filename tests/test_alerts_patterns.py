@@ -141,10 +141,37 @@ def test_damage_and_miss_are_one_event():
     )
 
 
-def test_outgoing_damage_does_not_alert():
-    """The colour code is the whole discriminator. Without it, every shot
-    you fire alerts you about yourself, continuously, during every fight."""
-    assert patterns.match_line(OUTGOING, CHARACTER) is None
+def test_outgoing_damage_alerts_with_the_target():
+    """Field decision 2026-10-07: ANY (combat) line is fight activity --
+    your own outgoing shots trigger too. The old contract ("the colour
+    code is the whole discriminator") was about alert noise; the user
+    traded that for a trigger that cannot miss a fight. The ship being
+    shot is the match's source, so the PvE filter judges it the same as
+    an attacker. (This synthetic keeps the two-segment shape, so the
+    parser's outgoing extractor declines it and the catch-all picks it
+    up -- the corpus fixtures below carry the real three-segment shape.)"""
+    match = patterns.match_line(OUTGOING, CHARACTER)
+    assert match == patterns.Match("combat", "")
+
+
+GENERIC_COMBAT = (
+    "[ 2026.08.24 20:42:53 ] (combat) You miss Bob Smith[BURN](Rifter) completely"
+)
+GENERIC_NEUT = (
+    "[ 2026.08.24 20:42:54 ] (combat) Your Heavy Energy Neutralizer activates"
+)
+
+
+def test_an_outgoing_miss_still_says_a_fight_is_happening():
+    """The catch-all: an unnameable (combat) line -- no parseable source,
+    no typed kind -- is still combat. Empty source means the PvE filter
+    has nothing to call an NPC, so it triggers."""
+    match = patterns.match_line(GENERIC_COMBAT, CHARACTER)
+    assert match == patterns.Match("combat", "")
+
+
+def test_an_unnameable_neut_line_still_says_a_fight_is_happening():
+    assert patterns.match_line(GENERIC_NEUT, CHARACTER) == patterns.Match("combat", "")
 
 
 def test_malformed_timestamp_still_alerts():
@@ -376,9 +403,13 @@ PLAYER_SOURCES = [
 @pytest.mark.parametrize(
     "name", ["outgoing_direct.txt", "outgoing_drone.txt"], ids=["direct", "drone"]
 )
-def test_outgoing_telemetry_fixtures_do_not_alert(name):
+def test_outgoing_telemetry_fixtures_alert_with_the_target(name):
+    """Flipped with the field decision (2026-10-07): outgoing shots are
+    fight activity and trigger, attributed to the ship being shot."""
     who, combat = _fixture_listener_and_combat(FIXTURES / name)
-    assert patterns.match_line(combat, who) is None
+    match = patterns.match_line(combat, who)
+    assert match is not None and match.event == "combat"
+    assert match.source.startswith("Mara Veld")
 
 
 @pytest.mark.skipif(not FIXTURES.is_dir(), reason="no gamelog corpus committed")
