@@ -44,6 +44,29 @@ RESTART_LIMIT = 3
 RESTART_WINDOW_S = 60.0
 
 
+def install_run_token(exe) -> str:
+    """The mirror's launch token, stable per install.
+
+    ProcGuard's default mints a fresh uuid per spawn -- that token's job
+    is orphan identity (record vs cmdline), and rotation serves nothing:
+    the check is "does the recorded token appear in this pid's command
+    line", which a constant answers just as well. What rotation DID do
+    was change the mirror's command line on every Wingman session, and
+    Discord's game-detection pipeline caches the launch attributes it
+    observed (its record holds exePath + cmdLine + window title) --
+    field evidence 2026-10-06/07: after a Wingman restart Discord still
+    held the PREVIOUS session's --token and never re-resolved the new
+    process, so the registered game showed undetected. The mirror is
+    the one child Discord must see as the same process every session,
+    so its token derives from the exe's own path: identical bytes on
+    every launch, different per install layout. The engine keeps the
+    per-run default -- nothing registers it.
+    """
+    import hashlib
+
+    return hashlib.sha256(str(exe).lower().encode("utf-8")).hexdigest()[:32]
+
+
 @dataclass(frozen=True)
 class MirrorStatus:
     """What the Streaming card row shows. States: ``off`` (user turned it

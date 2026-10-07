@@ -1143,7 +1143,14 @@ def main() -> int:
     # a missing mirror rather than breaking the bridge). Same orphan
     # discipline as the engine -- unconditional reclaim, opt-in restore.
     mirror_supervisor = mirrorsupervisor.MirrorSupervisor(
-        paths.mirror_exe(), paths.state_dir()
+        paths.mirror_exe(),
+        paths.state_dir(),
+        # The stable per-install run token: Discord caches the launch
+        # attributes it registered the mirror under, and a rotating
+        # --token changed the process's command line every session --
+        # the field's "Discord no longer sees the registered game"
+        # (see mirrorsupervisor.install_run_token).
+        token_factory=lambda: mirrorsupervisor.install_run_token(paths.mirror_exe()),
     )
     state.mirror_supervisor = mirror_supervisor
     reclaim_orphaned_mirror(mirror_supervisor)

@@ -59,6 +59,25 @@ def test_start_binds_the_child_to_the_job_object(tmp_path):
     assert assigned == [spawner.proc._handle]
 
 
+def test_the_install_run_token_is_stable_across_sessions():
+    """Discord caches the launch attributes it registered the mirror
+    under -- its record holds the command line, --token included -- and
+    a rotating token changed that line every Wingman session, so the
+    registered game showed undetected after each restart (field,
+    2026-10-06/07). The install token derives from the exe path:
+    identical bytes every launch, distinct per install."""
+    from wingman.mirrorsupervisor import install_run_token
+
+    same = "C:\\Program Files\\FlyGD Wingman\\_internal\\bin\\wingman-mirror.exe"
+    assert install_run_token(same) == install_run_token(same)
+    assert install_run_token(same.lower()) == install_run_token(same)
+    assert install_run_token(same) != install_run_token("C:\\elsewhere\\mirror.exe")
+    # The ProcGuard default's shape (uuid4().hex): 32 lowercase hex.
+    token = install_run_token(same)
+    assert len(token) == 32
+    int(token, 16)
+
+
 def test_start_with_a_missing_exe_reports_and_stays_down(tmp_path):
     spawner = FakeSpawner()
     sup = mirrorsupervisor.MirrorSupervisor(
