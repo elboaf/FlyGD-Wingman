@@ -18,6 +18,23 @@ from wingman.alerts.streamcoupling import (
     spell_chord,
 )
 
+
+def test_the_input_struct_is_the_real_win32_input_size():
+    """SendInput validates cbSize against the REAL INPUT, whose union's
+    largest member is MOUSEINPUT. A keyboard-only union computes 32 on
+    x64 and SendInput rejects every batch with a silent 0 -- how the
+    combat trigger logged "fired" through four field tests while
+    pressing nothing (2026-10-06). The structures live at module scope
+    so this pin runs on Linux CI."""
+    import ctypes
+
+    from wingman.alerts import streamcoupling
+
+    expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+    assert ctypes.sizeof(streamcoupling._INPUT) == expected
+    assert ctypes.sizeof(streamcoupling._KEYBDINPUT) == 24
+
+
 VK_CONTROL = 0x11
 VK_MENU = 0x12
 VK_SHIFT = 0x10

@@ -54,11 +54,13 @@ the real Win32 seams are lazy-ctypes functions touched only in
 production. Imports nothing from ``ui`` and never holds the window.
 """
 
+import ctypes
 import logging
 import queue
 import threading
 import time
 from collections.abc import Callable
+from ctypes import wintypes
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -77,6 +79,41 @@ _MODIFIER_VKS = (
 )
 
 _VK_NUMPAD_ENTER = 0x0D
+
+
+# The Win32 INPUT family at its true shape. The union's largest member is
+# MOUSEINPUT, and SendInput validates cbSize against the REAL INPUT: a
+# keyboard-only union computes 32 bytes on x64, and SendInput rejects every
+# batch with a silent 0 -- which is how every stream chord through
+# #320's field tests logged "fired" while pressing nothing (2026-10-06).
+# Module scope so the size pin can be asserted on Linux CI.
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT)]
+
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
 
 class ChordPlan(NamedTuple):
@@ -160,29 +197,10 @@ def send_keystrokes(plan: ChordPlan) -> None:
     and on any Win32 failure: the worker must survive the seam, and the
     armed row's honesty comes from the fire decision, not from here.
     """
-    import ctypes
-    from ctypes import wintypes
-
     try:
         user32 = ctypes.windll.user32
     except (AttributeError, OSError, ImportError):
         return
-
-    class _KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", wintypes.WORD),
-            ("wScan", wintypes.WORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
-        ]
-
-    class _INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [("ki", _KEYBDINPUT)]
-
-        _anonymous_ = ("u",)
-        _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
     KEYEVENTF_EXTENDEDKEY = 0x0001
     KEYEVENTF_KEYUP = 0x0002
@@ -219,7 +237,10 @@ def send_keystrokes(plan: ChordPlan) -> None:
     user32.SendInput.restype = ctypes.c_uint
     sent = user32.SendInput(len(array), array, ctypes.sizeof(_INPUT))
     if sent != len(array):
-        logger.debug(
+        # WARNING, not debug: a rejected batch is the exact failure that
+        # made the controller log "fired" above this line while nothing
+        # was pressed (the wrong-size INPUT incident, 2026-10-06).
+        logger.warning(
             "SendInput delivered %d of %d events for the stream chord",
             sent,
             len(array),
