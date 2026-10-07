@@ -261,7 +261,13 @@ runs:
       # publishes on the asset itself. The script refuses to write
       # packaging/bin/obs-fightrecorder.dll on any mismatch, so what the
       # installer packs is by construction what upstream shipped.
+      #
+      # The token lifts the API call off the anonymous 60/hour-per-IP
+      # budget shared with every other tenant of these runners -- the
+      # 403s that cost a rerun on three test builds (2026-10-06/07).
       shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: python packaging/fetch_fightrecorder.py
 
     - name: Verify the FightRecorder DLL landed
@@ -306,6 +312,30 @@ runs:
     - name: Build executable
       shell: pwsh
       run: uv run python -m PyInstaller packaging/uploader.spec --noconfirm
+
+    - name: Build the stream mirror executable
+      # The registered game (#312 rev 3) is its own small frozen process,
+      # built by its own spec and copied INTO the app tree at
+      # _internal/bin -- the exact path paths.mirror_exe() resolves;
+      # installer.iss ships dist/Wingman/* recursively, so no installer
+      # edit. Built into a SCRATCH distpath and copied in additively:
+      # PyInstaller --noconfirm REMOVES the COLLECT's output directory
+      # before writing it, and the spec's COLLECT is named "bin" -- so a
+      # distpath of dist/Wingman/_internal deleted the app's own
+      # _internal/bin (ffmpeg, ffprobe, the codec, AutoHotkey) on its way
+      # in; run 37530006761 failed on exactly that. Still strictly AFTER
+      # the app build: that build's COLLECT resets dist/Wingman and would
+      # delete the mirror, so the copy must follow it. The explicit exit
+      # check is the house rule for native commands; Copy-Item is a
+      # cmdlet and throws under the runner's ErrorActionPreference.
+      # console=False is load-bearing, not cosmetic -- a console would be
+      # a second top-level window in the process whose whole point is
+      # holding exactly one (packaging/mirror.spec header).
+      shell: pwsh
+      run: |
+        uv run python -m PyInstaller packaging/mirror.spec --noconfirm --distpath dist/mirror-build
+        if ($LASTEXITCODE -ne 0) { throw "the mirror build failed" }
+        Copy-Item -Recurse -Force dist/mirror-build/bin/* dist/Wingman/_internal/bin/
 
     - name: Verify setup YAML is bundled
       # overview_yaml imports yaml statically; yaml.cyaml imports yaml._yaml
@@ -486,6 +516,26 @@ runs:
         }
         $exe = "dist/Wingman/_internal/bin/AutoHotkeyU64.exe"
         if (-not (Test-Path $exe -PathType Leaf)) { throw "AutoHotkey interpreter missing from the bundle" }
+
+    - name: Verify the stream mirror was collected
+      # Same trap as the engine check above, one build later: the mirror is
+      # a second PyInstaller run whose COLLECT lands at
+      # _internal/bin/wingman-mirror.exe -- the path paths.mirror_exe()
+      # resolves and the file the setup ceremony (#321) has the user
+      # register in Discord. PyInstaller exits 0 when a COLLECT silently
+      # fails to land, so a green build with no exe here means the
+      # Streaming card reports a missing mirror and there is nothing to
+      # register. -PathType Leaf: prove a *file* landed, not a directory.
+      shell: pwsh
+      run: |
+        $exe = "dist/Wingman/_internal/bin/wingman-mirror.exe"
+        if (-not (Test-Path $exe -PathType Leaf)) {
+          throw "wingman-mirror.exe missing from the bundle - the mirror COLLECT did not land, and the registered game has no exe"
+        }
+        $runtime = "dist/Wingman/_internal/bin/_internal"
+        if (-not (Test-Path $runtime -PathType Container)) {
+          throw "wingman-mirror.exe runtime tree missing from the bundle - the exe would fail to bootstrap at launch"
+        }
 
     - name: Verify the app icon is bundled
       # Same failure shape as the two checks above: uploader.spec lists the

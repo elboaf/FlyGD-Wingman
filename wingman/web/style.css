@@ -1888,6 +1888,12 @@ button.btn:disabled,
    10px + 6px keeps the hairline and the rank and returns 32px. */
 .settings .card > .bind-group { margin-top: 10px; padding-top: 6px; }
 
+/* The Combat auto-start divider hides with its section when the
+   installation has no mirror (#321) -- streaming.js toggles `hidden` on
+   it, and .bind-group's own display: flex would beat the UA stylesheet's
+   [hidden] rule, the trap this sheet documents six times over. */
+.settings .card > .bind-group[hidden] { display: none; }
+
 /* The first divider is NOT special-cased, and that is deliberate after
    measuring it. An earlier draft carried `.pv-master + .bind-group
    { margin-top: 0 }` on the theory that .pv-master's own 12px of padding
@@ -4770,6 +4776,19 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #f-webhook { font-family: var(--mono); font-size: var(--fs-mono); letter-spacing: .04em; }
 #f-webhook[type="text"] { letter-spacing: 0; }
 .settings .toggle { flex: none; min-width: 62px; }
+
+/* The setup ceremony's registration path (#321), the browse target Discord's
+   Add-it dialog opens on: an installed path runs through _internal\bin, which
+   nobody guesses, so the resolved value is shown for copying. Monospace keeps
+   its length honest, and overflow-wrap: anywhere lets the path break rather
+   than push the card wide at the 840 floor -- a Windows path has no natural
+   break. There is no bare .mono class (see the note at the bottom of this
+   sheet), so the face is set directly; no display property here, because JS
+   toggles hidden on this span and an author display rule would beat it. */
+#mirror-exe-path {
+  font-family: var(--mono); font-size: var(--fs-mono);
+  overflow-wrap: anywhere;
+}
 
 /* Per-card inline message, where a refusal or an unwritable-file warning
    lands now that there is no Save button. Deliberately NOT _alert's modal:

@@ -37,3 +37,7 @@ packaging/version.iss
 # committed.
 packaging/relnotes.txt
 .zcode/
+
+# Per-chat agent worktrees and scratch space (agent protocol: run branches
+# carry the work; the scratch checkouts themselves are never committed).
+.scratch/

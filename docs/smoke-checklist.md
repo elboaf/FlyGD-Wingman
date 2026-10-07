@@ -15,6 +15,115 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Combat Go Live ceremony (#321) — Windows acceptance NOT RUN (2026-10-06)
+
+The one-time setup ceremony and the feature's acceptance pass, run on a
+fresh machine (no earlier Wingman install, a real Discord account in a
+voice channel). The card's helper text is the only setup documentation the
+product ships, so a step no card text covers is a defect of this pass even
+when the step itself works. The trigger section below pins the trigger's
+deep behavior (refusals, quiet-period clamps); this pass exercises the
+whole ceremony end to end on the packaged install, where the exe the
+ceremony registers is the frozen `wingman-mirror.exe` the installer ships.
+
+- [ ] **The card walks the ceremony.** Fresh install, Streaming section:
+      the four steps appear in order at the controls that perform them —
+      register the mirror exe in Discord's Registered Games, start the
+      mirror and pick it once in Go Live's source picker (under the mirror
+      row); map Toggle Screen Share in Discord, then record the same chord
+      here (in the Combat auto-start block); and the lost-registration
+      recovery sits next to the armed row. Nothing names a Discord surface
+      this Discord build does not have.
+- [ ] **"Never the main exe" is visible where the user registers.** The
+      warning against registering `wingman.exe` is a plain visible line at
+      the registration step, not behind a disclosure, and states the
+      consequence (every Wingman window inside Discord's game detection).
+- [ ] **The registration path is the real installed exe.** The path shown
+      under the mirror row is selectable text and matches where the
+      installer actually put `wingman-mirror.exe`; browsing to it in
+      Discord's Add-it dialog works; a path that long wraps without
+      pushing the card wider than the window.
+- [ ] **Register → start → pick.** Add the mirror in Discord's Registered
+      Games, press Start mirror, start a Go Live and pick the mirror once:
+      the stream comes up showing the mirror (parked bottom-of-z-order;
+      covered by other windows is fine). Back in the card the mirror row
+      says Running and the armed row has flipped from "Standing by" to
+      "Armed".
+- [ ] **Map → record.** Map Toggle Screen Share to a chord in Discord,
+      record the same chord on the card: the row shows it and the collision
+      line appears. Escape cancels a capture without changing the stored
+      chord; Clear empties it and the armed row returns to Off until a
+      chord is recorded again. (The #319 fork note in the trigger section
+      applies here too — record which capture path won on real Discord.)
+- [ ] **The ceremony fires end to end.** In a voice channel, take a fight
+      with alerts enabled: Discord goes live exactly once, the armed row
+      read Holding during the fight and "Last fired HH:MM — <character>"
+      after, and a second account in the fleet sees the client that was
+      focused at contact. Sustained combat presses no second chord.
+- [ ] **Lost registration is diagnosable from the card.** Remove
+      `wingman-mirror.exe` from Discord's Registered Games, wait out the
+      quiet period, take a fight: the armed row stays Armed, nothing
+      streams, and no error appears anywhere — the known silent no-op.
+      The card's diagnostic text is what walks the operator through the
+      recovery (re-add the mirror exe, pick it in the source picker once
+      more), and following it restores a working fire on the next fight.
+- [ ] **Mirror start/stop and out-of-band recovery.** Stop mirror takes
+      the streamable window away and the armed row returns to "Standing
+      by"; Start mirror restores both. Kill `wingman-mirror.exe` from Task
+      Manager while the mirror should be running: the supervisor brings it
+      back within the poll cadence, with no manual start and no error.
+- [ ] **Unavailable installation stays quiet.** (Developer checkout with
+      no `packaging/bin/wingman-mirror.exe`; not reachable on a real
+      install.) The mirror row says "Not available in this installation"
+      and the ceremony text, the path row, the warning and every Combat
+      auto-start control — divider header included — hide with it: no
+      setup instructions for a feature that cannot run.
+
+## Combat Go Live trigger (#319/#320) — Windows acceptance NOT RUN (2026-10-06)
+
+The Streaming card's Combat auto-start: record the Discord Toggle Screen
+Share keybind (that recording IS the consent), set the quiet period, and
+one gated combat alert fires the chord exactly once per fight. Needs real
+Discord (registered `wingman-mirror.exe`, mapped Toggle Screen Share
+keybind) and a real fight for the fire steps.
+
+- [ ] **Fully inert with no chord.** With the keybind row showing
+      "Not set": fly into combat with alerts enabled. No keys are pressed
+      anywhere, the armed row says Off, and Discord never starts
+      streaming. Record a chord, then Clear it and repeat: still nothing.
+- [ ] **The armed row states.** Chord recorded, mirror stopped: the row
+      says "Standing by — start the mirror to arm". Start the mirror
+      (and add it to Discord's Registered Games once, if a fresh
+      install): the row flips to "Armed". This is also the #319 fork
+      test: if recording the chord here does nothing while a real
+      Discord window is focused (swallowed or double-fired keydown), the
+      page-level capture loses to the previews' native-armed path —
+      record which way it went.
+- [ ] **One chord per fight.** In a voice channel, fly into combat with
+      alerts enabled. Discord starts streaming the mirror exactly once;
+      sustained combat (further combat alerts, other characters in fleet
+      firing) never presses the chord again — a second press would end
+      the fleet's feed. The armed row showed "Holding — episode running
+      for …" during the fight and "Last fired HH:MM — <character>" after.
+- [ ] **The auto-stop press (alternation).** After the fight has been
+      quiet past the quiet period, Wingman presses the chord once more:
+      Discord's stream ENDS without you touching anything, and the armed
+      row says "Last fired HH:MM — stop press (fight quiet)". A NEW fight
+      then fires the chord once more and the stream starts again.
+- [ ] **Quiet-period re-arm.** Covered by the auto-stop step above: the
+      row reads "Armed" again after the stop press, without a restart.
+- [ ] **Quiet period commits on Enter, clamped visibly.** Type 45 and
+      press Enter: the field shows 60 (the clamp, echoed). Type 5000:
+      the field shows 900. Type "soon" and press Enter: the field keeps
+      the stored value and one message line names the 60–900 range.
+      Clicking elsewhere never commits a draft.
+- [ ] **No EVE client focused still fires.** With a browser focused
+      (NOT Discord), take a fight: the chord fires — the mirror shows
+      the last client it had. (There is no Discord-foreground refusal:
+      decided 2026-10-06, the chord is the user's own bind and fires
+      wherever focus is — the chord row's collision warning covers the
+      chat-box case.)
+
 ## Screenshot UX step 7 — installed Windows acceptance NOT RUN
 
 Formations and Setup import use synthetic presentation checks at 1015×633 and
@@ -2746,7 +2855,7 @@ native behavior below still requires Windows/WebView2 checks.
       bypassed rather than the markup being wrong.
 - [ ] **Settings rail entries, General last** — Uploading, Companion previews,
       EVE Characters, Bookmarks, Previews, Wanderer API, Fleet telemetry, Alerts,
-      General — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
+      Streaming, General — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
       Folders and Discord entries were consolidated under Uploading; the
       Gamelog folder card now lives in Alerts. The Google account, Recording
       folder and Combat log webhook cards must be in Uploading, and

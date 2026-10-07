@@ -796,6 +796,87 @@
     });
   };
 
+  // stream_mirror_state is a read (see streaming.js). The dev double
+  // shows the card's honest not-running row so the section can be
+  // eyeballed under ?dev=1 without launching Python. The chord starts
+  // recorded so the Combat auto-start section renders its filled state;
+  // stream_chord_set mutates it, so Record/Clear travel like the real
+  // bridge.
+  var devChord = '^!d';
+  var devChordDisplay = function () {
+    // Crude, on purpose: the real derivation is bookmarks.parse_ahk on
+    // the Python side, so the page holds no notation table. Enough to
+    // eyeball Record/Clear here.
+    var symbols = {'^': 'Ctrl', '!': 'Alt', '+': 'Shift', '#': 'Win'};
+    var parts = [];
+    var i = 0;
+    while (symbols[devChord.charAt(i)]) { parts.push(symbols[devChord.charAt(i)]); i++; }
+    var base = devChord.slice(i);
+    if (!base) { return ''; }
+    parts.push(base.length === 1 ? base.toUpperCase() : base);
+    return parts.join('+');
+  };
+  api.stream_mirror_state = function () {
+    console.log('DEV api.stream_mirror_state()');
+    return Promise.resolve({
+      available: true, running: false, state: 'stopped',
+      error: null, mirror_on: false,
+      // The ceremony's registration path (#321) -- a plausible installed
+      // shape, so the path row and its wrapping render under ?dev=1.
+      exe_path: 'C:\\Program Files\\FlyGD Wingman\\_internal\\bin\\wingman-mirror.exe',
+      chord: devChord, chord_display: devChordDisplay()
+    });
+  };
+  api.stream_chord_set = function (chord) {
+    console.log('DEV api.stream_chord_set(', chord, ')');
+    devChord = (typeof chord === 'string') ? chord : '';
+    return Promise.resolve({
+      ok: true, error: null, chord: devChord, chord_display: devChordDisplay()
+    });
+  };
+  api.stream_mirror_start = function () {
+    console.log('DEV api.stream_mirror_start()');
+    return Promise.resolve({ok: true, running: true, error: null});
+  };
+  api.stream_mirror_stop = function () {
+    console.log('DEV api.stream_mirror_stop()');
+    return Promise.resolve({ok: true, running: false, error: null});
+  };
+
+  // The combat auto-start read (#320) is a section-entry read like the
+  // mirror's, so it needs a real double -- a missing one would leave the
+  // armed row at "Checking..." forever under ?dev=1. Starts armed with a
+  // fired history so every row renders; stream_quiet_set mutates it the
+  // way the real bridge would (refuse non-numeric, clamp the range).
+  var devQuiet = 300;
+  api.stream_coupling_state = function () {
+    console.log('DEV api.stream_coupling_state()');
+    return Promise.resolve({
+      state: devChord ? 'armed' : 'inert',
+      chord_display: devChord ? devChordDisplay() : '',
+      chord_sendable: !!devChord,
+      quiet_s: devQuiet,
+      latched: [],
+      latched_remaining_s: 0,
+      last_fired_character: 'Kuan Dai',
+      last_fired_display: '12:41'
+    });
+  };
+  api.stream_quiet_set = function (value) {
+    console.log('DEV api.stream_quiet_set(', value, ')');
+    var n = parseInt(value, 10);
+    if (isNaN(n)) {
+      return Promise.resolve({
+        applied: false, persisted: false,
+        error: 'Enter a number of seconds between 60 and 900.'
+      });
+    }
+    devQuiet = Math.max(60, Math.min(900, n));
+    return Promise.resolve({
+      applied: true, persisted: true, error: null, quiet_s: devQuiet
+    });
+  };
+
   // NOT generic stubs, for the same reason save_settings above is not: the
   // page guards on `!ok`, and the real bridge returns True even for a
   // no-op. A null here would make plan switching and forget dead in the
@@ -5155,6 +5236,27 @@
       short: { FinETag: 'e (end of life)', FinSlash: '/ (half mass)',
                FinS: 'f (frig hole)', FinC: 'c (critical)' } }
   ];
+
+  // The capture seam both bookmarks.js and streaming.js record through
+  // (ADR 0002's one resolver). Fabricates a plausible chord so an armed
+  // capture's keydown travels the whole flow under ?dev=1 -- resolve,
+  // store, render -- instead of dying at the bridge; clearly fake, and
+  // the position warning (warn) has a dedicated streaming.js sentence
+  // worth seeing, so one double carries it.
+  var devCaptureToggle = false;
+  api.capture_bind = function (parts) {
+    console.log('DEV api.capture_bind(', parts, ')');
+    devCaptureToggle = !devCaptureToggle;
+    if (devCaptureToggle) {
+      return Promise.resolve({
+        ahk: '^!p', display: 'Ctrl+Alt+P', error: null, warn: null
+      });
+    }
+    return Promise.resolve({
+      ahk: '^!p', display: 'Ctrl+Alt+P', error: null,
+      warn: 'no-layout'
+    });
+  };
 
   api.get_bookmarks = function () {
     console.log('DEV api.get_bookmarks()');

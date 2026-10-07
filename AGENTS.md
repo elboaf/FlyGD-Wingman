@@ -186,6 +186,46 @@ reached through injected seams or lazy `windll` binding):
   `state.py` (what an alert does over time), `service.py` (focus gating and
   sound dispatch), `sound.py`. The focus gate fails closed: EVE broadcasts
   warp lines fleet-wide, so an alert with no proven owner must not fire.
+  `streamcoupling.py` is the combat trigger (#320): every dispatched
+  `combat` alert rides the `AlertPolicy.handle` funnel into its queue (the
+  dispatcher never waits), and its own worker thread decides — every gated
+  combat alert refreshes its character's episode latch, the chord fires
+  only when NO latch is active AND no episode is open (quiet period, read
+  live, 60–900 default 300) and the mirror is actually running. The chord
+  is a toggle, so the presses alternate: with an episode open the worker
+  idles on a timed wake and presses the same chord once more when every
+  latch has expired (field finding 2026-10-06 — without the stop, the
+  stream runs forever and the NEXT fight's start press toggles it off
+  mid-fight); a chord cleared or a mirror death mid-episode closes the
+  episode without pressing. No foreground gate (decided
+  2026-10-06): the chord is the user's own Discord bind, so it fires
+  wherever focus is — its original Discord-foreground check never
+  worked (wrong DLL plus the unpinned-HWND truncation) and was removed
+  rather than repaired. The send is an injected seam spelling the stored
+  chord through `spell_chord` (produced characters resolve through
+  `keylayout.char_vk`, position tokens through `preview.gestures.vk_for`
+  — one VK table, not two). It imports nothing from `ui`; push literals
+  live in `ui/api.py`.
+- `streaming/` — the combat Go Live mirror (#312): `mirror.py` is the
+  streamable window Discord pins — one borderless `WS_POPUP` window created
+  at `HWND_BOTTOM`, never activated (`MA_NOACTIVATE`), never minimized
+  (`WS_MINIMIZEBOX` stripped, `SC_MINIMIZE` swallowed — a minimized mirror
+  stops compositing and the stream pauses), parked cloak-primary
+  (`DWMWA_CLOAK`; `park_mode` stays honest, covered on-desktop is the
+  fallback — never off-desktop, that freezes the composed surface), showing
+  one DWM thumbnail of the focused admitted EVE client (the house title
+  rule, not a substring). Sticky last client on non-EVE focus; source death
+  releases routinely and stays sticky; rebind is unregister + re-register
+  (DWM has no retarget). `Mirror.handle_message` is the wndproc as a plain
+  method — every branch unit-tests on Linux with fake libs
+  (`tests/test_streaming_mirror.py`); `main()` owns only window + pump +
+  hook, and the supervisor (#317) owns process lifetime. The mirror never
+  sends input to EVE and never touches a client's position, size or
+  z-order. Packaged as its own frozen build (`packaging/mirror.spec`,
+  windowed — the registered process must hold exactly one top-level
+  window), collected into `dist/Wingman/_internal/bin` by the shared
+  build action strictly after the app build — the path
+  `paths.mirror_exe()` resolves (#318).
 - `eveauth/` — shared EVE SSO: identities, grants, PKCE, JWT validation, the
   loopback listener, DPAPI wrapping. Capability-agnostic; Skills and
   Fittings both authenticate here and neither imports the other. The
@@ -275,7 +315,7 @@ strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
 `index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `wanderer`, `companions`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
-`firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
+`firstrun`, `streaming`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
 its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
@@ -290,7 +330,19 @@ Enter in the field, or the Test connection click, which carries a pasted
 Bookmark API token draft after the connection write settles. The prime token
 is optional; while blank, Set Root primes nothing and staging stays idle.
 `WM.route` switches destinations, `WM.section` switches
-Settings groups; both have enter/leave contracts. Uploading and Previews also have
+Settings groups; both have enter/leave contracts.
+`streaming.js` owns the Discord streaming card: the mirror row is
+tick-rendered while visible, but the consent chord row renders only on
+entry and its own commits — a poll tick must never fight an armed
+capture. Chord capture is page-level (the Bookmarks pattern) through the
+one ADR 0002 seam; if a real Discord swallows or double-fires the
+keydown, the fallback is the previews' native-armed capture path.
+The armed row (#320) is status, not a draft: tick-pushed while visible
+(the worker's transitions plus the re-arm the clock flips), saying
+armed/held/standby and who fired — never live. The quiet field is the
+scoped exception to tick-rendering: a held draft is never overwritten
+by a push, and it commits on Enter only, clamped value echoed back.
+Uploading and Previews also have
 static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`
 without section re-entry or reads; `WM.openSettingsSection(section, tab)` supports
 explicit subpage links. Hidden panels retain drafts and scroll, but tab changes

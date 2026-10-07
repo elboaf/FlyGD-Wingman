@@ -10,7 +10,17 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import combatlog, discord, hotkeys, obsconfig, paths, raiseipc, stitch, watcher
+from . import (
+    combatlog,
+    discord,
+    hotkeys,
+    mirrorsupervisor,
+    obsconfig,
+    paths,
+    raiseipc,
+    stitch,
+    watcher,
+)
 from . import settings as settings_mod
 from .alerts.controller import AlertsController, AlertsPorts
 from .eveauth import application
@@ -293,6 +303,25 @@ def poll_tick(w, api, icon, window, state: PollState) -> None:
         # Its own guard: a status-push failure must not count against the
         # recording watcher's failure counter or skip poll_once.
         logger.exception("Engine status push failed.")
+    # Recovery first, then the honest row: an out-of-band death the
+    # budget can absorb is restarted before the push, so the card
+    # never shows stopped-and-staying-that-way for a mirror_on user.
+    try:
+        api.ensure_mirror_if_enabled()
+    except Exception:
+        logger.exception("Mirror recovery check failed.")
+    try:
+        api._push_mirror_status()
+    except Exception:
+        logger.exception("Mirror status push failed.")
+    try:
+        # The re-arm transition happens in wall-clock time, which no
+        # combat dispatch observes: the tick is what flips the armed row
+        # back to armed after the last latch expires (pushes dedup
+        # inside the Api, so a quiet row costs nothing).
+        api._push_stream_coupling_tick()
+    except Exception:
+        logger.exception("Stream coupling status push failed.")
     try:
         ready = w.poll_once()
         uploading = api._busy()
@@ -354,6 +383,49 @@ def reclaim_orphaned_engine(engine) -> None:
         engine.recover_orphan()
     except Exception:
         logger.exception("Orphan reclamation failed; continuing startup.")
+
+
+def reclaim_orphaned_mirror(supervisor) -> None:
+    """Terminate a mirror left behind by a crashed session (#317).
+
+    Same discipline as reclaim_orphaned_engine: runs at startup regardless
+    of the setting, because stop() clears the pid record even when it could
+    not confirm the death, and recovery otherwise runs only from start() --
+    which runs only when mirror_on. Never raises: a failure to reclaim must
+    not stop the app starting.
+    """
+    if supervisor is None:
+        return
+    try:
+        supervisor.recover_orphan()
+    except Exception:
+        logger.exception("Mirror orphan reclamation failed; continuing startup.")
+
+
+def start_mirror_if_enabled(supervisor, coupling) -> None:
+    """Restore the stream mirror only when the user left it on.
+
+    Sticky on-demand (the lifecycle decision): mirror_on persists, shipped
+    default OFF -- an upgrading install must not acquire a background
+    process, or a capture window Discord could pin, by upgrading.
+    """
+    if supervisor is None or not coupling.get("mirror_on"):
+        return
+    supervisor.start()
+
+
+def shutdown_mirror(supervisor) -> None:
+    """Stop the mirror on the way out, whatever else has gone wrong.
+
+    A mirror that outlives Wingman keeps a window Discord pins alive with
+    nothing left to stop it, so this must never be the thing that raises.
+    """
+    if supervisor is None:
+        return
+    try:
+        supervisor.stop()
+    except Exception:
+        logger.exception("Mirror shutdown failed; continuing teardown.")
 
 
 def start_engine_if_enabled(engine, section) -> None:
@@ -661,7 +733,45 @@ def build_alerts_controller(state, host, api_box) -> AlertsController:
     )
 
 
-def build_alert_policy(state, host, alerts_controller=None):
+def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
+    """The combat trigger (#320), built before the Api whose push adapters
+    it borrows -- the ports resolve through api_box lazily, the same way
+    build_alerts_controller's health ports do."""
+    from .alerts.streamcoupling import (
+        StreamCouplingController,
+        StreamCouplingPorts,
+        send_keystrokes,
+    )
+    from .keylayout import char_vk as layout_char_vk
+
+    # The committed reader, retained for this document's lifetime: the
+    # worker reads the coupling through it on every decision, so a quiet
+    # period or chord change lands without a restart and no reader can
+    # observe a half-normalized settings document mid-update.
+    committed = settings_mod.committed_preview(state.settings)
+
+    def mirror_running():
+        return mirror_supervisor is not None and mirror_supervisor.is_running()
+
+    return StreamCouplingController(
+        StreamCouplingPorts(
+            coupling=lambda: (
+                (committed.get("alerts") or {}).get("stream_coupling") or {}
+            ),
+            mirror_running=mirror_running,
+            char_vk=layout_char_vk,
+            send=send_keystrokes,
+            publish_state=lambda payload: api_box["api"]._push_stream_coupling_state(
+                payload
+            ),
+            publish_fired=lambda payload: api_box["api"]._publish_stream_coupling_fired(
+                payload
+            ),
+        )
+    )
+
+
+def build_alert_policy(state, host, alerts_controller=None, stream_coupling=None):
     """Alert decisions without a private file-reader thread."""
     if host is None:
         return None
@@ -681,6 +791,9 @@ def build_alert_policy(state, host, alerts_controller=None):
             ),
             custom_current=(
                 alerts_controller.is_current if alerts_controller is not None else None
+            ),
+            stream_trigger=(
+                stream_coupling.observe_combat if stream_coupling is not None else None
             ),
         )
     except Exception:
@@ -1025,6 +1138,27 @@ def main() -> int:
     reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
+    # The stream mirror (#312/#317): constructed even off Windows
+    # (paths.mirror_exe() returns None there and the supervisor reports
+    # a missing mirror rather than breaking the bridge). Same orphan
+    # discipline as the engine -- unconditional reclaim, opt-in restore.
+    mirror_supervisor = mirrorsupervisor.MirrorSupervisor(
+        paths.mirror_exe(),
+        paths.state_dir(),
+        # The stable per-install run token: Discord caches the launch
+        # attributes it registered the mirror under, and a rotating
+        # --token changed the process's command line every session --
+        # the field's "Discord no longer sees the registered game"
+        # (see mirrorsupervisor.install_run_token).
+        token_factory=lambda: mirrorsupervisor.install_run_token(paths.mirror_exe()),
+    )
+    state.mirror_supervisor = mirror_supervisor
+    reclaim_orphaned_mirror(mirror_supervisor)
+    start_mirror_if_enabled(
+        mirror_supervisor,
+        state.settings.get("preview", {}).get("alerts", {}).get("stream_coupling", {}),
+    )
+
     # Retain registration until the host/controller take ownership; the weak
     # registry intentionally does not keep settings documents alive itself.
     _preview_config = settings_mod.committed_preview(state.settings)
@@ -1044,7 +1178,14 @@ def main() -> int:
     )
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
-    alert_policy = build_alert_policy(state, preview_host, alerts_controller)
+    # The combat trigger (#320) is built before the policy whose funnel
+    # feeds it and before the Api whose push adapters it borrows.
+    stream_coupling = build_stream_coupling_controller(
+        state, api_box, mirror_supervisor=mirror_supervisor
+    )
+    alert_policy = build_alert_policy(
+        state, preview_host, alerts_controller, stream_coupling
+    )
     from .fleetsharing.timing import TimingContext
 
     # One process lifetime, including lazy telemetry retries and worker restarts.
@@ -1070,6 +1211,7 @@ def main() -> int:
         fleet_sharing=sharing_worker,
         fleet_clock=fleet_clock,
         alerts_controller=alerts_controller,
+        stream_coupling=stream_coupling,
         telemetry_factory=lambda: build_telemetry(
             state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
         ),
@@ -1319,6 +1461,13 @@ def main() -> int:
         if scheduler is not None:
             _teardown_step("scheduler", scheduler.stop)
         shutdown_engine(engine)
+        # The pinned mirror outliving Wingman is the same class of
+        # orphan as the engine: stop it on every exit path.
+        _teardown_step("stream mirror", lambda: shutdown_mirror(mirror_supervisor))
+        # The trigger's worker owns the send seam; close it before the
+        # deeper teardowns so a final combat dispatch can never fire
+        # into a machine already standing down.
+        _teardown_step("stream coupling", stream_coupling.close)
         # Close updater state before subsystem teardown. This suppresses late
         # worker pushes and removes a ready file on ordinary Quit while retaining
         # the persistent on-disk marker/file pair already handed to Setup.

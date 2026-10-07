@@ -62,6 +62,7 @@ def test_defaults_are_the_documented_values():
             "seen": [],
             "restore_preview_positions": True,
             "alerts": {
+                "stream_coupling": {"chord": "", "quiet_s": 300, "mirror_on": False},
                 "enabled": False,
                 "pve_filter": True,
                 "persist_until_selected": True,

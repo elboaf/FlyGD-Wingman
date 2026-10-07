@@ -330,7 +330,7 @@ test('Companions rail stays available with EVE hidden and Settings remembers it'
   assert.equal(p.WM.current_section, 'uploading');
   p.WM.apply_eve_gate(false);
   assert.deepEqual(p.document.querySelectorAll('.rail-item').filter(node => !node.hidden)
-    .map(node => node.dataset.section), ['uploading', 'companions', 'general']);
+    .map(node => node.dataset.section), ['uploading', 'companions', 'streaming', 'general']);
   p.WM.route('settings'); await turn();
   await p.fire(p.document.querySelector('.rail-item[data-section="companions"]'), 'click');
   await p.reply('companion_previews_state', state());

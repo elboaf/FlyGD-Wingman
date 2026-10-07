@@ -260,6 +260,7 @@ SCREENS = (
         True,
         True,
     ),
+    Screen("settings-streaming", "Settings - Streaming", "settings", "streaming"),
     Screen("settings-general", "Settings - General", "settings", "general"),
     Screen("profiles", "Profiles", "evesettings", gated=True),
     Screen(

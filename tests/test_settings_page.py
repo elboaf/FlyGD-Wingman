@@ -184,6 +184,7 @@ def test_the_rail_and_the_panes_are_in_the_same_order():
         "wanderer",
         "fleet",
         "alerts",
+        "streaming",
         "general",
     ]
     assert [name for name, _ in _rail()] == expected

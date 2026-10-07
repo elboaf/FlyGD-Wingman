@@ -361,6 +361,11 @@ class AppState:
     # method that touches it must handle that -- e.g. by no-op'ing rather
     # than crashing the bridge thread on an AttributeError.
     engine: object | None = None
+    # None until main() wires the MirrorSupervisor (#317). Every bridge
+    # method that touches it must handle None (off-Windows, or a card
+    # rendered before construction completes) by no-op'ing or reporting
+    # unavailable, never by raising off the bridge thread.
+    mirror_supervisor: object | None = None
 
 
 @dataclass
@@ -401,6 +406,7 @@ class Api:
         fleet_clock=time.monotonic,
         telemetry_factory=None,
         alerts_controller=None,
+        stream_coupling=None,
         authority=None,
         fittings=None,
         authority_warnings=(),
@@ -596,6 +602,12 @@ class Api:
             if alerts_controller is not None
             else self._build_alerts_controller()
         )
+        # The combat trigger (#320), built in main() before this Api --
+        # its publish ports resolve back into the two _push adapters
+        # below. None only in bridge-level tests that build an Api by
+        # hand; every consumer treats None as the inert payload.
+        self._stream_coupling = stream_coupling
+        self._last_coupling_push = None
         self._eve_runtime_lock = threading.RLock()
         self._eve_runtime_closed = False
         self._eve_runtime_stop_requested = False
@@ -7254,6 +7266,280 @@ class Api:
             "alerts": dict(alerts),
             **reader,
         }
+
+    # ---- Stream mirror (#317) --------------------------------------------
+
+    def _chord_fields(self, coupling) -> dict:
+        """The consent fields the card shows, derived Python-side so the
+        page holds no notation table of its own (the bookmarks rule).
+
+        A stored chord the notation cannot spell displays as not set --
+        the validator (#319) already drops such values on load, so this
+        only covers a chord written by an older build between load and
+        now, and the honest rendering of an unspellable chord is the same
+        as no chord: nothing may fire on it.
+        """
+        chord = coupling.get("chord") or ""
+        display = ""
+        if chord:
+            parsed = bookmarks.parse_ahk(chord)
+            if not parsed["error"]:
+                display = parsed["display"]
+        return {"chord": chord, "chord_display": display}
+
+    def _mirror_state_payload(self):
+        """The one state shape both the card read and the push carry."""
+        supervisor = self._state.mirror_supervisor
+        coupling = (
+            self._state.settings.get("preview", {})
+            .get("alerts", {})
+            .get("stream_coupling", {})
+        )
+        if supervisor is None:
+            return {
+                "available": False,
+                "running": False,
+                "state": "unavailable",
+                "error": None,
+                "mirror_on": False,
+                "exe_path": None,
+                **self._chord_fields(coupling),
+            }
+        status = supervisor.status(enabled=bool(coupling.get("mirror_on")))
+        return {
+            "available": True,
+            "running": status.state == "running",
+            "state": status.state,
+            "error": status.last_error,
+            "mirror_on": bool(coupling.get("mirror_on")),
+            # The ceremony's registration path (#321): what Discord's
+            # Add-it dialog must be pointed at, resolved once at launch.
+            "exe_path": supervisor.exe_path,
+            **self._chord_fields(coupling),
+        }
+
+    def ensure_mirror_if_enabled(self) -> None:
+        """The poll tick's recovery hook: restart an out-of-band death
+        within the supervisor's burst budget, only when the user's
+        mirror_on ask is still standing. Never starts a mirror the user
+        did not ask for."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return
+        coupling = (
+            self._state.settings.get("preview", {})
+            .get("alerts", {})
+            .get("stream_coupling", {})
+        )
+        if coupling.get("mirror_on"):
+            supervisor.ensure_running()
+
+    def _push_mirror_status(self) -> None:
+        """Publish mirror state to the page (poll tick; state changes).
+
+        Like onEveStatus, pushed regardless of route: the mirror can die
+        out-of-band while the user is anywhere in the app.
+        """
+        self._push("onMirrorStatus", self._mirror_state_payload())
+
+    def stream_mirror_state(self) -> dict:
+        """Everything the Streaming card needs, in one read.
+
+        A read, not a push-at-launch, for the reason get_alert_state
+        documents: the supervisor is constructed before the window, so a
+        state discovered at launch would be pushed into a window that is
+        not there yet. The page asks on entering the section.
+        """
+        return self._mirror_state_payload()
+
+    def stream_mirror_start(self) -> dict:
+        """Start the mirror and persist mirror_on (the sticky ask)."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return {
+                "ok": False,
+                "running": False,
+                "error": "The stream mirror is unavailable in this installation.",
+            }
+        ok = supervisor.start()
+        if ok:
+            self._set_stream_coupling(mirror_on=True)
+        payload = self._mirror_state_payload()
+        return {
+            "ok": ok,
+            "running": payload["running"],
+            "error": None if ok else (supervisor.last_error or "could not start"),
+        }
+
+    def stream_mirror_stop(self) -> dict:
+        """Stop the mirror and clear mirror_on (an explicit off)."""
+        supervisor = self._state.mirror_supervisor
+        if supervisor is None:
+            return {"ok": False, "running": False, "error": "unavailable"}
+        supervisor.stop()
+        self._set_stream_coupling(mirror_on=False)
+        return {"ok": True, "running": False, "error": None}
+
+    def stream_chord_set(self, chord) -> dict:
+        """Persist the recorded Discord Toggle-Screen-Share chord (#319) --
+        or, with an empty string, clear it.
+
+        PRESENCE of the chord is the consent gate: no separate on/off
+        checkbox, the empty field is the feature's off switch (the
+        Wanderer prime token's rule), so clearing is an ordinary write of
+        the default, not a special state. A non-empty chord must parse as
+        storable AHK notation -- the same parser the settings validator
+        applies on load -- because the trigger (#320) spells its
+        SendInput out of exactly this notation. A non-string argument
+        writes nothing: only an explicit empty string may clear consent,
+        and consent must never be invented OR erased by a type mismatch.
+
+        Resolution is NOT this method's job: the page resolves the
+        keydown through ``capture_bind`` first, the one ADR 0002 seam --
+        both capture consumers cannot disagree about what a key produces.
+        """
+        if not isinstance(chord, str):
+            return {
+                "ok": False,
+                "error": "That is not a keybind AutoHotkey can register.",
+                **self._chord_fields(
+                    self._state.settings.get("preview", {})
+                    .get("alerts", {})
+                    .get("stream_coupling", {})
+                ),
+            }
+        raw = chord.strip()
+        if raw:
+            parsed = bookmarks.parse_ahk(raw)
+            if parsed["error"] or not parsed["ahk"]:
+                return {
+                    "ok": False,
+                    "error": "That is not a keybind AutoHotkey can register.",
+                    **self._chord_fields(
+                        self._state.settings.get("preview", {})
+                        .get("alerts", {})
+                        .get("stream_coupling", {})
+                    ),
+                }
+            stored = parsed["ahk"]
+        else:
+            stored = ""
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            # setdefault all the way down: production settings always carry
+            # the defaults (load() projects them), but a bridge method must
+            # not KeyError on a section a minimal dict has not built yet.
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["chord"] = stored
+        payload = self._chord_fields(
+            self._state.settings["preview"]["alerts"]["stream_coupling"]
+        )
+        return {"ok": True, "error": None, **payload}
+
+    def _set_stream_coupling(self, *, mirror_on) -> None:
+        """The one writer of mirror_on, through the house settings.update
+        (serialized read-modify-write; a failed save restores memory)."""
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            # setdefault all the way down -- same reason stream_chord_set
+            # does: a minimal settings dict (tests, a caller that skipped
+            # load) must not KeyError the writer.
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["mirror_on"] = mirror_on
+
+    # ---- Combat auto-start (#320) ----------------------------------------
+
+    def stream_coupling_state(self) -> dict:
+        """The armed row's read: state, chord, latched characters, last fire.
+
+        A read on section entry, like stream_mirror_state -- the
+        controller exists before the window, so a state discovered at
+        launch would be pushed into nothing. After entry the row is
+        kept honest by pushes (worker transitions plus the poll tick).
+        """
+        if self._stream_coupling is None:
+            return {
+                "state": "inert",
+                "chord_display": "",
+                "chord_sendable": False,
+                "quiet_s": 300,
+                "latched": [],
+                "latched_remaining_s": 0,
+                "last_fired_character": None,
+                "last_fired_display": None,
+            }
+        return self._stream_coupling.state_payload()
+
+    def stream_quiet_set(self, value) -> dict:
+        """Persist the quiet period before re-arm (60-900 seconds).
+
+        The card's free-text rule: commits on Enter only, through this
+        one endpoint. A non-numeric value is refused with the range in
+        the message; a numeric one is clamped to the same range the
+        load validator enforces and the clamped value rides back so the
+        field shows exactly what was stored -- forgiving, but visible.
+        """
+        if isinstance(value, bool):
+            number = None
+        elif isinstance(value, int):
+            number = value
+        elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            number = int(value.strip())
+        else:
+            number = None
+        if number is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": "Enter a number of seconds between 60 and 900.",
+            }
+        clamped = max(60, min(900, number))
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["quiet_s"] = clamped
+        # The worker reads the coupling live on its next decision; this
+        # push only refreshes the row's own quiet figure immediately.
+        self._push_stream_coupling_tick()
+        return {
+            "applied": True,
+            "persisted": True,
+            "error": None,
+            "quiet_s": clamped,
+        }
+
+    def _push_stream_coupling_state(self, payload) -> None:
+        """The worker's publish port, and the poll tick's: one deduped
+        chokepoint so a transition and the next tick cannot double-push
+        the same row. The countdown during an episode changes every
+        second, so a held row pushes once per tick; an idle row's
+        payload is stable and pushes only on real change."""
+        if payload != self._last_coupling_push:
+            self._last_coupling_push = payload
+            self._push("onStreamCouplingState", payload)
+
+    def _push_stream_coupling_tick(self) -> None:
+        """The poll tick's re-arm observation: latches expire in wall
+        time, and nothing else watches the clock flip a held row back to
+        armed. No-op without a controller (hand-built test Apis)."""
+        if self._stream_coupling is None:
+            return
+        try:
+            self._push_stream_coupling_state(self._stream_coupling.state_payload())
+        except Exception:
+            logger.debug("Stream coupling tick push failed", exc_info=True)
+
+    def _publish_stream_coupling_fired(self, payload) -> None:
+        """Literal adapter for the controller's publish_fired port: the
+        semantic one-chord-per-fight event, distinct from the row push
+        so the card can mark the moment without diffing state."""
+        self._push("onStreamCouplingFired", payload)
 
     # ---- Where a preview opens ------------------------------------------
 

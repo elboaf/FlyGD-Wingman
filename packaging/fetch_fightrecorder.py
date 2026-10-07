@@ -25,6 +25,7 @@ installation at install time or from the Settings card.
 
 import hashlib
 import json
+import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -47,8 +48,25 @@ def fail(message: str) -> int:
     return 1
 
 
+def _api_headers() -> dict:
+    """The API request headers, authenticated when a token is offered.
+
+    Anonymous api.github.com gets 60 requests/hour PER RUNNER IP, and the
+    shared Windows runners' addresses are exhausted by everyone else's
+    builds -- which 403'd this fetch on three of the day's test builds
+    (2026-10-06/07), each costing a full rerun. CI passes its own
+    GITHUB_TOKEN (1000/hour, per install); local runs without one keep
+    the anonymous headers.
+    """
+    headers = dict(_HEADERS)
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def api_latest() -> dict:
-    request = urllib.request.Request(RELEASES_API, headers=_HEADERS)
+    request = urllib.request.Request(RELEASES_API, headers=_api_headers())
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
 

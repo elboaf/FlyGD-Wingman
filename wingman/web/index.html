@@ -451,6 +451,7 @@
            sat below ~70 controls, and the folder the feature actually
            reads was three rail entries away, under Folders. -->
       <button class="rail-item" data-section="alerts">Alerts</button>
+      <button class="rail-item" data-section="streaming">Streaming</button>
       <!-- Last, and directly under the EVE-only entries it removes:
            unticking the switch inside hides Characters, Bookmarks,
            Previews and Alerts (app.js's EVE_SECTIONS) and lands you here,
@@ -1809,6 +1810,93 @@
 
     </div>
 
+    <div class="settings" id="section-streaming">
+      <header class="settings-page-header">
+        <h1>Streaming</h1>
+      </header>
+      <section class="card">
+        <h2>Discord streaming</h2>
+        <p class="hint">The mirror is the window Discord pins (Go Live &rarr; the game source). It shows whoever is flying, follows focus, and never takes focus itself.</p>
+        <div class="row">
+          <span class="lab" id="mirror-status-label">Stream mirror</span>
+          <span id="mirror-state" role="status">Checking&hellip;</span>
+        </div>
+        <div class="row">
+          <span class="lab"></span>
+          <button class="btn" id="mirror-toggle">Start mirror</button>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="mirror-error" role="alert"></span></div>
+        <!-- The setup ceremony (#321), split across the card at the control
+             each step uses: register + start/pick under the mirror row,
+             map-in-Discord under the chord row, and the lost-registration
+             recovery at the bottom next to the armed row that reports the
+             failure (armed, never live -- when the stream silently no-ops,
+             this text is the diagnostic, so it stays visible, never behind
+             a disclosure). Hides with the mirror row when the installation
+             has no mirror. -->
+        <p class="hint" id="mirror-ceremony">
+          One-time setup: in Discord, open User Settings &rarr; Registered
+          Games, choose Add it and browse to the mirror exe &mdash; the full
+          path is below. Then start the mirror here and pick it once in Go
+          Live's game source picker; Discord pins it from then on.
+        </p>
+        <p class="hint" id="mirror-exe-warning">
+          Never add the main wingman.exe: registering it would put every
+          Wingman window &mdash; previews included &mdash; inside Discord's
+          game detection.
+        </p>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="mirror-exe-path" hidden></span></div>
+        <div class="bind-group" id="combat-autostart-group">
+          <span class="bind-group-name">Combat auto-start</span>
+        </div>
+        <p class="hint" id="chord-enable-hint">
+          When a gated combat alert fires, Wingman presses your Discord Toggle
+          Screen Share keybind once &mdash; the stream comes up showing whoever
+          is flying. Recording that keybind here is what enables combat
+          auto-start; clearing it turns the feature off.
+        </p>
+        <p class="hint" id="chord-ceremony">
+          Map the chord in Discord first &mdash; User Settings &rarr;
+          Keybinds &rarr; Toggle Screen Share &mdash; then record the same
+          one here.
+        </p>
+        <div class="row">
+          <span class="lab" id="chord-label">Screen share keybind</span>
+          <button class="bindbtn" id="chord-capture">Not set</button>
+          <button class="linkbtn" id="chord-clear">Clear</button>
+        </div>
+        <p class="hint" id="chord-collision" hidden>
+          This chord also fires in EVE while EVE is focused.
+        </p>
+        <p class="hint" id="chord-msg" hidden></p>
+        <p class="hint" id="chord-sendable" hidden>
+          Wingman cannot type this chord &mdash; record a different one.
+        </p>
+        <div class="row">
+          <span class="lab" id="quiet-label">Quiet period before re-arm</span>
+          <input class="field" id="coupling-quiet" type="text" inputmode="numeric"
+                 autocomplete="off" spellcheck="false">
+          <span class="hint">seconds</span>
+        </div>
+        <div class="row">
+          <span class="lab">Auto-start</span>
+          <span id="coupling-state" role="status">Checking&hellip;</span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-latched"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-last-fired"></span></div>
+        <p class="hint" id="chord-diagnostic">
+          Armed means Wingman will press the chord; only Discord knows whether
+          the stream actually came up. If a fight starts and nothing goes live,
+          Discord has lost the registered game &mdash; the exe moved, or
+          Discord's settings were reset. Add the mirror exe again in Registered
+          Games and pick it in the source picker once more.
+        </p>
+      </section>
+    </div>
     <div class="settings" id="section-general">
 
       <section class="card">
@@ -3030,6 +3118,7 @@
   <script src="skills.js"></script>
   <script src="fittings.js"></script>
   <script src="firstrun.js"></script>
+  <script src="streaming.js"></script>
   <script src="dev.js"></script>
 </body>
 </html>
