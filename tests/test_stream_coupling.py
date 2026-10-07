@@ -27,12 +27,26 @@ def test_the_input_struct_is_the_real_win32_input_size():
     pressing nothing (2026-10-06). The structures live at module scope
     so this pin runs on Linux CI."""
     import ctypes
+    import sys
 
     from wingman.alerts import streamcoupling
 
-    expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
-    assert ctypes.sizeof(streamcoupling._INPUT) == expected
-    assert ctypes.sizeof(streamcoupling._KEYBDINPUT) == 24
+    # The union's largest member must be the mouse one: that is the
+    # whole reason a keyboard-only struct undercounts.
+    assert ctypes.sizeof(streamcoupling._MOUSEINPUT) > ctypes.sizeof(
+        streamcoupling._KEYBDINPUT
+    )
+    if sys.platform == "win32":
+        # The exact cbSize SendInput demands, per pointer width.
+        expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+        assert ctypes.sizeof(streamcoupling._INPUT) == expected
+    else:
+        # Off-Windows the ABI packs differently (wintypes LONG is 8
+        # bytes on Linux), so pin the relationship, not the number: the
+        # struct carries the type tag plus the whole union.
+        assert ctypes.sizeof(streamcoupling._INPUT) >= (
+            4 + ctypes.sizeof(streamcoupling._MOUSEINPUT)
+        )
 
 
 VK_CONTROL = 0x11

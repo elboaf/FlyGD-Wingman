@@ -307,7 +307,11 @@ def mirror_exe() -> str | None:
     the process Wingman supervises. Absent here means the Streaming card
     reports a missing mirror; nothing else breaks.
     """
-    exe = "wingman-mirror" + (".exe" if sys.platform == "win32" else "")
+    # Always wingman-mirror.exe: the bundle ships the Windows binary
+    # whatever the host is (the dev checkout's packaging/bin too), and
+    # keying the suffix on the HOST platform made the lookup miss on
+    # non-Windows (CI, 2026-10-07) while Windows never noticed.
+    exe = "wingman-mirror.exe"
     frozen = bundle_dir() / "bin" / exe
     if frozen.exists():
         return str(frozen)

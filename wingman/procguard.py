@@ -49,7 +49,15 @@ def default_job():
     """
     import ctypes
 
-    kernel32 = ctypes.windll.kernel32
+    # Inside the try: ctypes.windll does not EXIST off-Windows, and this
+    # function's contract is "None off Windows" -- the extraction moved
+    # this line out of the try and quietly turned the Linux answer into
+    # an AttributeError (caught by CI only when the branch first met a
+    # pull_request run, 2026-10-07).
+    try:
+        kernel32 = ctypes.windll.kernel32
+    except (AttributeError, OSError, ImportError):
+        return None
 
     class _BasicLimitInfo(ctypes.Structure):
         _fields_ = [
