@@ -158,6 +158,13 @@
       lastFiredEl.textContent = 'Last fired ' + payload.last_fired_display +
         ' \u2014 ' + payload.last_fired_character;
       lastFiredEl.hidden = false;
+    } else if (payload.last_fired_action === 'stop') {
+      // The auto-stop press (#320 field finding): the fight went quiet
+      // and Wingman pressed the toggle closed. A press report, not a
+      // claim that Discord obeyed -- same rule as every row here.
+      lastFiredEl.textContent = 'Last fired ' + payload.last_fired_display +
+        ' \u2014 stop press (fight quiet)';
+      lastFiredEl.hidden = false;
     } else {
       lastFiredEl.textContent = '';
       lastFiredEl.hidden = true;
@@ -362,10 +369,19 @@
   });
 
   WM.handle('onStreamCouplingFired', function (payload) {
-    // The one-chord-per-fight event. The state push right behind it
-    // carries the same last-fired line; this marks the moment even if a
-    // tick somehow ate the state diff in between.
-    if (visible && payload && payload.character) {
+    // The one-chord-per-fight event -- now both directions: start when
+    // the fight opens the stream, stop when the quiet period closes it.
+    // The state push right behind it carries the same last-fired line;
+    // this marks the moment even if a tick somehow ate the state diff
+    // in between.
+    if (!visible || !payload) { return; }
+    if (payload.action === 'stop') {
+      lastFiredEl.textContent = 'Last fired ' + (payload.display || '') +
+        ' \u2014 stop press (fight quiet)';
+      lastFiredEl.hidden = false;
+      return;
+    }
+    if (payload.character) {
       lastFiredEl.textContent = 'Last fired ' + (payload.display || '') +
         ' \u2014 ' + payload.character;
       lastFiredEl.hidden = false;

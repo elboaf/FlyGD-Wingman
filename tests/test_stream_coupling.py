@@ -179,11 +179,27 @@ def test_the_first_fire_disarms_all_characters():
 
 
 def test_the_quiet_period_re_arms():
+    # Re-arm is now two presses: the stop at expiry closes the episode,
+    # and only then can the next alert open a fresh one. Without the
+    # stop, the next fight's start press would toggle the still-live
+    # stream OFF mid-fight (field finding, 2026-10-06).
     h = Harness()
     h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
     h.now += 300 + 1
-    h.observe(["Kuan Dai"])
+    h.controller._maybe_stop()
     assert len(h.sent) == 2
+    assert h.pushes[-1] == (
+        "onStreamCouplingFired",
+        {
+            "character": None,
+            "display": h.state()["last_fired_display"],
+            "action": "stop",
+        },
+    )
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 3
+    assert h.pushes[-1][1]["action"] == "start"
 
 
 def test_ongoing_combat_extends_the_hold():
@@ -198,7 +214,84 @@ def test_ongoing_combat_extends_the_hold():
         h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.now += 300 + 1
+    h.controller._maybe_stop()
+    assert len(h.sent) == 2
     h.observe(["Kuan Dai"])
+    assert len(h.sent) == 3
+
+
+def test_no_start_fires_while_an_episode_is_open():
+    # The alternation guard: inside the window between latch expiry and
+    # the worker's stop press, a late alert must refresh the running
+    # fight -- never fire a "start" that would toggle the live stream
+    # off. The stop still lands, pushed out by the refreshed latches.
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 400  # latches expired; the stop press has not run yet
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1  # the refresh re-armed the deadline
+    h.now += 300 + 1
+    h.controller._maybe_stop()
+    assert len(h.sent) == 2
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 3
+
+
+def test_the_stop_press_needs_the_mirror_and_closes_the_episode():
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 300 + 1
+    h.mirror_running = False
+    h.controller._maybe_stop()
+    # No press: Discord pins the mirror window, so a dead window has
+    # already ended the share -- a press could only toggle off a stream
+    # the user started by hand afterwards.
+    assert len(h.sent) == 1
+    # The episode IS closed either way: the next alert starts fresh.
+    h.mirror_running = True
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 2
+
+
+def test_clearing_the_chord_mid_episode_abandons_the_stop():
+    # Consent's empty field switches off PRESSES, not the stream: no
+    # stop press once the chord is gone, and the row goes inert.
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 300 + 1
+    h.coupling["chord"] = ""
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1
+    assert h.state()["state"] == "inert"
+
+
+def test_the_worker_wakes_on_the_stop_deadline():
+    h = Harness()
+    assert h.controller._wake_delay() is None
+    h.observe(["Kuan Dai"])
+    assert h.controller._wake_delay() == 300.0
+    h.now += 400
+    # Overdue: due now, but floored so a failing stop retries on a
+    # cadence instead of hot-spinning the worker.
+    assert h.controller._wake_delay() == 1.0
+
+
+def test_a_resumed_fight_pushes_the_stop_out():
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 200
+    h.observe(["Kuan Dai"])  # the fight resumed; the latch refreshed
+    h.now += 299
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1
+    h.now += 1
+    h.controller._maybe_stop()
     assert len(h.sent) == 2
 
 
@@ -234,9 +327,13 @@ def test_latches_are_maintained_even_while_inert():
 def test_the_quiet_period_is_read_live():
     h = Harness()
     h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
     h.now += 61
     h.coupling["quiet_s"] = 60
-    h.observe(["Kuan Dai"])
+    # No combat arrived -- the stop deadline is read against the LIVE
+    # quiet on every wake, so 61s of quiet already exceeds the
+    # shortened 60 and the stop press goes out without a restart.
+    h.controller._maybe_stop()
     assert len(h.sent) == 2
 
 
@@ -266,6 +363,7 @@ def test_the_state_row_carries_the_whole_shape():
         "latched_remaining_s": 0,
         "last_fired_character": None,
         "last_fired_display": None,
+        "last_fired_action": None,
     }
 
 
@@ -314,6 +412,38 @@ def test_observe_combat_is_total_against_junk():
     h = Harness()
     h.controller.observe_combat([None, 17, "", "Kuan Dai"])
     assert h.controller._queue.qsize() == 1
+
+
+def test_a_real_worker_presses_the_stop_after_quiet(monkeypatch):
+    # The timed wake end to end, on a real clock: a real worker thread
+    # must press the stop by itself once the quiet period lapses -- no
+    # combat alert arrives to wake it. (The Harness's frozen clock can
+    # never lapse, so this one builds its controller bare.)
+    monkeypatch.setattr(StreamCouplingController, "_QUIET_MIN", 0)
+    sent = []
+    controller = StreamCouplingController(
+        StreamCouplingPorts(
+            coupling=lambda: {"chord": "^!d", "quiet_s": 1},
+            mirror_running=lambda: True,
+            char_vk=None,
+            send=sent.append,
+            publish_state=lambda payload: None,
+            publish_fired=lambda payload: None,
+        )
+    )
+    try:
+        controller.observe_combat(["Kuan Dai"])
+        deadline = time.monotonic() + 5
+        while len(sent) < 1 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert len(sent) == 1
+        # quiet_s of 1 plus the 1s wake floor: the stop lands in seconds.
+        deadline = time.monotonic() + 10
+        while len(sent) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(sent) == 2
+    finally:
+        controller.close()
 
 
 def test_close_is_idempotent_and_stops_the_worker():

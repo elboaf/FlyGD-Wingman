@@ -105,22 +105,24 @@ keybind) and a real fight for the fire steps.
       firing) never presses the chord again — a second press would end
       the fleet's feed. The armed row showed "Holding — episode running
       for …" during the fight and "Last fired HH:MM — <character>" after.
-- [ ] **Quiet-period re-arm.** After the fight has been quiet past the
-      quiet period, the row reads "Armed" again without a restart, and a
-      NEW fight fires the chord once more.
+- [ ] **The auto-stop press (alternation).** After the fight has been
+      quiet past the quiet period, Wingman presses the chord once more:
+      Discord's stream ENDS without you touching anything, and the armed
+      row says "Last fired HH:MM — stop press (fight quiet)". A NEW fight
+      then fires the chord once more and the stream starts again.
+- [ ] **Quiet-period re-arm.** Covered by the auto-stop step above: the
+      row reads "Armed" again after the stop press, without a restart.
 - [ ] **Quiet period commits on Enter, clamped visibly.** Type 45 and
       press Enter: the field shows 60 (the clamp, echoed). Type 5000:
       the field shows 900. Type "soon" and press Enter: the field keeps
       the stored value and one message line names the 60–900 range.
       Clicking elsewhere never commits a draft.
-- [ ] **Discord foreground is refused.** Focus the Discord window, then
-      take a fight: the row goes to Holding, no chord is pressed while
-      Discord is focused (nothing lands in your chat box), and the
-      stream does not start from Wingman. Returning to EVE and fighting
-      again after the quiet period fires normally.
 - [ ] **No EVE client focused still fires.** With a browser focused
       (NOT Discord), take a fight: the chord fires — the mirror shows
-      the last client it had.
+      the last client it had. (There is no Discord-foreground refusal:
+      decided 2026-10-06, the chord is the user's own bind and fires
+      wherever focus is — the chord row's collision warning covers the
+      chat-box case.)
 
 ## Screenshot UX step 7 — installed Windows acceptance NOT RUN
 

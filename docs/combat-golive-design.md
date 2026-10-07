@@ -274,9 +274,18 @@ client's position, size, or z-order.
    gated combat alert after a quiet period (default 300s per character).
    The first fired chord disarms **all** characters until every latch has
    expired — the spec's most important behavioral sentence: **one stream
-   per fight, Wingman presses once.** A second chord while live is the
-   toggle that ends the fleet's feed; the guards exist to make it
-   unreachable from Wingman.
+   per fight.** A second chord while live is the toggle that ends the
+   fleet's feed; no start can fire while an episode is open, so that
+   toggle-off is unreachable from Wingman.
+   *(Decided 2026-10-06, field finding: the presses ALTERNATE — the
+   chord is a toggle, so when every latch has expired the worker presses
+   the same chord once more to END the stream; without the stop press the
+   stream runs forever and the next fight's start press toggles it off
+   mid-fight. An episode opened by Wingman and closed only by the stop
+   press, a chord cleared mid-episode, a mirror death, or a failed
+   send — the stop's gates mirror the start's. Manual chord presses
+   mid-episode can still desync the alternation; the collision warning
+   on the card covers it.)*
 3. **Confirmation.** Focus gate (no chord while the user is typing into
    a text field is unknowable; but no chord while Discord itself is
    foreground) + a visible state row in the card (Streaming section): armed

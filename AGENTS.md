@@ -190,8 +190,14 @@ reached through injected seams or lazy `windll` binding):
   `combat` alert rides the `AlertPolicy.handle` funnel into its queue (the
   dispatcher never waits), and its own worker thread decides — every gated
   combat alert refreshes its character's episode latch, the chord fires
-  only when NO latch is active (quiet period, read live, 60–900 default
-  300) and the mirror is actually running. No foreground gate (decided
+  only when NO latch is active AND no episode is open (quiet period, read
+  live, 60–900 default 300) and the mirror is actually running. The chord
+  is a toggle, so the presses alternate: with an episode open the worker
+  idles on a timed wake and presses the same chord once more when every
+  latch has expired (field finding 2026-10-06 — without the stop, the
+  stream runs forever and the NEXT fight's start press toggles it off
+  mid-fight); a chord cleared or a mirror death mid-episode closes the
+  episode without pressing. No foreground gate (decided
   2026-10-06): the chord is the user's own Discord bind, so it fires
   wherever focus is — its original Discord-foreground check never
   worked (wrong DLL plus the unpinned-HWND truncation) and was removed

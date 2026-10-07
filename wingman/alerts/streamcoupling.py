@@ -2,17 +2,25 @@
 combat alert.
 
 The spec's most important behavioral sentence lives here: **one stream
-per fight, Wingman presses once.** A second chord while the fleet is
-live is the toggle that kills their feed, so the guards make a second
-press unreachable from Wingman:
+per fight.** The chord is a TOGGLE, so the presses must strictly
+alternate -- the first gated alert after a quiet period presses the
+stream live, and when the fight has been quiet for the whole quiet
+period the worker presses the same chord once more to end it (field
+finding 2026-10-06: without the stop press the stream runs forever,
+and the NEXT fight's start press toggles it off mid-fight). While an
+episode is open, no start can fire -- the guards below make a second
+press mid-fight unreachable from Wingman by construction; a hand press
+mid-episode can still desync the alternation, which is the card
+collision warning's territory:
 
 - **Episode latch, per character.** Every gated combat alert refreshes
   its character's latch. The chord fires only when NO character holds
-  an active latch -- the first alert after a quiet period (``quiet_s``,
-  60-900, default 300, read live). Ongoing combat keeps refreshing the
-  latches, which is the asymmetry argument from the spec: too short a
-  window risks the mid-fight toggle-off, so a fight's own alerts hold
-  the process disarmed until it has truly gone quiet.
+  an active latch AND no episode is open -- the first alert after a
+  quiet period (``quiet_s``, 60-900, default 300, read live). Ongoing
+  combat keeps refreshing the latches, which is the asymmetry argument
+  from the spec: too short a window risks the mid-fight toggle-off, so
+  a fight's own alerts hold the process disarmed until it has truly
+  gone quiet.
 - **Process-wide disarm.** Any active latch blocks every character --
   the chord is one machine-wide keypress, not a per-pilot one. When A
   fires, B and C's alerts seconds later find A's latch active and stay
@@ -46,7 +54,10 @@ thread -- never the telemetry dispatcher's, never the policy's. The
 policy funnel (``AlertPolicy.handle``) hands over only the characters
 whose combat alert actually dispatched (enabled, PvE-filtered,
 cooldown-elapsed); handover is a queue put, so the dispatcher never
-waits on a spell, a focus read or a SendInput.
+waits on a spell, a focus read or a SendInput. The same worker owns
+the stop: with an episode open it idles on a timed wake (the queue
+get's timeout) until every latch has expired, then presses once and
+closes the episode.
 
 Pure pieces (``spell_chord``, ``ChordPlan``) and the controller are
 Linux-unit-testable with injected ports, like every other subsystem;
@@ -288,8 +299,14 @@ class StreamCouplingController:
         self._lock = threading.Lock()
         # character -> monotonic time of its last gated combat alert.
         self._latches: dict[str, float] = {}
-        # (character, wall time) of the last fired chord, for the row.
-        self._last_fired: tuple[str, float] | None = None
+        # The character whose fight Wingman pressed live, or None. The
+        # toggle's other half: while an episode is open no start may
+        # fire, and the worker's timed wake stops the stream once every
+        # latch has expired.
+        self._episode = None
+        # (character or None, wall time, action) of the last press, for
+        # the row -- action is "start" or "stop".
+        self._last_fired: tuple[str | None, float, str] | None = None
         # (chord, sendable) cache: spellability consults the layout and
         # must not become a per-tick syscall.
         self._spellable: tuple[str, bool] | None = None
@@ -365,11 +382,20 @@ class StreamCouplingController:
             "latched_remaining_s": round(remaining),
             "last_fired_character": last[0] if last else None,
             "last_fired_display": self._format_wall(last[1]) if last else None,
+            "last_fired_action": last[2] if last else None,
         }
 
     def _run(self) -> None:
         while True:
-            item = self._queue.get()
+            try:
+                item = self._queue.get(timeout=self._wake_delay())
+            except queue.Empty:
+                try:
+                    self._maybe_stop()
+                except Exception:
+                    # One bad stop check must not kill the worker.
+                    logger.exception("Stream coupling stop check failed")
+                continue
             if item is None:
                 return
             try:
@@ -385,13 +411,24 @@ class StreamCouplingController:
         now = self._clock()
         with self._lock:
             # Armed means every latch was ALREADY expired when this alert
-            # arrived; the refresh below then starts this fight's episode.
-            armed = all(now - stamped >= quiet for stamped in self._latches.values())
+            # arrived AND Wingman holds no open episode: a late-arriving
+            # alert inside the window before the stop press must refresh
+            # the running fight, never toggle the live stream off. The
+            # refresh below then starts (or extends) this fight's episode.
+            armed = self._episode is None and all(
+                now - stamped >= quiet for stamped in self._latches.values()
+            )
             for character in characters:
                 self._latches[character] = now
         fired = None
         if chord and armed:
             fired = self._try_fire(chord, characters)
+        if fired is not None:
+            with self._lock:
+                # The toggle just OPENED the stream; the stop press at
+                # quiet expiry is what closes it. That is the whole
+                # alternation: open here, closed in _maybe_stop.
+                self._episode = fired[0]
         self._ports.publish_state(self.state_payload())
         if fired is not None:
             character, wall_time = fired
@@ -399,6 +436,7 @@ class StreamCouplingController:
                 {
                     "character": character,
                     "display": self._format_wall(wall_time),
+                    "action": "start",
                 }
             )
 
@@ -426,9 +464,90 @@ class StreamCouplingController:
         character = characters[0]
         wall_time = self._wall()
         with self._lock:
-            self._last_fired = (character, wall_time)
+            self._last_fired = (character, wall_time, "start")
         logger.info("Stream chord fired for %s", character)
         return character, wall_time
+
+    def _wake_delay(self):
+        """How long the worker may idle before re-checking an open
+        episode's stop deadline, or None to block until the next
+        combat alert. Recomputed after every wake, so a fight that
+        resumes pushes the stop out without anyone re-programming it."""
+        quiet = self._read_coupling()["quiet_s"]
+        now = self._clock()
+        with self._lock:
+            if self._episode is None or not self._latches:
+                return None
+            deadline = max(self._latches.values()) + quiet
+        # The 1s floor: an expired deadline is due NOW, but a stop that
+        # keeps failing must retry on a cadence, not hot-spin the worker.
+        return max(1.0, deadline - now)
+
+    def _maybe_stop(self) -> None:
+        """The toggle's other half (field finding, 2026-10-06): the start
+        press went live, and only a second press ends the stream. When
+        every latch has expired -- the definition of the episode being
+        over -- press the chord once more and close the episode. The
+        episode guard in _process makes the alternation airtight: while
+        an episode is open, no combat alert can fire a start, so the
+        presses strictly alternate no matter how the alerts cluster."""
+        with self._lock:
+            episode = self._episode
+        if episode is None:
+            return
+        coupling = self._read_coupling()
+        chord = coupling["chord"]
+        quiet = coupling["quiet_s"]
+        now = self._clock()
+        with self._lock:
+            if not all(now - stamped >= quiet for stamped in self._latches.values()):
+                # The fight resumed between the wake and this check; the
+                # latches are refreshed and the next wake re-arms itself.
+                return
+            self._episode = None
+
+        def abandon(reason: str) -> None:
+            logger.info(
+                "Combat auto-stream episode closed without a stop press: %s", reason
+            )
+            self._ports.publish_state(self.state_payload())
+
+        if not chord:
+            # Consent was withdrawn mid-episode: the empty field is the
+            # off switch, and it switches off PRESSES -- including this
+            # one. Whatever the stream is doing now is the user's to end.
+            abandon("the chord was cleared")
+            return
+        if not self._ports.mirror_running():
+            # Discord pins the mirror window; a dead window has already
+            # ended the share on its own, and a press now could only
+            # toggle off a stream the user started by hand afterwards.
+            abandon("the mirror is not running")
+            return
+        plan = spell_chord(chord, char_vk=self._ports.char_vk)
+        if plan is None:
+            abandon("the chord cannot be spelled any more")
+            return
+        try:
+            self._ports.send(plan)
+        except Exception:
+            # A failed seam must not kill the worker; the episode is
+            # already closed, so a real fight's next press starts fresh.
+            logger.exception("Could not send the stream stop chord")
+            abandon("the stop press failed")
+            return
+        wall_time = self._wall()
+        with self._lock:
+            self._last_fired = (None, wall_time, "stop")
+        logger.info("Stream chord fired to end the stream (fight quiet for %ss)", quiet)
+        self._ports.publish_state(self.state_payload())
+        self._ports.publish_fired(
+            {
+                "character": None,
+                "display": self._format_wall(wall_time),
+                "action": "stop",
+            }
+        )
 
     def _read_coupling(self) -> dict:
         """The live committed coupling, defended to exactly two keys."""
