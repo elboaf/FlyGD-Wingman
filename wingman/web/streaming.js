@@ -27,6 +27,11 @@
   var ceremonyEl = WM.el('mirror-ceremony');
   var exeWarningEl = WM.el('mirror-exe-warning');
   var exePathEl = WM.el('mirror-exe-path');
+  // The rest of the registration family: the EVE-slider warning (Discord
+  // must not detect the raw EVE client) and the stream-settings advice,
+  // which is about the mirror's own stream entry.
+  var eveOffEl = WM.el('mirror-eve-off');
+  var streamSettingsEl = WM.el('stream-settings-hint');
   var groupEl = WM.el('combat-autostart-group');
   var enableHintEl = WM.el('chord-enable-hint');
   var chordCeremonyEl = WM.el('chord-ceremony');
@@ -57,10 +62,14 @@
       ceremonyEl.hidden = true;
       exeWarningEl.hidden = true;
       exePathEl.hidden = true;
+      eveOffEl.hidden = true;
+      streamSettingsEl.hidden = true;
       return;
     }
     ceremonyEl.hidden = false;
     exeWarningEl.hidden = false;
+    eveOffEl.hidden = false;
+    streamSettingsEl.hidden = false;
     lastMirror = payload;
     // The registration path (#321): resolved by Python -- the installed
     // location is not one a user could guess. Hidden when the resolution

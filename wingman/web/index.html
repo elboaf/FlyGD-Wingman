@@ -1816,7 +1816,7 @@
       </header>
       <section class="card">
         <h2>Discord streaming</h2>
-        <p class="hint">The mirror is the window Discord pins (Go Live &rarr; the game source). It shows whoever is flying, follows focus, and never takes focus itself.</p>
+        <p class="hint">The mirror is the window Discord pins (Go Live &rarr; the game source): whoever is flying, following focus, never taking focus itself &mdash; and the only thing Discord ever shares. One-time setup below &mdash; lame, but worth it.</p>
         <div class="row">
           <span class="lab" id="mirror-status-label">Stream mirror</span>
           <span id="mirror-state" role="status">Checking&hellip;</span>
@@ -1833,18 +1833,27 @@
              recovery at the bottom next to the armed row that reports the
              failure (armed, never live -- when the stream silently no-ops,
              this text is the diagnostic, so it stays visible, never behind
-             a disclosure). Hides with the mirror row when the installation
-             has no mirror. -->
+             a disclosure). The registration family carries two more words:
+             the EVE-slider warning (Discord must not detect the raw EVE
+             client) and the stream-settings advice at the bottom, which is
+             about the mirror's own stream entry. All hide with the mirror
+             row when the installation has no mirror. -->
         <p class="hint" id="mirror-ceremony">
-          One-time setup: in Discord, open User Settings &rarr; Registered
-          Games, choose Add it and browse to the mirror exe &mdash; the full
-          path is below. Then start the mirror here and pick it once in Go
-          Live's game source picker; Discord pins it from then on.
+          One-time setup: in Discord, open Settings &rarr; Registered Games
+          &rarr; &ldquo;Not seeing your game? Add it!&rdquo; and browse to the
+          mirror exe &mdash; the full path is below. Then start the mirror
+          here (it stays enabled through restarts) and pick Wingman mirror
+          once in Go Live's game source picker; Discord pins it from then on.
         </p>
         <p class="hint" id="mirror-exe-warning">
           Never add the main wingman.exe: registering it would put every
           Wingman window &mdash; previews included &mdash; inside Discord's
           game detection.
+        </p>
+        <p class="hint" id="mirror-eve-off">
+          Turn the slider OFF for EVE itself &mdash; otherwise Discord shares
+          your raw EVE client, and multiple clients won't show up. The mirror
+          is the whole point.
         </p>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="mirror-exe-path" hidden></span></div>
@@ -1852,15 +1861,19 @@
           <span class="bind-group-name">Combat auto-start</span>
         </div>
         <p class="hint" id="chord-enable-hint">
-          When a gated combat alert fires, Wingman presses your Discord Toggle
-          Screen Share keybind once &mdash; the stream comes up showing whoever
-          is flying. Recording that keybind here is what enables combat
-          auto-start; clearing it turns the feature off.
+          Auto Go Live on combat: when a fight is detected, Wingman presses
+          your Discord Toggle Screen Share keybind and the stream comes up
+          showing whoever is flying. When the fight has been quiet for the
+          after-combat delay below, Wingman presses it again and the stream
+          ends &mdash; FightRecorder's grace period, but for your stream.
+          Recording a keybind here is what enables combat auto-start;
+          clearing it turns the feature off.
         </p>
         <p class="hint" id="chord-ceremony">
-          Map the chord in Discord first &mdash; User Settings &rarr;
-          Keybinds &rarr; Toggle Screen Share &mdash; then record the same
-          one here.
+          Map the chord in Discord first &mdash; Settings &rarr; System
+          &rarr; Custom Keybinds &rarr; Add a keybind &rarr; Toggle Screen
+          Share &mdash; then record the same one here. Pick something
+          obscure: Ctrl+Alt+F9 works.
         </p>
         <div class="row">
           <span class="lab" id="chord-label">Screen share keybind</span>
@@ -1875,10 +1888,11 @@
           Wingman cannot type this chord &mdash; record a different one.
         </p>
         <div class="row">
-          <span class="lab" id="quiet-label">Quiet period before re-arm</span>
+          <span class="lab" id="quiet-label">After-combat delay</span>
           <input class="field" id="coupling-quiet" type="text" inputmode="numeric"
                  autocomplete="off" spellcheck="false">
-          <span class="hint">seconds</span>
+          <span class="hint">seconds &mdash; how long the stream stays up after
+          the last shot</span>
         </div>
         <div class="row">
           <span class="lab">Auto-start</span>
@@ -1894,6 +1908,13 @@
           Discord has lost the registered game &mdash; the exe moved, or
           Discord's settings were reset. Add the mirror exe again in Registered
           Games and pick it in the source picker once more.
+        </p>
+        <p class="hint" id="stream-settings-hint">
+          Recommended (saves resources): in Discord's bottom-left you'll see
+          &ldquo;Wingman mirror &mdash; Not Sharing&rdquo; &mdash; click the
+          Stream icon, then the gear on that screen: Stream Mode &rarr; Custom,
+          720p / 30fps, and mute the stream audio. Unless you have a nice PC
+          and don't run a lot of clients, those settings are the sweet spot.
         </p>
       </section>
     </div>
