@@ -27,13 +27,15 @@ whole ceremony end to end on the packaged install, where the exe the
 ceremony registers is the frozen `wingman-mirror.exe` the installer ships.
 
 - [ ] **The card walks the ceremony.** Fresh install, Streaming section:
-      the four steps appear in order at the controls that perform them —
-      register the mirror exe in Discord's Registered Games, start the
-      mirror and pick it once in Go Live's source picker (under the mirror
-      row); map Toggle Screen Share in Discord, then record the same chord
-      here (in the Combat auto-start block); and the lost-registration
-      recovery sits next to the armed row. Nothing names a Discord surface
-      this Discord build does not have.
+      the steps appear in order at the controls that perform them — start
+      the mirror (the toggle hint names what the button is for, under the
+      mirror row); in Discord's Registered Games turn EVE's own slider off
+      and add Wingman mirror via the small blue "Not seeing your game?
+      Add it!" list — browse to the exe below as the fallback (under the
+      mirror rows); record the chord here and map the same one in
+      Discord's Custom Keybinds (in the Combat auto-start block); and the
+      lost-registration recovery sits next to the armed row. Nothing names
+      a Discord surface this Discord build does not have.
 - [ ] **"Never the main exe" is visible where the user registers.** The
       warning against registering `wingman.exe` is a plain visible line at
       the registration step, not behind a disclosure, and states the
@@ -65,8 +67,8 @@ ceremony registers is the frozen `wingman-mirror.exe` the installer ships.
       quiet period, take a fight: the armed row stays Armed, nothing
       streams, and no error appears anywhere — the known silent no-op.
       The card's diagnostic text is what walks the operator through the
-      recovery (re-add the mirror exe, pick it in the source picker once
-      more), and following it restores a working fire on the next fight.
+      recovery (re-add "Wingman mirror" via the Add-it list in Registered
+      Games), and following it restores a working fire on the next fight.
 - [ ] **Mirror start/stop and out-of-band recovery.** Stop mirror takes
       the streamable window away and the armed row returns to "Standing
       by"; Start mirror restores both. Kill `wingman-mirror.exe` from Task

@@ -1825,38 +1825,41 @@
           <span class="lab"></span>
           <button class="btn" id="mirror-toggle">Start mirror</button>
         </div>
+        <p class="hint" id="mirror-toggle-hint">
+          Start/Stop mirror &mdash; enable or disable the feature in Wingman.
+        </p>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="mirror-error" role="alert"></span></div>
         <!-- The setup ceremony (#321), split across the card at the control
-             each step uses: register + start/pick under the mirror row,
-             map-in-Discord under the chord row, and the lost-registration
-             recovery at the bottom next to the armed row that reports the
-             failure (armed, never live -- when the stream silently no-ops,
-             this text is the diagnostic, so it stays visible, never behind
-             a disclosure). The registration family carries two more words:
-             the EVE-slider warning (Discord must not detect the raw EVE
-             client) and the stream-settings advice at the bottom, which is
-             about the mirror's own stream entry. All hide with the mirror
+             each step uses, worded as the field-picked walk (2026-10-08):
+             the toggle hint under the mirror row; the Registered Games
+             family under it -- EVE's slider off, then the small-blue
+             Add-it list ("Wingman mirror" from the list, browse to the exe
+             below as the fallback, never the main wingman.exe); the record
+             hint and the map-in-Discord line around the chord row; and the
+             lost-registration recovery at the bottom next to the armed row
+             that reports the failure (armed, never live -- when the stream
+             silently no-ops, this text is the diagnostic, so it stays
+             visible, never behind a disclosure). All hide with the mirror
              row when the installation has no mirror. -->
-        <p class="hint" id="mirror-ceremony">
-          One-time setup: in Discord, open Settings &rarr; Registered Games
-          &rarr; &ldquo;Not seeing your game? Add it!&rdquo; and browse to the
-          mirror exe &mdash; the full path is below. Then start the mirror
-          here (it stays enabled through restarts) and pick Wingman mirror
-          once in Go Live's game source picker; Discord pins it from then on.
+        <p class="hint" id="mirror-eve-off">
+          In Discord: Settings &rarr; Registered Games &mdash; turn the
+          slider OFF for EVE itself, otherwise Discord shares your raw EVE
+          client, and multiple clients won't show up.
         </p>
+        <p class="hint" id="mirror-ceremony">
+          Still on that page: the small blue &ldquo;Not seeing your game?
+          Add it!&rdquo; at the top opens a list &mdash; pick
+          &ldquo;Wingman mirror&rdquo; from it. Not in the list? Browse to
+          the mirror exe &mdash; the full path is below.
+        </p>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="mirror-exe-path" hidden></span></div>
         <p class="hint" id="mirror-exe-warning">
           Never add the main wingman.exe: registering it would put every
           Wingman window &mdash; previews included &mdash; inside Discord's
           game detection.
         </p>
-        <p class="hint" id="mirror-eve-off">
-          Turn the slider OFF for EVE itself &mdash; otherwise Discord shares
-          your raw EVE client, and multiple clients won't show up. The mirror
-          is the whole point.
-        </p>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="mirror-exe-path" hidden></span></div>
         <div class="bind-group" id="combat-autostart-group">
           <span class="bind-group-name">Combat auto-start</span>
         </div>
@@ -1869,17 +1872,20 @@
           Recording a keybind here is what enables combat auto-start;
           clearing it turns the feature off.
         </p>
-        <p class="hint" id="chord-ceremony">
-          Map the chord in Discord first &mdash; Settings &rarr; System
-          &rarr; Custom Keybinds &rarr; Add a keybind &rarr; Toggle Screen
-          Share &mdash; then record the same one here. Pick something
-          obscure: Ctrl+Alt+F9 works.
+        <p class="hint" id="chord-row-hint">
+          Record a screen-share keybind &mdash; pick something obscure, e.g.
+          Ctrl+Alt+F9.
         </p>
         <div class="row">
           <span class="lab" id="chord-label">Screen share keybind</span>
           <button class="bindbtn" id="chord-capture">Not set</button>
           <button class="linkbtn" id="chord-clear">Clear</button>
         </div>
+        <p class="hint" id="chord-ceremony">
+          In Discord: Settings &rarr; System &rarr; Custom Keybinds &rarr;
+          Add a keybind &rarr; Toggle Screen Share &mdash; and set the same
+          obscure keybind you recorded in Wingman.
+        </p>
         <p class="hint" id="chord-collision" hidden>
           This chord also fires in EVE while EVE is focused.
         </p>
@@ -1891,8 +1897,8 @@
           <span class="lab" id="quiet-label">After-combat delay</span>
           <input class="field" id="coupling-quiet" type="text" inputmode="numeric"
                  autocomplete="off" spellcheck="false">
-          <span class="hint">seconds &mdash; how long the stream stays up after
-          the last shot</span>
+          <span class="hint">seconds (optional) &mdash; how long the stream
+          stays up after the last shot</span>
         </div>
         <div class="row">
           <span class="lab">Auto-start</span>
@@ -1906,15 +1912,19 @@
           Armed means Wingman will press the chord; only Discord knows whether
           the stream actually came up. If a fight starts and nothing goes live,
           Discord has lost the registered game &mdash; the exe moved, or
-          Discord's settings were reset. Add the mirror exe again in Registered
-          Games and pick it in the source picker once more.
+          Discord's settings were reset. Add &ldquo;Wingman mirror&rdquo; again
+          in Registered Games &mdash; the small blue &ldquo;Not seeing your
+          game? Add it!&rdquo; at the top of the page.
         </p>
         <p class="hint" id="stream-settings-hint">
-          Recommended (saves resources): in Discord's bottom-left you'll see
-          &ldquo;Wingman mirror &mdash; Not Sharing&rdquo; &mdash; click the
-          Stream icon, then the gear on that screen: Stream Mode &rarr; Custom,
-          720p / 30fps, and mute the stream audio. Unless you have a nice PC
-          and don't run a lot of clients, those settings are the sweet spot.
+          Highly recommended (saves everyone's resources and unifies
+          grid-view visibility for the whole fleet): bottom-left in Discord
+          you'll see &ldquo;Wingman mirror &mdash; Not Sharing&rdquo; &mdash;
+          click the Stream icon, then the gear on that screen: Stream Mode
+          &rarr; Custom, 720p / 30fps, mute stream audio. Those settings are
+          the sweet spot &mdash; not just for you, the streamer, but for
+          viewers as well: we don't need quality entertainment, we need
+          reliable visibility of the grid in combat.
         </p>
       </section>
     </div>

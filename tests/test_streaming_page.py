@@ -154,8 +154,10 @@ def test_entry_shows_the_ceremony_and_the_unavailable_push_hides_it():
       assert.ok(el('mirror-exe-path').textContent.includes('wingman-mirror.exe'),
                 el('mirror-exe-path').textContent);
       assert.equal(el('mirror-eve-off').hidden, false);
+      assert.equal(el('mirror-toggle-hint').hidden, false);
       assert.equal(el('combat-autostart-group').hidden, false);
       assert.equal(el('chord-ceremony').hidden, false);
+      assert.equal(el('chord-row-hint').hidden, false);
       assert.equal(el('chord-diagnostic').hidden, false);
       assert.equal(el('stream-settings-hint').hidden, false);
       handlers.onMirrorStatus(UNAVAILABLE);
@@ -163,8 +165,10 @@ def test_entry_shows_the_ceremony_and_the_unavailable_push_hides_it():
       assert.equal(el('mirror-exe-warning').hidden, true);
       assert.equal(el('mirror-exe-path').hidden, true);
       assert.equal(el('mirror-eve-off').hidden, true);
+      assert.equal(el('mirror-toggle-hint').hidden, true);
       assert.equal(el('combat-autostart-group').hidden, true);
       assert.equal(el('chord-ceremony').hidden, true);
+      assert.equal(el('chord-row-hint').hidden, true);
       assert.equal(el('chord-diagnostic').hidden, true);
       assert.equal(el('stream-settings-hint').hidden, true);
     """,
