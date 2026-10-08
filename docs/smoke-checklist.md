@@ -31,8 +31,8 @@ ceremony registers is the frozen `wingman-mirror.exe` the installer ships.
       the mirror (the toggle hint names what the button is for, under the
       mirror row); in Discord's Registered Games turn EVE's own slider off
       and add Wingman mirror via the small blue "Not seeing your game?
-      Add it!" list — browse to the exe below as the fallback (under the
-      mirror rows); record the chord here and map the same one in
+      Add it!" at the top of the page (the mirror exe path is shown under
+      the mirror rows); record the chord here and map the same one in
       Discord's Custom Keybinds (in the Combat auto-start block); and the
       lost-registration recovery sits next to the armed row. Nothing names
       a Discord surface this Discord build does not have.
