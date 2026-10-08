@@ -59,10 +59,11 @@ the stop: with an episode open it idles on a timed wake (the queue
 get's timeout) until every latch has expired, then presses once and
 closes the episode.
 
-Pure pieces (``spell_chord``, ``ChordPlan``) and the controller are
-Linux-unit-testable with injected ports, like every other subsystem;
-the real Win32 seams are lazy-ctypes functions touched only in
-production. Imports nothing from ``ui`` and never holds the window.
+Pure pieces (``spell_chord``, ``ChordPlan``, ``chord_choreography``) and
+the controller are Linux-unit-testable with injected ports, like every
+other subsystem; the real Win32 seams are lazy-ctypes functions touched
+only in production. Imports nothing from ``ui`` and never holds the
+window.
 """
 
 import ctypes
@@ -90,6 +91,31 @@ _MODIFIER_VKS = (
 )
 
 _VK_NUMPAD_ENTER = 0x0D
+
+# The seam presses the LEFT variant of every modifier. A keyboard never
+# produces the generic VK_CONTROL -- it produces VK_LCONTROL, and the
+# system derives the generic state from it -- so the generic VK is an
+# observable difference between Wingman's press and the user's hand, and
+# the 2026-10-07 field report is apps acting on the bare base key
+# (ctrl+alt+f9 opened a focused EVE client's map). VK_LWIN is already the
+# left key.
+_LEFT_MOD_VKS = {
+    0x11: 0xA2,  # VK_CONTROL -> VK_LCONTROL
+    0x12: 0xA4,  # VK_MENU -> VK_LMENU
+    0x10: 0xA0,  # VK_SHIFT -> VK_LSHIFT
+    0x5B: 0x5B,  # VK_LWIN
+}
+
+# The press is paced like a hand, not one SendInput batch: a batch lands
+# every event inside one scheduler tick, so the modifiers are down and up
+# before a poller's next frame or a dispatch-time async key state read --
+# the other half of the same field report. These gaps hold the chord for
+# ~100ms around the tap, which is what every observer sees a real press
+# do; ~150ms on the daemon worker thread is nothing.
+_STEP_GAP_S = 0.02  # between modifier downs (and before the first)
+_CHORD_GAP_S = 0.04  # last modifier down -> base key down
+_TAP_HOLD_S = 0.03  # base key down -> base key up
+_RELEASE_GAP_S = 0.01  # base up -> first modifier up, and between ups
 
 
 # The Win32 INPUT family at its true shape. The union's largest member is
@@ -200,13 +226,33 @@ def _mods(parts: dict, needs_shift: bool) -> tuple[int, ...]:
     )
 
 
+def chord_choreography(plan: ChordPlan) -> tuple[tuple[int, bool, bool, float], ...]:
+    """The press a hand makes, as ``(vk, up, extended, sleep_before_s)``
+    in send order -- pure, so the shape is pinned on Linux and the seam
+    only flushes it. Modifiers down as left keys, base down, base up,
+    modifiers up in reverse, each step separated by the pacing gaps; the
+    extended flag rides the base key alone (an extended ctrl-down is
+    right ctrl -- on a NumpadEnter chord it would press modifiers
+    Discord never bound).
+    """
+    mods = tuple(_LEFT_MOD_VKS.get(vk, vk) for vk in plan.mods)
+    steps = [(vk, False, False, _STEP_GAP_S) for vk in mods]
+    steps.append((plan.vk, False, plan.extended, _CHORD_GAP_S))
+    steps.append((plan.vk, True, plan.extended, _TAP_HOLD_S))
+    steps.extend((vk, True, False, _RELEASE_GAP_S) for vk in reversed(mods))
+    return tuple(steps)
+
+
 def send_keystrokes(plan: ChordPlan) -> None:
-    """The real seam: one SendInput of the chord. Pure ctypes, house
-    Win32 style, no new dependency. Modifiers down, base down, base up,
-    modifiers up -- the same shape a real keystroke makes, so Discord's
-    global keybind sees an ordinary press. Returns silently off-Windows
-    and on any Win32 failure: the worker must survive the seam, and the
-    armed row's honesty comes from the fire decision, not from here.
+    """The real seam: flush ``chord_choreography`` one SendInput per
+    event, so the press reads as an ordinary keystroke at every point a
+    listener can read -- Discord's global keybind included. Returns
+    silently off-Windows and on any Win32 failure: the worker must
+    survive the seam, and the armed row's honesty comes from the fire
+    decision, not from here. A failure mid-press first releases whatever
+    is still held -- a chord that dies between ctrl-down and ctrl-up
+    must not leave a modifier latched on the user's keyboard long after
+    the stream it started is over.
     """
     try:
         user32 = ctypes.windll.user32
@@ -217,11 +263,9 @@ def send_keystrokes(plan: ChordPlan) -> None:
     KEYEVENTF_KEYUP = 0x0002
     INPUT_KEYBOARD = 1
 
-    def key_event(vk: int, up: bool) -> _INPUT:
-        flags = 0
-        if up:
-            flags |= KEYEVENTF_KEYUP
-        if plan.extended:
+    def key_event(vk: int, up: bool, extended: bool) -> _INPUT:
+        flags = KEYEVENTF_KEYUP if up else 0
+        if extended:
             flags |= KEYEVENTF_EXTENDEDKEY
         event = _INPUT()
         event.type = INPUT_KEYBOARD
@@ -234,11 +278,6 @@ def send_keystrokes(plan: ChordPlan) -> None:
         )
         return event
 
-    sequence = [key_event(vk, False) for vk in plan.mods]
-    sequence.append(key_event(plan.vk, False))
-    sequence.append(key_event(plan.vk, True))
-    sequence.extend(key_event(vk, True) for vk in reversed(plan.mods))
-    array = (_INPUT * len(sequence))(*sequence)
     # Pin signatures so the count pointer marshals correctly on x64.
     user32.SendInput.argtypes = (
         ctypes.c_uint,
@@ -246,15 +285,35 @@ def send_keystrokes(plan: ChordPlan) -> None:
         ctypes.c_int,
     )
     user32.SendInput.restype = ctypes.c_uint
-    sent = user32.SendInput(len(array), array, ctypes.sizeof(_INPUT))
-    if sent != len(array):
-        # WARNING, not debug: a rejected batch is the exact failure that
+
+    steps = chord_choreography(plan)
+    # Held so far, press order: the choreography releases in exact
+    # reverse, so a pop per keyup tracks it, and the failure path unwinds
+    # whatever a broken press left down.
+    held: list[tuple[int, bool]] = []
+    delivered = 0
+    for vk, up, extended, delay in steps:
+        if delay:
+            time.sleep(delay)
+        one = (_INPUT * 1)(key_event(vk, up, extended))
+        if user32.SendInput(1, one, ctypes.sizeof(_INPUT)) != 1:
+            for held_vk, held_extended in reversed(held):
+                release = (_INPUT * 1)(key_event(held_vk, True, held_extended))
+                user32.SendInput(1, release, ctypes.sizeof(_INPUT))
+            break
+        delivered += 1
+        if up:
+            held.pop()
+        else:
+            held.append((vk, extended))
+    if delivered != len(steps):
+        # WARNING, not debug: a rejected event is the exact failure that
         # made the controller log "fired" above this line while nothing
         # was pressed (the wrong-size INPUT incident, 2026-10-06).
         logger.warning(
             "SendInput delivered %d of %d events for the stream chord",
-            sent,
-            len(array),
+            delivered,
+            len(steps),
         )
 
 

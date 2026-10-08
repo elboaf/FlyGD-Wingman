@@ -15,6 +15,7 @@ from wingman.alerts.streamcoupling import (
     ChordPlan,
     StreamCouplingController,
     StreamCouplingPorts,
+    chord_choreography,
     spell_chord,
 )
 
@@ -161,6 +162,59 @@ def test_an_unresolvable_character_falls_back_to_the_table():
 def test_modifier_only_and_garbage_are_never_spellable():
     for text in ("", "^", "!", "nonsense", None, "^^"):
         assert spell_chord(text) is None
+
+
+# ---- the press ----------------------------------------------------------
+
+VK_LCONTROL = 0xA2
+VK_LMENU = 0xA4
+VK_F9 = 0x78
+
+
+def test_the_press_uses_left_hand_modifiers_not_the_generic_vks():
+    # Field report 2026-10-07: the injected ctrl+alt+f9 opened a focused
+    # EVE client's map -- the client acted on a bare F9. A keyboard never
+    # produces the generic VK_CONTROL; it produces VK_LCONTROL, and the
+    # system derives the generic state from it. Pressing the left keys is
+    # what makes the synthetic events read like the user's own hand.
+    steps = chord_choreography(spell_chord("^!F9"))
+    vks = [vk for vk, _up, _ext, _delay in steps]
+    assert vks == [VK_LCONTROL, VK_LMENU, VK_F9, VK_F9, VK_LMENU, VK_LCONTROL]
+
+
+def test_the_press_paces_the_chord_like_a_hand_not_one_batch():
+    # The other half of the same field report: a whole chord in one
+    # SendInput batch is down and up inside one scheduler tick, so a
+    # poller or a dispatch-time async key state read sees the modifiers
+    # already up -- a bare F9. The gaps hold the chord through the tap.
+    steps = chord_choreography(spell_chord("^!F9"))
+    delays = [delay for _vk, _up, _ext, delay in steps]
+    assert all(delay > 0 for delay in delays)
+    # The hold before the tap is the point: the chord is seen held.
+    assert delays[2] == max(delays)
+
+
+def test_the_extended_flag_rides_the_base_key_alone():
+    # An extended ctrl-down is RIGHT ctrl: on a NumpadEnter chord the
+    # flag must touch only the base events, or every press carries
+    # modifiers Discord never bound.
+    steps = chord_choreography(spell_chord("^#NumpadEnter"))
+    assert [ext for _vk, _up, ext, _delay in steps] == [
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+def test_a_chord_without_modifiers_presses_only_the_base_key():
+    steps = chord_choreography(spell_chord("PgUp"))
+    assert [(vk, up) for vk, up, _ext, _delay in steps] == [
+        (0x21, False),
+        (0x21, True),
+    ]
 
 
 # ---- the guards ---------------------------------------------------------
