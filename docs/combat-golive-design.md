@@ -314,7 +314,7 @@ Discord streaming
   Stream mirror: [Not running - Start mirror]   (wingman-mirror.exe; what Discord pins)
   Keybind: [Ctrl+Alt+D] (capture button)        <- recording = consent
   -- Combat auto-start --------------------------------------
-  Quiet period before re-arm: [300] seconds
+  After-combat delay: [300] seconds
   -----------------------------------------------------------
   Armed for: Kuan Dai, xX_Sigma_Xx
   Last fired: 12:41 . Kuan Dai

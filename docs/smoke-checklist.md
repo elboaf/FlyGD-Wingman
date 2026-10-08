@@ -112,11 +112,17 @@ keybind) and a real fight for the fire steps.
       then fires the chord once more and the stream starts again.
 - [ ] **Quiet-period re-arm.** Covered by the auto-stop step above: the
       row reads "Armed" again after the stop press, without a restart.
-- [ ] **Quiet period commits on Enter, clamped visibly.** Type 45 and
+- [ ] **After-combat delay commits on Enter, clamped visibly.** Type 45 and
       press Enter: the field shows 60 (the clamp, echoed). Type 5000:
       the field shows 900. Type "soon" and press Enter: the field keeps
       the stored value and one message line names the 60–900 range.
       Clicking elsewhere never commits a draft.
+- [ ] **The chord does not trip the focused client's own bind.** With an
+      EVE client focused whose F9 toggles the map, take a fight bound to
+      ctrl+alt+F9: Discord streams, and the map must NOT open. (Field
+      report 2026-10-07: the one-batch press leaked a bare F9; the seam
+      now presses left-hand keys with real gaps, the shape a hand
+      makes.) Manual ctrl+alt+F9 remains the comparison.
 - [ ] **No EVE client focused still fires.** With a browser focused
       (NOT Discord), take a fight: the chord fires — the mirror shows
       the last client it had. (There is no Discord-foreground refusal:
