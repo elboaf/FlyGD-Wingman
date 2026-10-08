@@ -146,17 +146,23 @@ i.e. the client in combat if the user was flying it.
 
 ### Setup ceremony (one-time, per install)
 
-1. User adds the **mirror exe** to Discord's Registered Game list
-   (Settings → Registered Games; the manual "Add it" path with the
-   installed `wingman-mirror.exe` path — registration data is
-   user-scope registry + Discord settings, not admin). Never the main
-   `wingman.exe`: registering it would put every Wingman-owned window
-   — WebView2 host, sig bar, previews — inside Discord's heuristic.
-2. User starts the mirror from Settings → Alerts ("Start stream
-   mirror"), picks it in Discord's stream source picker once, manually
-   — after which Discord pins the mirror permanently.
-3. User maps Toggle Screen Share to a chord in Discord, then records the
-   same chord in Wingman (this recording is the consent gate, below).
+1. User starts the mirror (Settings → Streaming) and adds **"Wingman
+   mirror"** to Discord's Registered Game list (Settings → Registered
+   Games; the small blue "Not seeing your game? Add it!" at the top of
+   that page opens a list to pick from — browse to the installed
+   `wingman-mirror.exe` as the fallback; registration data is user-scope
+   registry + Discord settings, not admin). EVE's own slider stays OFF:
+   Discord must not detect the raw EVE client, or it shares that instead
+   of the mirror. Never the main `wingman.exe`: registering it would put
+   every Wingman-owned window — WebView2 host, sig bar, previews —
+   inside Discord's heuristic.
+2. With EVE's slider off, the mirror is Discord's only shareable source:
+   no manual source-pick step. In the voice channel's bottom-left,
+   "Wingman mirror — Not Sharing" streams it on demand (720p/30fps
+   custom recommended).
+3. User records a chord in Wingman (this recording is the consent gate,
+   below), then maps Toggle Screen Share to the same chord in Discord
+   (Settings → System → Custom Keybinds).
 4. Done. In combat: chord fires, Discord starts the mirror, mirror shows
    the fighting pilot.
 
@@ -314,7 +320,7 @@ Discord streaming
   Stream mirror: [Not running - Start mirror]   (wingman-mirror.exe; what Discord pins)
   Keybind: [Ctrl+Alt+D] (capture button)        <- recording = consent
   -- Combat auto-start --------------------------------------
-  Quiet period before re-arm: [300] seconds
+  After-combat delay: [300] seconds
   -----------------------------------------------------------
   Armed for: Kuan Dai, xX_Sigma_Xx
   Last fired: 12:41 . Kuan Dai

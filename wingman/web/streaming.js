@@ -18,18 +18,23 @@
 
   var toggleBtn = WM.el('mirror-toggle');
   var errorEl = WM.el('mirror-error');
-  // The ceremony (#321): the register/start/pick walk under the mirror row
-  // with its never-main-exe warning, the resolved exe path Discord's Add-it
-  // dialog needs, and the chord-side map instruction plus the diagnostic
-  // that lives next to the armed row it explains. All hide with their
-  // halves of the card when the installation has no mirror -- setup text
-  // for a feature that cannot run is its own failure mode.
+  // The ceremony (#321, re-worded from the field-picked walk 2026-10-08):
+  // the Registered Games family under the mirror row -- EVE's slider off,
+  // then the small-blue Add-it list with the exe-path browse fallback and
+  // the never-main-exe warning -- plus the toggle hint that says what the
+  // button is for. All hide with their halves of the card when the
+  // installation has no mirror -- setup text for a feature that cannot
+  // run is its own failure mode.
   var ceremonyEl = WM.el('mirror-ceremony');
   var exeWarningEl = WM.el('mirror-exe-warning');
   var exePathEl = WM.el('mirror-exe-path');
+  var eveOffEl = WM.el('mirror-eve-off');
+  var streamSettingsEl = WM.el('stream-settings-hint');
+  var toggleHintEl = WM.el('mirror-toggle-hint');
   var groupEl = WM.el('combat-autostart-group');
   var enableHintEl = WM.el('chord-enable-hint');
   var chordCeremonyEl = WM.el('chord-ceremony');
+  var chordRowHintEl = WM.el('chord-row-hint');
   var diagnosticEl = WM.el('chord-diagnostic');
   var chordClear = WM.el('chord-clear');
   var collisionEl = WM.el('chord-collision');
@@ -53,14 +58,20 @@
       lastMirror = null;
       stateEl.textContent = 'Not available in this installation';
       toggleBtn.hidden = true;
+      toggleHintEl.hidden = true;
       errorEl.textContent = '';
       ceremonyEl.hidden = true;
       exeWarningEl.hidden = true;
       exePathEl.hidden = true;
+      eveOffEl.hidden = true;
+      streamSettingsEl.hidden = true;
       return;
     }
     ceremonyEl.hidden = false;
     exeWarningEl.hidden = false;
+    eveOffEl.hidden = false;
+    streamSettingsEl.hidden = false;
+    toggleHintEl.hidden = false;
     lastMirror = payload;
     // The registration path (#321): resolved by Python -- the installed
     // location is not one a user could guess. Hidden when the resolution
@@ -109,6 +120,7 @@
       chordClear.hidden = true;
       collisionEl.hidden = true;
       sendableEl.hidden = true;
+      chordRowHintEl.hidden = true;
       groupEl.hidden = true;
       enableHintEl.hidden = true;
       chordCeremonyEl.hidden = true;
@@ -122,6 +134,7 @@
     }
     chordBtn.hidden = false;
     chordClear.hidden = false;
+    chordRowHintEl.hidden = false;
     groupEl.hidden = false;
     enableHintEl.hidden = false;
     chordCeremonyEl.hidden = false;
@@ -356,6 +369,7 @@
     if (visible && (!payload || !payload.available)) {
       groupEl.hidden = true;
       enableHintEl.hidden = true;
+      chordRowHintEl.hidden = true;
       chordCeremonyEl.hidden = true;
       diagnosticEl.hidden = true;
     }
