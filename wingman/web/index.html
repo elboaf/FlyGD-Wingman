@@ -1827,40 +1827,12 @@
         </div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="mirror-error" role="alert"></span></div>
-        <!-- The helper text on this card is the user's dictated copy
-             (2026-10-08), used verbatim at the control each step uses --
-             do NOT rewrite, expand or smooth it over. It hides with the
-             mirror row when the installation has no mirror (#321). -->
-        <p class="hint" id="mirror-toggle-hint">
-          Start/Stop mirror - Enable/Disable this feature in Wingman.
-        </p>
-        <p class="hint" id="mirror-eve-off">
-          Settings &rarr; Registered Games &mdash; turn the slider OFF for
-          EVE itself, otherwise Discord shares your raw EVE client, and
-          multiple clients won't show up.
-        </p>
-        <p class="hint" id="mirror-ceremony">
-          At the top of the page in small blue text: &ldquo;Not seeing your
-          game? Add it!&rdquo; &mdash; pick &ldquo;Wingman
-          mirror&rdquo; from the list.
-        </p>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="mirror-exe-path" hidden></span></div>
-        <p class="hint" id="mirror-exe-warning">
-          Never add the main wingman.exe: registering it would put every
-          Wingman window &mdash; previews included &mdash; inside Discord's
-          game detection.
-        </p>
-        <div class="bind-group" id="combat-autostart-group">
-          <span class="bind-group-name">Combat auto-start</span>
-        </div>
-        <p class="hint" id="chord-enable-hint">
-          Wingman starts your Discord stream automatically the moment combat
-          is detected &mdash; and ends it once the fight has been quiet for a
-          while (FightRecorder's grace period, but for your stream). Recording
-          that keybind here is what enables combat auto-start; clearing it
-          turns the feature off.
-        </p>
+        <!-- The helper text on this card is the user's dictated screenshot
+             (2026-10-08), used verbatim, in this order, and NOTHING else:
+             do NOT rewrite, expand or smooth it over, and do not add lines
+             the screenshot does not have. The walk lives under its own
+             heading below the controls and hides with the mirror row when
+             the installation has no mirror (#321). -->
         <p class="hint" id="chord-row-hint">
           Record a screen-share keybind &mdash; pick something obscure, eg:
           ctrl+alt+f9
@@ -1870,14 +1842,6 @@
           <button class="bindbtn" id="chord-capture">Not set</button>
           <button class="linkbtn" id="chord-clear">Clear</button>
         </div>
-        <p class="hint" id="chord-ceremony">
-          In Discord: Settings &rarr; System &rarr; Custom Keybinds &rarr; Add
-          a keybind &rarr; Toggle Screen Share. Set the same obscure keybind
-          you recorded in Wingman
-        </p>
-        <p class="hint" id="chord-collision" hidden>
-          This chord also fires in EVE while EVE is focused.
-        </p>
         <p class="hint" id="chord-msg" hidden></p>
         <p class="hint" id="chord-sendable" hidden>
           Wingman cannot type this chord &mdash; record a different one.
@@ -1897,24 +1861,32 @@
           <span class="hint" id="coupling-latched"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-last-fired"></span></div>
-        <p class="hint" id="chord-diagnostic">
-          Armed means Wingman will press the chord; only Discord knows whether
-          the stream actually came up. If a fight starts and nothing goes live,
-          Discord has lost the registered game &mdash; the exe moved, or
-          Discord's settings were reset. Add &ldquo;Wingman mirror&rdquo; again
-          in Registered Games &mdash; the small blue &ldquo;Not seeing your
-          game? Add it!&rdquo; at the top of the page.
-        </p>
-        <p class="hint" id="stream-settings-hint">
-          Highly Recommended: (saves everyone's resources and unifies grid
-          view visibility for everyone): Bottom-left in Discord you'll see
-          &ldquo;Wingman mirror &mdash; Not Sharing&rdquo; &rarr; click the
-          Stream icon &rarr; gear icon on that screen &rarr; Stream Mode:
-          Custom &rarr; 720p / 30fps / mute stream audio. Those stream
-          settings are the sweet spot, not just for you the streamer, but
-          for viewers as well. We don't need quality entertainment, we need
-          reliable visibility of grid in combat situations.
-        </p>
+        <div class="stream-setup" id="stream-setup">
+          <h3 class="setup-head">Discord Setup Instructions</h3>
+          <p class="hint" id="chord-ceremony">
+            In Discord: Settings &rarr; System &rarr; Custom Keybinds &rarr; Add
+            a keybind &rarr; Toggle Screen Share. Set the same obscure keybind
+            you recorded in Wingman
+          </p>
+          <p class="hint" id="mirror-eve-off">
+            Settings &rarr; Registered Games &mdash; turn the slider OFF for
+            EVE itself.
+          </p>
+          <p class="hint" id="mirror-ceremony">
+            At the top of the page in small blue text: &ldquo;Not seeing your
+            game? Add it!&rdquo; &mdash; pick &ldquo;Wingman
+            mirror&rdquo; from the list.
+          </p>
+          <p class="hint" id="stream-settings-hint">
+            Highly Recommended (saves everyone's resources and unifies grid
+            view visibility for everyone): Bottom-left in Discord you'll see
+            &ldquo;Wingman mirror &mdash; Not Sharing&rdquo; &rarr; click the
+            Stream icon &rarr; gear icon on that screen &rarr; Stream Mode:
+            Custom &rarr; 720p / 30fps / mute stream audio. Those stream
+            settings are the sweet spot, not just for you the streamer, but
+            for viewers as well.&rdquo;
+          </p>
+        </div>
       </section>
     </div>
     <div class="settings" id="section-general">
