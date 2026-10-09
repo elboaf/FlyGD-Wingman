@@ -297,7 +297,7 @@
        --fs-mono   12px   0.92 of body      monospace and tabular cells
        --fs-muted  12px   1.08 under body   column headers, counts, hints
        --fs-label  11px   1.09 under muted  uppercase tracked SUB-labels
-       --fs-setup  25px   1.92 of body      the Streaming setup walk heading
+       --fs-setup  26px   2 of body         the Streaming setup walk heading
 
      (tests/test_page_conventions.py parses those six values and asserts
      the five ratios, so the table above cannot drift off the tokens the
@@ -406,12 +406,11 @@
   --fs-mono: 12px;
   /* One user: the Streaming card's dictated setup walk heading
      (2026-10-08 screenshot) -- a big mono title that must read as a
-     section of its own, not as another card label. Measured off the
-     screenshot: 25px is 1.92x body, the advance width its glyphs were
-     drawn at. Deliberately NOT --fs-head: that token's note above keeps
-     a three-user blast radius, and this heading's rank comes from the
-     typewriter register plus the step, not from joining the h1 lane. */
-  --fs-setup: 25px;
+     section of its own, not as another card label, at exactly double
+     body. Deliberately NOT --fs-head: that token's note above keeps a
+     three-user blast radius, and this heading's rank comes from the mono
+     register plus the 2x step, not from joining the h1 lane. */
+  --fs-setup: 26px;
   /* Uppercase tracked section labels (direction B). 10.5px was under the
      11px floor that functional text needs to stay comfortably legible, and
      caps at .14em tracking is the least forgiving setting in the sheet --
@@ -424,12 +423,6 @@
 
   --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
-  /* The dictated setup walk heading's face (Streaming card, 2026-10-08
-     screenshot): the serifed typewriter mono the mock rendered in --
-     deliberately NOT --mono's data face, which reads engineering-clean
-     but is not what was picked. Named first because every Windows box
-     ships it, so the heading draws identically everywhere. */
-  --mono-walk: "Courier New", monospace;
 
   --radius: 8px;
   --radius-sm: 6px;
@@ -1901,14 +1894,14 @@ button.btn:disabled,
    for a feature that cannot run is its own failure mode); it sets no
    display of its own, so the UA [hidden] rule stands. */
 .stream-setup { margin-top: 14px; }
-/* Flush with the card's left edge, not its padding: the outdent is
-   exactly the card's horizontal padding (16px), which is how the picked
-   layout draws it. Rank comes from the typewriter register at 1.92x
-   body -- the card h2's small caps could not carry a section break this
-   far below the controls it separates. */
+/* The app's own data mono, at the card padding like every other element:
+   the 2026-10-08 field word on transcribing the mock's Courier face and
+   edge-flush placement verbatim was "frankenstein mish-mash" -- what the
+   pick decides is the SIZE and the mono register, and the face and
+   position stay in the sheet's one type system. */
 .stream-setup > .setup-head {
-  font-family: var(--mono-walk); font-size: var(--fs-setup); font-weight: 700;
-  color: var(--text); margin: 2px 0 4px -16px;
+  font-family: var(--mono); font-size: var(--fs-setup); font-weight: 700;
+  color: var(--text); margin: 2px 0 4px;
 }
 
 /* The first divider is NOT special-cased, and that is deliberate after
