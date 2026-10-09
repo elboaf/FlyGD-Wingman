@@ -138,40 +138,46 @@ def test_refused_start_shows_the_error_row_without_a_reread():
     )
 
 
-def test_entry_shows_the_ceremony_and_the_unavailable_push_hides_it():
-    """The #321 wiring: the ceremony text, the never-main-exe warning, the
-    resolved exe path and the Combat auto-start words all render on entry
-    and all hide when the push says the installation has no mirror."""
+def test_entry_shows_the_setup_walk_and_the_unavailable_push_hides_it():
+    """The #321 wiring, re-laid out to the dictated screenshot (2026-10-08):
+    the four instruction paragraphs render under the setup heading on
+    entry, and the whole walk -- heading included -- hides when the push
+    says the installation has no mirror."""
     _run_scenario(
         """
       setMirror(AVAILABLE_RUNNING);
       setCoupling({state: 'armed', latched: [], quiet_s: 300, chord_sendable: true});
       document.fire('wm:section', {detail: 'streaming'});
       await tick();
-      assert.equal(el('mirror-ceremony').hidden, false);
-      assert.equal(el('mirror-exe-warning').hidden, false);
-      assert.equal(el('mirror-exe-path').hidden, false);
-      assert.ok(el('mirror-exe-path').textContent.includes('wingman-mirror.exe'),
-                el('mirror-exe-path').textContent);
-      assert.equal(el('mirror-eve-off').hidden, false);
-      assert.equal(el('mirror-toggle-hint').hidden, false);
-      assert.equal(el('combat-autostart-group').hidden, false);
-      assert.equal(el('chord-ceremony').hidden, false);
+      assert.equal(el('stream-setup').hidden, false);
       assert.equal(el('chord-row-hint').hidden, false);
-      assert.equal(el('chord-diagnostic').hidden, false);
-      assert.equal(el('stream-settings-hint').hidden, false);
       handlers.onMirrorStatus(UNAVAILABLE);
-      assert.equal(el('mirror-ceremony').hidden, true);
-      assert.equal(el('mirror-exe-warning').hidden, true);
-      assert.equal(el('mirror-exe-path').hidden, true);
-      assert.equal(el('mirror-eve-off').hidden, true);
-      assert.equal(el('mirror-toggle-hint').hidden, true);
-      assert.equal(el('combat-autostart-group').hidden, true);
-      assert.equal(el('chord-ceremony').hidden, true);
+      assert.equal(el('stream-setup').hidden, true);
       assert.equal(el('chord-row-hint').hidden, true);
-      assert.equal(el('chord-diagnostic').hidden, true);
-      assert.equal(el('stream-settings-hint').hidden, true);
     """,
         AVAILABLE_RUNNING=AVAILABLE_RUNNING,
         UNAVAILABLE=UNAVAILABLE,
     )
+
+
+def test_the_card_carries_the_dictated_screenshot_and_nothing_else():
+    """2026-10-08: the card's resting copy is the user's dictated
+    screenshot, verbatim -- the walk's old side texts (the toggle hint, the
+    resolved exe path and the never-main-exe warning, the Combat auto-start
+    divider and enable hint, the always-on collision line, the armed-row
+    diagnostic) are gone from the markup, and the setup heading exists.
+    The runtime double above fails on any id the module still wants, so
+    this pins the other direction: ids the markup must NOT carry back."""
+    html = (HERE.parent / "wingman" / "web" / "index.html").read_text(encoding="utf-8")
+    for gone in (
+        "mirror-toggle-hint",
+        "mirror-exe-path",
+        "mirror-exe-warning",
+        "combat-autostart-group",
+        "chord-enable-hint",
+        "chord-collision",
+        "chord-diagnostic",
+    ):
+        assert f'id="{gone}"' not in html, gone
+    assert 'id="stream-setup"' in html
+    assert "Discord Setup Instructions" in html
