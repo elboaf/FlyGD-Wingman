@@ -18,26 +18,14 @@
 
   var toggleBtn = WM.el('mirror-toggle');
   var errorEl = WM.el('mirror-error');
-  // The ceremony (#321, re-worded from the field-picked walk 2026-10-08):
-  // the Registered Games family under the mirror row -- EVE's slider off,
-  // then the small-blue Add-it list with the exe-path browse fallback and
-  // the never-main-exe warning -- plus the toggle hint that says what the
-  // button is for. All hide with their halves of the card when the
-  // installation has no mirror -- setup text for a feature that cannot
-  // run is its own failure mode.
-  var ceremonyEl = WM.el('mirror-ceremony');
-  var exeWarningEl = WM.el('mirror-exe-warning');
-  var exePathEl = WM.el('mirror-exe-path');
-  var eveOffEl = WM.el('mirror-eve-off');
-  var streamSettingsEl = WM.el('stream-settings-hint');
-  var toggleHintEl = WM.el('mirror-toggle-hint');
-  var groupEl = WM.el('combat-autostart-group');
-  var enableHintEl = WM.el('chord-enable-hint');
-  var chordCeremonyEl = WM.el('chord-ceremony');
+  // The setup walk (2026-10-08 dictated screenshot): the card's
+  // instruction paragraphs live under the one big heading BELOW the
+  // controls, and the wrapper is what hides the whole walk -- heading
+  // included -- when the installation has no mirror. Setup text for a
+  // feature that cannot run is its own failure mode (#321).
+  var setupEl = WM.el('stream-setup');
   var chordRowHintEl = WM.el('chord-row-hint');
-  var diagnosticEl = WM.el('chord-diagnostic');
   var chordClear = WM.el('chord-clear');
-  var collisionEl = WM.el('chord-collision');
   var msgEl = WM.el('chord-msg');
   var sendableEl = WM.el('chord-sendable');
   var quietInput = WM.el('coupling-quiet');
@@ -58,26 +46,12 @@
       lastMirror = null;
       stateEl.textContent = 'Not available in this installation';
       toggleBtn.hidden = true;
-      toggleHintEl.hidden = true;
       errorEl.textContent = '';
-      ceremonyEl.hidden = true;
-      exeWarningEl.hidden = true;
-      exePathEl.hidden = true;
-      eveOffEl.hidden = true;
-      streamSettingsEl.hidden = true;
+      setupEl.hidden = true;
       return;
     }
-    ceremonyEl.hidden = false;
-    exeWarningEl.hidden = false;
-    eveOffEl.hidden = false;
-    streamSettingsEl.hidden = false;
-    toggleHintEl.hidden = false;
+    setupEl.hidden = false;
     lastMirror = payload;
-    // The registration path (#321): resolved by Python -- the installed
-    // location is not one a user could guess. Hidden when the resolution
-    // failed so the ceremony never points at a line that is not there.
-    exePathEl.textContent = payload.exe_path || '';
-    exePathEl.hidden = !payload.exe_path;
     toggleBtn.hidden = false;
     if (payload.state === 'running') {
       stateEl.textContent = 'Running';
@@ -102,29 +76,19 @@
     // Round 3, B2's disabled rule, the bookmarks rows' version: Clear is
     // enabled exactly when there is something to clear.
     WM.setEnabled(chordClear, !!chordDisplay);
-    // The collision line is true of every chord -- Wingman presses the
-    // chord into whatever window is focused, EVE included -- so it shows
-    // whenever a chord is recorded, not only in the second after a
-    // capture. Warn, never prevent (the spec's failure-modes line).
-    collisionEl.hidden = !chordDisplay;
   }
 
   function renderChord(payload) {
     if (!payload || !payload.available) {
       // No mirror process in this installation means no combat auto-start
       // either: unavailable hides the section's controls with the mirror
-      // row's, not just the toggle. #321 extends that to the section's
-      // words too -- the header, the enable hint and the ceremony text
-      // are instructions for a feature that cannot run.
+      // row's, not just the toggle. The setup walk's words are the
+      // wrapper's business (renderMirror hides stream-setup); this hides
+      // only what sits outside it.
       chordBtn.hidden = true;
       chordClear.hidden = true;
-      collisionEl.hidden = true;
       sendableEl.hidden = true;
       chordRowHintEl.hidden = true;
-      groupEl.hidden = true;
-      enableHintEl.hidden = true;
-      chordCeremonyEl.hidden = true;
-      diagnosticEl.hidden = true;
       quietInput.parentNode.hidden = true;
       couplingStateEl.parentNode.hidden = true;
       latchedEl.parentNode.hidden = true;
@@ -135,10 +99,6 @@
     chordBtn.hidden = false;
     chordClear.hidden = false;
     chordRowHintEl.hidden = false;
-    groupEl.hidden = false;
-    enableHintEl.hidden = false;
-    chordCeremonyEl.hidden = false;
-    diagnosticEl.hidden = false;
     chordDisplay = payload.chord_display || '';
     applyChord();
     showMsg('');
@@ -367,11 +327,10 @@
     // controls stay entry/commit-rendered, so nothing here can fight a
     // capture. (#321 field test: entry hid them, a push did not.)
     if (visible && (!payload || !payload.available)) {
-      groupEl.hidden = true;
-      enableHintEl.hidden = true;
+      // Hiding only: the chord controls stay entry/commit-rendered, so
+      // nothing here can fight a capture. (#321 field test: entry hid
+      // them, a push did not.)
       chordRowHintEl.hidden = true;
-      chordCeremonyEl.hidden = true;
-      diagnosticEl.hidden = true;
     }
   });
 

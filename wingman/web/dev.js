@@ -819,10 +819,11 @@
   api.stream_mirror_state = function () {
     console.log('DEV api.stream_mirror_state()');
     return Promise.resolve({
-      available: true, running: false, state: 'stopped',
+      available: true, running: false, state: 'off',
       error: null, mirror_on: false,
-      // The ceremony's registration path (#321) -- a plausible installed
-      // shape, so the path row and its wrapping render under ?dev=1.
+      // Payload parity with the Python read. The page no longer renders a
+      // path row (2026-10-08 dictated screenshot), but the double keeps
+      // the field so its shape stays honest against the real bridge.
       exe_path: 'C:\\Program Files\\FlyGD Wingman\\_internal\\bin\\wingman-mirror.exe',
       chord: devChord, chord_display: devChordDisplay()
     });

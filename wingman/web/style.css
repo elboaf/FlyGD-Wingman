@@ -289,7 +289,7 @@
   --row-ring-focus: #554e65;
 
   /* ---- type scale ----
-     Five sizes, and the RATIOS are what the scale is, so they are stated
+     Six sizes, and the RATIOS are what the scale is, so they are stated
      here rather than left to be re-derived off the values:
 
        --fs-head   17px   1.31 over body    h1 x2, .dialog h2
@@ -297,9 +297,10 @@
        --fs-mono   12px   0.92 of body      monospace and tabular cells
        --fs-muted  12px   1.08 under body   column headers, counts, hints
        --fs-label  11px   1.09 under muted  uppercase tracked SUB-labels
+       --fs-setup  26px   2 of body         the Streaming setup walk heading
 
-     (tests/test_page_conventions.py parses those five values and asserts
-     the four ratios, so the table above cannot drift off the tokens the
+     (tests/test_page_conventions.py parses those six values and asserts
+     the five ratios, so the table above cannot drift off the tokens the
      way a hand-kept copy always eventually does.)
 
      Adopted from 2.2.0's sv-ttk-derived scale, not reinvented. COLUMN
@@ -403,6 +404,13 @@
   --fs-body: 13px;
   --fs-muted: 12px;
   --fs-mono: 12px;
+  /* One user: the Streaming card's dictated setup walk heading
+     (2026-10-08 screenshot) -- a big mono title that must read as a
+     section of its own, not as another card label, at exactly double
+     body. Deliberately NOT --fs-head: that token's note above keeps a
+     three-user blast radius, and this heading's rank comes from the mono
+     register plus the 2x step, not from joining the h1 lane. */
+  --fs-setup: 26px;
   /* Uppercase tracked section labels (direction B). 10.5px was under the
      11px floor that functional text needs to stay comfortably legible, and
      caps at .14em tracking is the least forgiving setting in the sheet --
@@ -1872,27 +1880,29 @@ button.btn:disabled,
    Its `grid-column: 1 / -1` is inert here and stays as written: the class
    is shared with #preview-binds and bookmarks.js's grouped lists, where
    the span is load-bearing, and forking it into a second class would give
-   the sheet two dividers that have to be kept looking identical by hand.
-   What this card uses is the hairline, the 14px/10px rhythm and the
-   --fs-label uppercase name -- all of which apply unchanged. */
+   the sheet two dividers that have to be kept looking identical by hand. */
 
-/* A tighter rhythm than the grid lists this class was written for, scoped
-   to dividers that are direct children of a settings card. #preview-binds
-   and bookmarks.js build theirs INSIDE their list host, so neither is a
-   `.card >` child and neither is touched.
+/* The settings-card-scoped divider rules are gone with their only user:
+   the Combat auto-start divider was the sole `.card >` child bind-group,
+   and the 2026-10-08 dictated screenshot removed it with the card's other
+   side texts (the card reads controls first, setup walk second). Any
+   future direct-child divider starts from the base rhythm and re-measures.
 
-   Why tighter: 14px + 10px was measured for ONE divider separating two
-   halves of a row list. This card draws four in a column whose own row
-   rhythm is 10px, and at 39px each (14 margin + 10 padding + 1 border +
-   14 of name) they cost 156px on a screen whose complaint is its height.
-   10px + 6px keeps the hairline and the rank and returns 32px. */
-.settings .card > .bind-group { margin-top: 10px; padding-top: 6px; }
-
-/* The Combat auto-start divider hides with its section when the
-   installation has no mirror (#321) -- streaming.js toggles `hidden` on
-   it, and .bind-group's own display: flex would beat the UA stylesheet's
-   [hidden] rule, the trap this sheet documents six times over. */
-.settings .card > .bind-group[hidden] { display: none; }
+   The setup walk that replaced it -- one large mono heading over the four
+   instruction paragraphs, BELOW the controls. The wrapper is the one thing
+   streaming.js hides when the installation has no mirror (#321: setup text
+   for a feature that cannot run is its own failure mode); it sets no
+   display of its own, so the UA [hidden] rule stands. */
+.stream-setup { margin-top: 14px; }
+/* The app's own data mono, at the card padding like every other element:
+   the 2026-10-08 field word on transcribing the mock's Courier face and
+   edge-flush placement verbatim was "frankenstein mish-mash" -- what the
+   pick decides is the SIZE and the mono register, and the face and
+   position stay in the sheet's one type system. */
+.stream-setup > .setup-head {
+  font-family: var(--mono); font-size: var(--fs-setup); font-weight: 700;
+  color: var(--text); margin: 2px 0 4px;
+}
 
 /* The first divider is NOT special-cased, and that is deliberate after
    measuring it. An earlier draft carried `.pv-master + .bind-group
@@ -4776,19 +4786,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #f-webhook { font-family: var(--mono); font-size: var(--fs-mono); letter-spacing: .04em; }
 #f-webhook[type="text"] { letter-spacing: 0; }
 .settings .toggle { flex: none; min-width: 62px; }
-
-/* The setup ceremony's registration path (#321), the browse target Discord's
-   Add-it dialog opens on: an installed path runs through _internal\bin, which
-   nobody guesses, so the resolved value is shown for copying. Monospace keeps
-   its length honest, and overflow-wrap: anywhere lets the path break rather
-   than push the card wide at the 840 floor -- a Windows path has no natural
-   break. There is no bare .mono class (see the note at the bottom of this
-   sheet), so the face is set directly; no display property here, because JS
-   toggles hidden on this span and an author display rule would beat it. */
-#mirror-exe-path {
-  font-family: var(--mono); font-size: var(--fs-mono);
-  overflow-wrap: anywhere;
-}
 
 /* Per-card inline message, where a refusal or an unwritable-file warning
    lands now that there is no Save button. Deliberately NOT _alert's modal:
