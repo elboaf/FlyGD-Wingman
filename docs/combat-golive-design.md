@@ -450,3 +450,97 @@ HWND_BOTTOM at creation, never activated, never minimized) and walks the
 tier leg, the pin leg, the style sweep and the minimize confirmation.
 Result template lives in the runbook; the tier result is recorded in
 #312 and gates all feature work.
+
+## The closed loop, revision 4: probe-on-demand over Discord's gateway (#333, #334)
+
+*Added 2026-10-10. Revises the stop mechanism and the quiet-period
+setting; the consent design, guard stack, mirror and chord mechanism are
+untouched.*
+
+### What the #334 gate found
+
+The presence approach in #333's original framing is dead: **a Go Live
+screen share never sets a Discord presence** (activity type 1 STREAMING
+is linked-platform status — twitch/youtube with a url — only).
+Empirically: zero PRESENCE_UPDATE events while live, connection healthy.
+And the voice-state route is half-dead: **VOICE_STATE_UPDATE transitions
+are never dispatched to a bot** — not for a Go Live toggle, not even for
+a channel join — despite GUILD_VOICE_STATES (512), Administrator, View
+Channels, and portal intents enabled.
+
+What *does* work: the **`GUILD_CREATE` `voice_states` snapshot** carries
+`self_stream` truthfully (`True` while live, absent/None when not). A
+bot can learn, at connect time, whether the watched user is live.
+Verdict recorded in #334: **Tier B — sync-driven, not event-driven.**
+
+Full evidence table and rate-limit budget: #334 comment
+`6102376505`. Probe harness: `scripts/discord_presence_probe.py`
+(`2acaa2a`), runbook `docs/discord-presence-probe.md`.
+
+### The mechanism, revision 4: probe on demand
+
+No sync clock. Wingman opens a short-lived gateway connection
+(**identify → read `voice_states` → disconnect**, ~2–3 s) exactly when a
+decision needs fresh state:
+
+1. **Enter-combat gate** (start decision): the armed trigger fires →
+   probe first. Snapshot says already live → **suppress the chord**
+   (logged, never silent), arm nothing. Snapshot says not live → fire
+   the start chord.
+2. **Quiet-expiry gate** (stop decision): the quiet clock expires with
+   an episode open → probe first. Snapshot says `self_stream=True` **and
+   the episode is Wingman-originated** → send the stop chord. Snapshot
+   says not live → the stream already ended by hand; clear the latch,
+   send nothing.
+
+Two probes per fight, upper bound. **No confirm probe** — a lost chord
+self-corrects: if the start toggle never landed, the stop probe finds
+`self_stream=False`, sends nothing, and re-arms. A lost chord costs one
+dead episode, never a zombie stream.
+
+### Budget (why on-demand is safe)
+
+Discord allows **1000 gateway sessions / 24 h per bot**
+(`session_start_limit`, verified). A fight can contain several
+enter/exit combat events, but the quiet-period reset means the *stop*
+gate only runs once per quiet expiry — probes scale with
+**fights, not combat lines**. Worst case budgeted: **10 users ×
+15 fights/day × 2 probes = 300/day** (30 % of the shared pool).
+Probe counts are capped: if a user's probes would exceed the shared
+budget (pathological replay), Wingman degrades to open-loop for the
+rest of the day and says so on the card. The shared published bot is
+viable *only* at this scale; the guard makes that explicit rather than
+lucky.
+
+### The one flag that makes stops safe: `wingman_live`
+
+The chord is a toggle with no direction, so every stop decision is
+two-step and gated:
+
+- `wingman_live` is set **only** when a post-episode snapshot (the next
+  enter-combat or stop probe) shows `self_stream=True` after Wingman's
+  start chord — a confirmed Wingman-originated stream.
+- The stop path requires `wingman_live` **and** a fresh snapshot saying
+  still-live. A manually started stream never sets the flag; a manual
+  stop clears it on the next probe, dissolving the pending stop.
+
+**A player who went live by hand can never have their stream killed by
+Wingman's stop logic, except inside the ~2–3 s the probe itself takes.**
+The start side inherits the same freshness: the enter-combat probe's
+snapshot is seconds old, so the stale-snapshot race that revision 3's
+design would have had is collapsed to noise.
+
+### Settings changes
+
+- `quiet_s`: **fixed 600** (the range 60–900 and the 300 default are
+  retired). Rationale: players want to watch the grid after combat
+  ends; the stop is now snapshot-gated so running long is a one-sided
+  error — the sync/probe can only make a stream end *later* than the
+  quiet clock, never earlier.
+- New: bot token field in the Streaming card's setup walk (the probe
+  bot the user creates per the runbook; token stays local, never
+  leaves the machine except to Discord's gateway).
+- Card adds: live state ("live — verified 14:22", "not live"), probe
+  budget remaining, and the manual-live latch (a one-click "I'm live by
+  hand" suppressor — optional, belt-and-suspenders; the probe
+  freshness makes it non-load-bearing).
