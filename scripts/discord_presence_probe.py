@@ -118,6 +118,17 @@ def main() -> int:
         for line in lines:
             print(line)
 
+    def _voice_state(d: dict) -> None:
+        uid = d.get("user_id")
+        if uid != args.user:
+            return
+        streaming = d.get("self_stream")
+        print(
+            f"[{_stamp()}] VOICE_STATE_UPDATE user={uid} "
+            f"channel={d.get('channel_id')} self_stream={streaming}"
+            + ("   <<<< GO LIVE STARTED" if streaming else "")
+        )
+
     print(f"[{_stamp()}] connecting {GATEWAY_URL}")
     with connect(GATEWAY_URL, ssl=ssl.create_default_context()) as ws:
         hello = json.loads(ws.recv())
@@ -169,6 +180,8 @@ def main() -> int:
                         )
                 elif t == "PRESENCE_UPDATE":
                     _present(payload["d"])
+                elif t == "VOICE_STATE_UPDATE":
+                    _voice_state(payload["d"])
                 else:
                     print(f"[{_stamp()}] dispatch {t}")
             elif op == OP_HEARTBEAT_ACK:
