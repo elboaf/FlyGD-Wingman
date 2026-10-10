@@ -85,7 +85,10 @@ def main() -> int:
 
     # Presence needs GUILD_PRESENCES (256) + GUILD_MEMBERS (2) subscribed in
     # the identify payload AND enabled in the portal; GUILDS (1) for READY.
-    payload_intents = 1 | 2 | 256
+    # GUILD_VOICE_STATES (512) is required to receive VOICE_STATE_UPDATE for
+    # other members -- self_stream (Go Live) rides on that event. Not a
+    # privileged intent; no portal toggle needed.
+    payload_intents = 1 | 2 | 256 | 512
 
     state = {"hb": None, "seq": None, "acked": True}
 
@@ -120,9 +123,9 @@ def main() -> int:
 
     def _voice_state(d: dict) -> None:
         uid = d.get("user_id")
-        if uid != args.user:
-            return
         streaming = d.get("self_stream")
+        if uid != args.user and not streaming:
+            return
         print(
             f"[{_stamp()}] VOICE_STATE_UPDATE user={uid} "
             f"channel={d.get('channel_id')} self_stream={streaming}"
@@ -183,7 +186,12 @@ def main() -> int:
                 elif t == "VOICE_STATE_UPDATE":
                     _voice_state(payload["d"])
                 else:
-                    print(f"[{_stamp()}] dispatch {t}")
+                    keys = (
+                        sorted(payload["d"].keys())
+                        if isinstance(payload["d"], dict)
+                        else []
+                    )
+                    print(f"[{_stamp()}] dispatch {t} keys={keys[:8]}")
             elif op == OP_HEARTBEAT_ACK:
                 print(f"[{_stamp()}] heartbeat acked")
             elif op == 7:  # reconnect
