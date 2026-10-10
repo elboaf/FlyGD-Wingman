@@ -181,6 +181,16 @@ def main() -> int:
                             f"[{_stamp()}] !! bot is NOT in guild {args.guild} — "
                             f"invite it (runbook step 3), then restart"
                         )
+                elif t == "GUILD_CREATE":
+                    vs = payload["d"].get("voice_states", [])
+                    print(f"[{_stamp()}] GUILD_CREATE voice_states snapshot:")
+                    for s in vs:
+                        print(
+                            f"  user={s.get('user_id')} channel={s.get('channel_id')} "
+                            f"self_stream={s.get('self_stream')} self_video={s.get('self_video')}"
+                        )
+                    if not vs:
+                        print("  (empty — nobody in voice at connect)")
                 elif t == "PRESENCE_UPDATE":
                     _present(payload["d"])
                 elif t == "VOICE_STATE_UPDATE":
