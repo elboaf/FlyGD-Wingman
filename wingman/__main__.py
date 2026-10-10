@@ -763,8 +763,10 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
 
     # The token store is owned here, constructed once; load() raises a
     # fixed CredentialError on a broken store, which degrades the probe
-    # to open-loop rather than crashing the worker.
+    # to open-loop rather than crashing the worker. One budget for the
+    # process lifetime; the day rollover is the counter's own business.
     token_store = BotTokenStore()
+    budget = DailyBudget()
 
     def probe_live():
         """The gateway probe seam. Raises ProbeError on no answer; a
@@ -785,6 +787,12 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
     def mirror_running():
         return mirror_supervisor is not None and mirror_supervisor.is_running()
 
+    def _budget_status() -> dict:
+        return {
+            "budget_used": budget.used(),
+            "budget_limit": budget.used() + budget.remaining(),
+        }
+
     return StreamCouplingController(
         StreamCouplingPorts(
             coupling=lambda: (
@@ -800,7 +808,8 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
                 payload
             ),
             probe_live=probe_live,
-            budget_spend=DailyBudget().try_spend,
+            budget_spend=budget.try_spend,
+            budget_status=_budget_status,
             publish_probe_status=(
                 lambda payload: api_box["api"]._publish_stream_probe_status(payload)
             ),

@@ -542,10 +542,14 @@ The stop half is implemented in `wingman/alerts/streamcoupling.py`:
   still live over a Wingman-originated episode -> stop chord; already
   off -> latch cleared, nothing sent, re-armed (no confirm probe -- a
   lost chord self-corrects here).
-- Degraded (no token / ids, budget dry, gateway down) with an episode
-  never confirmed Wingman-originated -> the episode closes without a
-  press: a blind press could kill a manual stream. The degrade notice
-  rides to the card as `onStreamProbeStatus`.
+- Degraded (no token / ids, budget dry, gateway down) -> degrade to
+  OPEN-LOOP: the chord fires unconditionally, exactly rev 3's
+  behaviour. The episode is Wingman-originated by construction (the
+  alternation guard: only Wingman's start press opens one), and the
+  ticket's sentence stands -- one dead episode max, never a zombie
+  stream. The degrade notice rides to the card as
+  `onStreamProbeStatus`; a manual toggle mid-episode remains the card
+  collision warning's territory, unchanged from rev 3.
 - `quiet_s` is fixed 600: the settings validator projects any stored
   value to 600, and the bridge endpoint echoes 600 for any numeric
   input.

@@ -326,6 +326,8 @@ class StreamCouplingPorts:
     ProbeError on no answer -- it runs on this controller's worker only.
     ``budget_spend`` reserves one probe from the daily allowance and
     returns False when the day is dry (degrade to open-loop).
+    ``budget_status`` reports the day's standing for the card
+    (``{"budget_used": int, "budget_limit": int}``).
     ``publish_probe_status`` pushes the last probe's answer for the card
     (#337): ``{"live": bool|None, "display": "HH:MM"|None, "degraded":
     str|None, "budget_used": int, "budget_limit": int}``.
@@ -339,6 +341,7 @@ class StreamCouplingPorts:
     publish_fired: Callable[[dict], None]
     probe_live: Callable[[], bool] | None = None
     budget_spend: Callable[[], bool] | None = None
+    budget_status: Callable[[], dict] | None = None
     publish_probe_status: Callable[[dict], None] | None = None
 
 
@@ -480,11 +483,9 @@ class StreamCouplingController:
             "degraded": degraded,
             "wingman_live": wingman_live,
         }
-        spend = self._ports.budget_spend
-        if spend is not None and hasattr(spend, "__self__"):
-            budget = spend.__self__
-            payload["budget_used"] = budget.used()
-            payload["budget_limit"] = budget.remaining() + budget.used()
+        budget = self._ports.budget_status
+        if budget is not None:
+            payload.update(budget())
         return payload
 
     def _run(self) -> None:
@@ -530,9 +531,9 @@ class StreamCouplingController:
                 # The toggle just OPENED the stream; the stop press at
                 # quiet expiry is what closes it. That is the whole
                 # alternation: open here, closed in _maybe_stop. The
-                # origin flag is UNSET until a probe confirms the
-                # stream live (#335): an unconfirmed episode is one a
-                # degraded stop will not press against.
+                # confirmation flag starts false every episode and is
+                # consumed by whichever probe confirms or stop press
+                # ends it (#335 pins the lifecycle).
                 self._wingman_live = False
                 self._episode = fired[0]
         self._ports.publish_state(self.state_payload())
@@ -591,26 +592,27 @@ class StreamCouplingController:
 
     def _maybe_stop(self) -> None:
         """The toggle's other half, rev 4 (#335): the stop decision is
-        PROBE-GATED, never a blind press. At quiet expiry with the
-        episode open, spend one budgeted probe:
+        PROBE-GATED whenever the probe can answer. At quiet expiry with
+        the episode open, spend one budgeted probe:
 
-        - still live, and ``wingman_live`` is set (a fresh snapshot
-          confirmed this stream as Wingman-originated) -> send the stop
-          chord, clear the latch.
+        - still live -> send the stop chord. The episode is
+          Wingman-originated by construction (the alternation guard:
+          only Wingman's start press opens one), and the fresh snapshot
+          says the stream it opened is still up; this is the
+          ``wingman_live``-confirmed press the invariant asks for.
         - already off (the user stopped by hand) -> clear the latch,
           send NOTHING, re-arm. No confirm probe: a lost chord
           self-corrects here -- one dead episode max, never a zombie.
-        - probe unavailable (no token, gateway down) or the budget is
-          dry -> open-loop: fire today's chord unconditionally. The
-          closed loop must never become a missed stop; the card says
-          why (#337).
-
-        A stop chord fires ONLY with ``wingman_live`` set AND a fresh
-        snapshot saying still-live. Manual streams are untouchable.
+        - probe unavailable (no token/ids, gateway down) or the budget
+          is dry -> degrade to OPEN-LOOP: fire today's chord
+          unconditionally, exactly the shipped rev-3 behaviour. The
+          degraded loop must never become a missed stop -- a zombie
+          stream is the one outcome the ticket forbids -- and a manual
+          toggle mid-episode is the card collision warning's territory,
+          unchanged from rev 3. The card says why (#337).
         """
         with self._lock:
             episode = self._episode
-            wingman_live = self._wingman_live
         if episode is None:
             return
         coupling = self._read_coupling()
@@ -630,7 +632,6 @@ class StreamCouplingController:
                 # Confirmed Wingman-originated and still live: this is
                 # the one state in which the stop chord may fire.
                 self._wingman_live = True
-                wingman_live = True
         elif verdict is False:
             with self._lock:
                 # Already off -- the user stopped it by hand, or the
@@ -643,7 +644,12 @@ class StreamCouplingController:
             )
             self._ports.publish_state(self.state_payload())
             return
-        # verdict None: degraded -- open-loop below.
+        # verdict None: degraded -- open-loop below. The episode is
+        # Wingman-originated by construction (the alternation guard:
+        # only Wingman's start press opens one), so today's chord fires
+        # unconditionally -- "degrade to open-loop", never a zombie
+        # stream. A manual stream the user toggled mid-episode is the
+        # card collision warning's territory, not a new gate here.
 
         with self._lock:
             self._episode = None
@@ -659,12 +665,6 @@ class StreamCouplingController:
             # off switch, and it switches off PRESSES -- including this
             # one. Whatever the stream is doing now is the user's to end.
             abandon("the chord was cleared")
-            return
-        if not wingman_live and verdict is None:
-            # Degraded AND never confirmed Wingman-originated: a blind
-            # press could toggle off a stream the user started by hand.
-            # Closing the episode without pressing is the safe posture.
-            abandon("the probe is unavailable and the stream was never confirmed")
             return
         if not self._ports.mirror_running():
             # Discord pins the mirror window; a dead window has already

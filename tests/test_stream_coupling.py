@@ -100,6 +100,10 @@ class Harness:
             ),
             probe_live=self._probe,
             budget_spend=self.budget.try_spend,
+            budget_status=lambda: {
+                "budget_used": self.budget.used(),
+                "budget_limit": self.budget.used() + self.budget.remaining(),
+            },
             publish_probe_status=lambda payload: self.pushes.append(
                 ("onStreamProbeStatus", payload)
             ),
@@ -617,10 +621,13 @@ def test_a_stop_never_fires_against_a_manual_stream():
     assert h.state()["wingman_live"] is False
 
 
-def test_a_degraded_probe_never_presses_an_unconfirmed_episode():
-    """No token / budget dry / gateway down AND the stream was never
-    confirmed Wingman-originated: closing the episode without pressing
-    is the safe posture -- a blind press could kill a manual stream."""
+def test_a_degraded_probe_still_presses_open_loop():
+    """No token / budget dry / gateway down: degrade to OPEN-LOOP -- the
+    episode is Wingman-originated by construction (the alternation
+    guard: only Wingman's start press opens one), so today's chord must
+    fire. The closed loop must never become a missed stop: a zombie
+    stream is exactly what the ticket forbids ("one dead episode max,
+    never a zombie stream")."""
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
@@ -628,69 +635,52 @@ def test_a_degraded_probe_never_presses_an_unconfirmed_episode():
     h.probe_error = ProbeError("network")
     h.controller._maybe_stop()
     assert h.probe_calls == 1
-    assert len(h.sent) == 1
-    # The episode IS closed either way: the next alert starts fresh.
-    h.observe(["Kuan Dai"])
     assert len(h.sent) == 2
-
-
-def test_a_degraded_probe_still_presses_a_confirmed_episode():
-    """The degrade must never become a missed stop: once a probe has
-    confirmed the stream Wingman-originated (wingman_live), a later
-    failed probe fires today's open-loop chord -- the alternative is a
-    zombie stream, which the closed loop must never make."""
-    h = Harness()
+    # The episode is closed either way: the next alert starts fresh.
     h.observe(["Kuan Dai"])
-    h.now += 600 + 1
-    h.controller._maybe_stop()  # press 2, wingman_live confirmed then cleared
-    assert len(h.sent) == 2
-    # A second fight: start, then the probe fails at its stop gate.
-    h.observe(["Kuan Dai"])
-    assert len(h.sent) == 3
-    h.now += 600 + 1
-    h.probe_error = ProbeError("network")
-    h.controller._maybe_stop()
-    # Confirmed by THIS fight's probe? No -- the start press reset the
-    # flag, so a failed probe closes the episode without pressing.
     assert len(h.sent) == 3
 
 
-def test_a_confirmed_then_degraded_episode_presses_open_loop():
-    """The wingman_live flag is sticky across the episode: a probe that
-    confirmed origin once (mid-episode via the first stop gate's
-    verdict) keeps the degraded stop path allowed. Modeled: confirm at
-    the first gate with the fight resuming, degrade at the next."""
+def test_the_wingman_live_flag_is_per_episode():
+    """The confirmation is consumed by the stop press and reset by the
+    next start: a confirmed dead episode must not authorize a press
+    against whatever is live now. (Today the flag authorizes nothing on
+    the degraded path -- the alternation guard already proves origin --
+    but its lifecycle is pinned so a future use inherits it right.)"""
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.now += 600 + 1
     h.controller._maybe_stop()  # confirmed and pressed: episode closed
+    assert h.state()["wingman_live"] is False
     h.observe(["Kuan Dai"])  # fresh fight opens a fresh episode
+    assert h.state()["wingman_live"] is False
     h.now += 300
     h.observe(["Kuan Dai"])  # the fight resumes: the episode holds
     h.now += 600 + 1
     h.probe_error = ProbeError("network")
     h.controller._maybe_stop()
-    # Unconfirmed by this episode's own probe -> no press. The flag is
-    # per-EPISODE, not per-process: a confirmed dead episode must not
-    # authorize a press against whatever is live now. Sends: start,
-    # stop, start -- the degraded stop gate added nothing.
-    assert len(h.sent) == 3
+    # Sends: start, stop, start, degraded stop (open-loop).
+    assert len(h.sent) == 4
 
 
 def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
-    """Budget dry (#335): degrade to open-loop -- and the card hears
-    why through probe_status, never silently."""
+    """Budget dry (#335): degrade to open-loop -- the chord still fires
+    (never a zombie stream), and the card hears why through the probe
+    push, never silently."""
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.now += 600 + 1
-    h.budget = DailyBudget(limit=0, day=lambda: "day 1")
-    h.controller._ports = replace(h.controller._ports, budget_spend=h.budget.try_spend)
+    dry = DailyBudget(limit=0, day=lambda: "day 1")
+    h.controller._ports = replace(
+        h.controller._ports,
+        budget_spend=dry.try_spend,
+        budget_status=lambda: {"budget_used": 0, "budget_limit": 0},
+    )
     h.controller._maybe_stop()
     assert h.probe_calls == 0
-    # Unconfirmed episode -> no blind press even open-loop.
-    assert len(h.sent) == 1
+    assert len(h.sent) == 2  # open-loop press
     degraded = [
         payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
     ]
@@ -740,16 +730,17 @@ def test_the_probe_never_runs_without_an_episode():
     assert h.budget.used() == 0
 
 
-def test_without_a_probe_seam_the_stop_stays_safe():
+def test_without_a_probe_seam_the_stop_presses_open_loop():
     """A hand-built ports object without the probe seams (older tests,
-    a controller built before this ticket): the gate degrades closed --
-    no press against an unconfirmed episode, one degrade notice."""
+    a controller built before this ticket): the gate degrades to
+    open-loop -- the alternation guard already proves the episode's
+    origin -- and one degrade notice says the loop is not configured."""
     h = Harness(probe_live=None, budget_spend=None)
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.now += 600 + 1
     h.controller._maybe_stop()
-    assert len(h.sent) == 1
+    assert len(h.sent) == 2
     assert h.state()["degraded"] == "not configured"
 
 

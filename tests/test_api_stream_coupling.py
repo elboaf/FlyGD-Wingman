@@ -182,7 +182,8 @@ def test_the_wiring_binds_the_probe_seams():
     body = source.split("def build_stream_coupling_controller(", 1)[1]
     body = body.split("\ndef ", 1)[0]
     assert "probe_live_state" in body
-    assert "DailyBudget().try_spend" in body
+    assert "DailyBudget()" in body
+    assert "budget_status=" in body
     assert "BotTokenStore()" in body
     assert "_publish_stream_probe_status" in body
     # A token is a DPAPI credential, never settings.
