@@ -922,6 +922,34 @@
       </header>
       <section class="settings-subpage" id="settings-previews-windows" role="tabpanel" aria-labelledby="settings-tab-previews-windows" tabindex="0">
       <section class="card" id="preview-window-options">
+        <!-- Locking is the most frequent adjustment on this card (arrange,
+             then freeze; or unlock to rearrange), so it reads first --
+             #330. The row and the per-character exceptions disclosure stay
+             together because paintLockSummary covers both. The comment
+             below is load-bearing: the per-character boxes hold
+             EXCEPTIONS to this rather than a list of locked characters,
+             and api.py's set_preview_lock_default has the example. -->
+        <div class="preview-option-unit">
+        <div class="row"><label class="check">
+            <input type="checkbox" id="preview-lock-default"><span class="box"></span>
+            Lock previews in place by default
+          </label>
+          <!-- Says plainly what a default does to the rows below, because
+               the per-character boxes hold EXCEPTIONS to this rather than
+               a list of locked characters: ticking this flips every
+               character that is not already an exception. Deliberately
+               does NOT promise that unticking undoes it -- a box changed
+               while this is on means the opposite thing once it is off,
+               and api.py's set_preview_lock_default has the example. -->
+          <span class="hint" id="preview-lock-default-status">Applies to
+            every character whose own Lock box you have not changed.</span>
+          </div>
+        <details class="pv-exc" id="preview-lock-exceptions">
+          <summary id="preview-lock-exceptions-summary"></summary>
+          <div class="pv-exc-list" id="preview-lock-exceptions-list"
+               role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
+        </details>
+        </div>
         <details class="settings-disclosure" id="preview-group-appearance" open>
           <summary>Appearance</summary>
         <div class="preview-option-grid">
@@ -1034,25 +1062,6 @@
                a reader could have written from the label. The slot stays
                because settings.js reports persistence failures through it. -->
           <span class="hint" id="preview-snap-status"></span></div>
-        <div class="row"><label class="check">
-            <input type="checkbox" id="preview-lock-default"><span class="box"></span>
-            Lock previews in place by default
-          </label>
-          <!-- Says plainly what a default does to the rows below, because
-               the per-character boxes hold EXCEPTIONS to this rather than
-               a list of locked characters: ticking this flips every
-               character that is not already an exception. Deliberately
-               does NOT promise that unticking undoes it -- a box changed
-               while this is on means the opposite thing once it is off,
-               and api.py's set_preview_lock_default has the example. -->
-          <span class="hint" id="preview-lock-default-status">Applies to
-            every character whose own Lock box you have not changed.</span>
-          </div>
-        <details class="pv-exc" id="preview-lock-exceptions">
-          <summary id="preview-lock-exceptions-summary"></summary>
-          <div class="pv-exc-list" id="preview-lock-exceptions-list"
-               role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
-        </details>
         </div>
         </div>
 
