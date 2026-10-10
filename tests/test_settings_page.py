@@ -109,7 +109,7 @@ def test_window_disclosures_keep_exceptions_with_their_preferences():
             ),
             True,
         ),
-        ("placement", ("preview-lock-default", "preview-lock-exceptions"), True),
+        ("placement", (), True),
         ("size", ("preview-default-size", "btn-preview-apply-size"), False),
         ("switching", ("preview-minimize-inactive", "preview-nm-exceptions"), False),
     ):
@@ -118,6 +118,20 @@ def test_window_disclosures_keep_exceptions_with_their_preferences():
         assert ("open" in attrs) == opened
         for control in controls:
             assert ident in nodes[control][1]
+
+
+def test_lock_controls_lead_the_previews_card():
+    # #330: locking is the most frequent adjustment on the Previews card,
+    # so the lock-default checkbox and the per-character exceptions
+    # disclosure read first -- above every disclosure, on the card itself,
+    # and still together (paintLockSummary covers both).
+    nodes = SettingsMarkup().nodes
+    for control in ("preview-lock-default", "preview-lock-exceptions"):
+        ancestors = nodes[control][1]
+        assert "preview-window-options" in ancestors
+        assert not any(i.startswith("preview-group-") for i in ancestors), (
+            f"{control} must not sit inside a disclosure"
+        )
 
 
 def test_settings_rail_names_distinguish_auth_from_preview_characters():
