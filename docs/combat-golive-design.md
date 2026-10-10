@@ -530,6 +530,31 @@ The start side inherits the same freshness: the enter-combat probe's
 snapshot is seconds old, so the stale-snapshot race that revision 3's
 design would have had is collapsed to noise.
 
+### Shipped state (#335, 1/3)
+
+*Added with #335's implementation. The stop gate is live; #336's
+enter-combat gate and #337's full card are the remaining children.*
+
+The stop half is implemented in `wingman/alerts/streamcoupling.py`:
+
+- At quiet expiry with an episode open, the worker spends one budgeted
+  probe (`DailyBudget`, 300/day worst case) and gates on the answer:
+  still live over a Wingman-originated episode -> stop chord; already
+  off -> latch cleared, nothing sent, re-armed (no confirm probe -- a
+  lost chord self-corrects here).
+- Degraded (no token / ids, budget dry, gateway down) with an episode
+  never confirmed Wingman-originated -> the episode closes without a
+  press: a blind press could kill a manual stream. The degrade notice
+  rides to the card as `onStreamProbeStatus`.
+- `quiet_s` is fixed 600: the settings validator projects any stored
+  value to 600, and the bridge endpoint echoes 600 for any numeric
+  input.
+- The probe itself (`wingman/streaming/probe.py`) is one short gateway
+  session (identify -> GUILD_CREATE snapshot -> disconnect), GUILDS
+  intent only. The bot token is a DPAPI credential
+  (`wingman/streaming/probebot.py`), never a settings field; guild and
+  user ids live in `preview.alerts.stream_probe` as strings.
+
 ### Settings changes
 
 - `quiet_s`: **fixed 600** (the range 60–900 and the 300 default are

@@ -32,6 +32,9 @@
   var couplingStateEl = WM.el('coupling-state');
   var latchedEl = WM.el('coupling-latched');
   var lastFiredEl = WM.el('coupling-last-fired');
+  var probeEl = WM.el('coupling-probe');
+  var degradedEl = WM.el('coupling-probe-degraded');
+  var budgetEl = WM.el('coupling-probe-budget');
   var visible = false;
   var capturing = false;
   var chordDisplay = '';
@@ -93,12 +96,18 @@
       couplingStateEl.parentNode.hidden = true;
       latchedEl.parentNode.hidden = true;
       lastFiredEl.parentNode.hidden = true;
+      probeEl.parentNode.hidden = true;
+      degradedEl.parentNode.hidden = true;
+      budgetEl.parentNode.hidden = true;
       showMsg('');
       return;
     }
     chordBtn.hidden = false;
     chordClear.hidden = false;
     chordRowHintEl.hidden = false;
+    probeEl.parentNode.hidden = false;
+    degradedEl.parentNode.hidden = false;
+    budgetEl.parentNode.hidden = false;
     chordDisplay = payload.chord_display || '';
     applyChord();
     showMsg('');
@@ -339,6 +348,44 @@
     // the tick may write it; the quiet field's draft is protected inside
     // renderCoupling, not by suppressing the push.
     if (visible) { renderCoupling(payload); }
+  });
+
+  // The probe record (#335/#337): the card reports Discord's answer,
+  // never the latch's belief. "live -- verified 14:22" when the last
+  // snapshot said self_stream; "not live" when it did not; nothing
+  // before the first probe. The degrade line names the open-loop
+  // reason -- a broken closed loop must be visible, not silent.
+  function renderProbe(payload) {
+    if (!payload) return;
+    if (payload.live === true) {
+      probeEl.textContent = 'Live \\u2014 verified ' + (payload.live_display || '');
+    } else if (payload.live === false) {
+      probeEl.textContent = 'Not live';
+    } else {
+      probeEl.textContent = '';
+    }
+    probeEl.hidden = !payload.live_display && payload.live === null ? true : !probeEl.textContent;
+    if (payload.degraded) {
+      degradedEl.textContent = payload.degraded;
+      degradedEl.hidden = false;
+    } else {
+      degradedEl.textContent = '';
+      degradedEl.hidden = true;
+    }
+    if (typeof payload.budget_used === 'number' && typeof payload.budget_limit === 'number') {
+      budgetEl.textContent = 'Probes today: ' + payload.budget_used + ' of ' +
+        payload.budget_limit;
+      budgetEl.hidden = false;
+    } else {
+      budgetEl.hidden = true;
+    }
+  }
+
+  WM.handle('onStreamProbeStatus', function (payload) {
+    // The probe's answer (#335/#337): the last gateway snapshot, its
+    // time, the degrade notice when Wingman is open-loop, and the
+    // budget standing. Tick-pushed like the armed row -- visible-only.
+    if (visible) { renderProbe(payload); }
   });
 
   WM.handle('onStreamCouplingFired', function (payload) {

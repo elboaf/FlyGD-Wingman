@@ -92,7 +92,31 @@ def _stream_coupling_defaults() -> dict:
     without an always-on helper process for installs that never use
     Discord.
     """
-    return {"chord": "", "quiet_s": 300, "mirror_on": False}
+    # Rev 4 (#335): quiet_s is FIXED at 600 -- the stop is snapshot-gated,
+    # so running long is a one-sided error and the 60-900 range is retired.
+    return {"chord": "", "quiet_s": 600, "mirror_on": False}
+
+
+def _stream_probe_defaults() -> dict:
+    """The probe identity (#335): the non-secret half of the closed
+    loop's configuration. The bot token is a DPAPI credential
+    (streaming/probebot.py), never a settings field -- credentials never
+    belong in settings. Both ids are Discord snowflakes: strings kept as
+    strings end to end, because a JSON number round trip through
+    JavaScript loses precision past 2^53 and a truncated id matches
+    nobody."""
+    return {"guild_id": "", "user_id": ""}
+
+
+def _validated_stream_probe(raw) -> dict:
+    section = _stream_probe_defaults()
+    if not isinstance(raw, dict):
+        return section
+    for key in ("guild_id", "user_id"):
+        value = raw.get(key)
+        if isinstance(value, str):
+            section[key] = value.strip()
+    return section
 
 
 def _alerts_defaults() -> dict:
@@ -103,6 +127,7 @@ def _alerts_defaults() -> dict:
     """
     return {
         "stream_coupling": _stream_coupling_defaults(),
+        "stream_probe": _stream_probe_defaults(),
         "enabled": False,
         # The filter is what makes `combat` mean "a player is involved in
         # the fight" (the incoming attacker, or the ship your outgoing
@@ -834,12 +859,15 @@ def validated_alerts(raw) -> dict:
             not chord or not bookmarks.parse_ahk(chord)["error"]
         ):
             coupling["chord"] = chord
-        quiet = raw_coupling.get("quiet_s")
-        if isinstance(quiet, int) and not isinstance(quiet, bool):
-            coupling["quiet_s"] = max(60, min(900, quiet))
+        # Rev 4 (#335): quiet_s is FIXED at 600. Any stored value (an older
+        # build's 300, a hand-edit, junk) projects to 600 -- a migration by
+        # projection, never a rejection that would drop the chord with
+        # it. The bool guard predates this: True is an int in Python.
+        coupling["quiet_s"] = 600
         if isinstance(raw_coupling.get("mirror_on"), bool):
             coupling["mirror_on"] = raw_coupling["mirror_on"]
     section["stream_coupling"] = coupling
+    section["stream_probe"] = _validated_stream_probe(raw.get("stream_probe"))
     section["custom_rules"] = validated_custom_rules(raw.get("custom_rules"))
     raw_events = raw.get("events")
     if isinstance(raw_events, dict):

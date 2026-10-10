@@ -1860,7 +1860,9 @@
           <input class="field" id="coupling-quiet" type="text" inputmode="numeric"
                  autocomplete="off" spellcheck="false">
           <span class="hint">Optional: Customize the after-combat delay (how
-          long the stream stays up after the last shot)</span>
+          long the stream stays up after the last shot). The delay is
+          fixed at 10 minutes; the stream is only closed when Discord
+          confirms it is still live.</span>
         </div>
         <div class="row">
           <span class="lab">Auto-start</span>
@@ -1870,6 +1872,12 @@
           <span class="hint" id="coupling-latched"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-last-fired"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-probe" role="status"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-probe-degraded" role="alert"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-probe-budget"></span></div>
         <div class="stream-setup" id="stream-setup">
           <h3 class="setup-head">Discord Setup Instructions</h3>
           <p class="hint" id="chord-ceremony">

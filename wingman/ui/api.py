@@ -7466,7 +7466,7 @@ class Api:
                 "state": "inert",
                 "chord_display": "",
                 "chord_sendable": False,
-                "quiet_s": 300,
+                "quiet_s": 600,
                 "latched": [],
                 "latched_remaining_s": 0,
                 "last_fired_character": None,
@@ -7475,13 +7475,14 @@ class Api:
         return self._stream_coupling.state_payload()
 
     def stream_quiet_set(self, value) -> dict:
-        """Persist the quiet period before re-arm (60-900 seconds).
+        """Persist the quiet period -- fixed at 600 (rev 4, #335).
 
-        The card's free-text rule: commits on Enter only, through this
-        one endpoint. A non-numeric value is refused with the range in
-        the message; a numeric one is clamped to the same range the
-        load validator enforces and the clamped value rides back so the
-        field shows exactly what was stored -- forgiving, but visible.
+        The field survives so the card keeps showing the value it is
+        storing, but the range 60-900 is retired: any numeric input
+        persists 600, visibly echoed, and the refusal message names the
+        fixed value. The controller reads its quiet from the same
+        projection, so a hand-edited settings file cannot shorten the
+        stop gate either.
         """
         if isinstance(value, bool):
             number = None
@@ -7495,9 +7496,9 @@ class Api:
             return {
                 "applied": False,
                 "persisted": False,
-                "error": "Enter a number of seconds between 60 and 900.",
+                "error": "The after-combat delay is fixed at 600 seconds.",
             }
-        clamped = max(60, min(900, number))
+        clamped = 600
         from wingman import settings as settings_mod
 
         with settings_mod.update(self._state.settings) as document:
@@ -7540,6 +7541,13 @@ class Api:
         semantic one-chord-per-fight event, distinct from the row push
         so the card can mark the moment without diffing state."""
         self._push("onStreamCouplingFired", payload)
+
+    def _publish_stream_probe_status(self, payload) -> None:
+        """Literal adapter for the controller's publish_probe_status
+        port (#335/#337): the last probe's answer, timestamped, with the
+        budget standing and the degrade notice. Distinct from the row
+        push so the live badge updates the moment a probe answers."""
+        self._push("onStreamProbeStatus", payload)
 
     # ---- Where a preview opens ------------------------------------------
 

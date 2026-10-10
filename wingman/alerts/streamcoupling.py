@@ -16,7 +16,7 @@ collision warning's territory:
 - **Episode latch, per character.** Every gated combat alert refreshes
   its character's latch. The chord fires only when NO character holds
   an active latch AND no episode is open -- the first alert after a
-  quiet period (``quiet_s``, 60-900, default 300, read live). Ongoing
+  quiet period (fixed 600 s, rev 4 -- see the stop gate below). Ongoing
   combat keeps refreshing the latches, which is the asymmetry argument
   from the spec: too short a window risks the mid-fight toggle-off, so
   a fight's own alerts hold the process disarmed until it has truly
@@ -56,8 +56,8 @@ whose combat alert actually dispatched (enabled, PvE-filtered,
 cooldown-elapsed); handover is a queue put, so the dispatcher never
 waits on a spell, a focus read or a SendInput. The same worker owns
 the stop: with an episode open it idles on a timed wake (the queue
-get's timeout) until every latch has expired, then presses once and
-closes the episode.
+get's timeout) until every latch has expired, then gates the stop
+press on a gateway probe (#335, rev 4) before pressing.
 
 Pure pieces (``spell_chord``, ``ChordPlan``, ``chord_choreography``) and
 the controller are Linux-unit-testable with injected ports, like every
@@ -320,8 +320,16 @@ def send_keystrokes(plan: ChordPlan) -> None:
 @dataclass(frozen=True)
 class StreamCouplingPorts:
     """Injected seams. ``coupling`` re-reads the live committed settings
-    on every decision -- the quiet period changes without a restart --
-    and every other callable is a platform seam the tests replace."""
+    on every decision, every other callable is a platform seam the tests
+    replace. ``probe_live`` is the gateway probe seam (#335): a sync
+    call returning True (live) / False (clean not-live snapshot), raised
+    ProbeError on no answer -- it runs on this controller's worker only.
+    ``budget_spend`` reserves one probe from the daily allowance and
+    returns False when the day is dry (degrade to open-loop).
+    ``publish_probe_status`` pushes the last probe's answer for the card
+    (#337): ``{"live": bool|None, "display": "HH:MM"|None, "degraded":
+    str|None, "budget_used": int, "budget_limit": int}``.
+    """
 
     coupling: Callable[[], dict]
     mirror_running: Callable[[], bool]
@@ -329,6 +337,9 @@ class StreamCouplingPorts:
     send: Callable[[ChordPlan], None]
     publish_state: Callable[[dict], None]
     publish_fired: Callable[[dict], None]
+    probe_live: Callable[[], bool] | None = None
+    budget_spend: Callable[[], bool] | None = None
+    publish_probe_status: Callable[[dict], None] | None = None
 
 
 class StreamCouplingController:
@@ -340,9 +351,12 @@ class StreamCouplingController:
     publishes happen outside it.
     """
 
-    _QUIET_DEFAULT = 300
-    _QUIET_MIN = 60
-    _QUIET_MAX = 900
+    # Rev 4 (#335): fixed 600. The range 60-900 and the 300 default are
+    # retired -- the stop is snapshot-gated, so running long is a
+    # one-sided error (the probe ends a stream later, never earlier).
+    _QUIET_DEFAULT = 600
+    _QUIET_MIN = 600
+    _QUIET_MAX = 600
 
     def __init__(
         self,
@@ -369,6 +383,14 @@ class StreamCouplingController:
         # (chord, sendable) cache: spellability consults the layout and
         # must not become a per-tick syscall.
         self._spellable: tuple[str, bool] | None = None
+        # The one flag that makes stops safe (#335): set ONLY when a
+        # fresh snapshot confirms the stream live while a Wingman-
+        # originated episode is open. A manually started stream never
+        # sets it; a manual stop clears it at the next probe.
+        self._wingman_live = False
+        # The last probe's answer for the card (#337): (live, wall time,
+        # degraded-code-or-None). None live = no answer yet.
+        self._probe_record: tuple[bool | None, float, str | None] = (None, 0.0, None)
         self._closed = threading.Event()
         self._queue: queue.Queue = queue.Queue()
         self._thread = spawn(target=self._run, name="stream-coupling", daemon=True)
@@ -442,7 +464,28 @@ class StreamCouplingController:
             "last_fired_character": last[0] if last else None,
             "last_fired_display": self._format_wall(last[1]) if last else None,
             "last_fired_action": last[2] if last else None,
+            **self.probe_status_payload(),
         }
+
+    def probe_status_payload(self) -> dict:
+        """The card's probe fields (#337, carried by the state row): the
+        last probe's answer and when, the degrade notice when open-loop,
+        and the day's budget standing. ``live`` None = no answer yet."""
+        with self._lock:
+            live, wall_time, degraded = self._probe_record
+            wingman_live = self._wingman_live
+        payload = {
+            "live": live,
+            "live_display": self._format_wall(wall_time) if live is not None else None,
+            "degraded": degraded,
+            "wingman_live": wingman_live,
+        }
+        spend = self._ports.budget_spend
+        if spend is not None and hasattr(spend, "__self__"):
+            budget = spend.__self__
+            payload["budget_used"] = budget.used()
+            payload["budget_limit"] = budget.remaining() + budget.used()
+        return payload
 
     def _run(self) -> None:
         while True:
@@ -486,7 +529,11 @@ class StreamCouplingController:
             with self._lock:
                 # The toggle just OPENED the stream; the stop press at
                 # quiet expiry is what closes it. That is the whole
-                # alternation: open here, closed in _maybe_stop.
+                # alternation: open here, closed in _maybe_stop. The
+                # origin flag is UNSET until a probe confirms the
+                # stream live (#335): an unconfirmed episode is one a
+                # degraded stop will not press against.
+                self._wingman_live = False
                 self._episode = fired[0]
         self._ports.publish_state(self.state_payload())
         if fired is not None:
@@ -543,15 +590,27 @@ class StreamCouplingController:
         return max(1.0, deadline - now)
 
     def _maybe_stop(self) -> None:
-        """The toggle's other half (field finding, 2026-10-06): the start
-        press went live, and only a second press ends the stream. When
-        every latch has expired -- the definition of the episode being
-        over -- press the chord once more and close the episode. The
-        episode guard in _process makes the alternation airtight: while
-        an episode is open, no combat alert can fire a start, so the
-        presses strictly alternate no matter how the alerts cluster."""
+        """The toggle's other half, rev 4 (#335): the stop decision is
+        PROBE-GATED, never a blind press. At quiet expiry with the
+        episode open, spend one budgeted probe:
+
+        - still live, and ``wingman_live`` is set (a fresh snapshot
+          confirmed this stream as Wingman-originated) -> send the stop
+          chord, clear the latch.
+        - already off (the user stopped by hand) -> clear the latch,
+          send NOTHING, re-arm. No confirm probe: a lost chord
+          self-corrects here -- one dead episode max, never a zombie.
+        - probe unavailable (no token, gateway down) or the budget is
+          dry -> open-loop: fire today's chord unconditionally. The
+          closed loop must never become a missed stop; the card says
+          why (#337).
+
+        A stop chord fires ONLY with ``wingman_live`` set AND a fresh
+        snapshot saying still-live. Manual streams are untouchable.
+        """
         with self._lock:
             episode = self._episode
+            wingman_live = self._wingman_live
         if episode is None:
             return
         coupling = self._read_coupling()
@@ -563,6 +622,30 @@ class StreamCouplingController:
                 # The fight resumed between the wake and this check; the
                 # latches are refreshed and the next wake re-arms itself.
                 return
+
+        # The gate: one budgeted probe before anything else.
+        verdict = self._run_probe()
+        if verdict is True:
+            with self._lock:
+                # Confirmed Wingman-originated and still live: this is
+                # the one state in which the stop chord may fire.
+                self._wingman_live = True
+                wingman_live = True
+        elif verdict is False:
+            with self._lock:
+                # Already off -- the user stopped it by hand, or the
+                # start chord never landed. Clear the latch, send
+                # nothing, re-arm. A lost chord self-corrects here.
+                self._wingman_live = False
+                self._episode = None
+            logger.info(
+                "Combat auto-stream episode closed by the probe: the stream is already off"
+            )
+            self._ports.publish_state(self.state_payload())
+            return
+        # verdict None: degraded -- open-loop below.
+
+        with self._lock:
             self._episode = None
 
         def abandon(reason: str) -> None:
@@ -576,6 +659,12 @@ class StreamCouplingController:
             # off switch, and it switches off PRESSES -- including this
             # one. Whatever the stream is doing now is the user's to end.
             abandon("the chord was cleared")
+            return
+        if not wingman_live and verdict is None:
+            # Degraded AND never confirmed Wingman-originated: a blind
+            # press could toggle off a stream the user started by hand.
+            # Closing the episode without pressing is the safe posture.
+            abandon("the probe is unavailable and the stream was never confirmed")
             return
         if not self._ports.mirror_running():
             # Discord pins the mirror window; a dead window has already
@@ -597,6 +686,7 @@ class StreamCouplingController:
             return
         wall_time = self._wall()
         with self._lock:
+            self._wingman_live = False
             self._last_fired = (None, wall_time, "stop")
         logger.info("Stream chord fired to end the stream (fight quiet for %ss)", quiet)
         self._ports.publish_state(self.state_payload())
@@ -607,6 +697,43 @@ class StreamCouplingController:
                 "action": "stop",
             }
         )
+
+    def _run_probe(self) -> bool | None:
+        """One budgeted gateway probe at a decision gate. True/False is
+        the snapshot's answer; None is no answer -- token missing, the
+        day's budget dry, or the gateway refused. The budget counter and
+        the degrade notice ride to the card through probe_status (#337).
+        """
+        probe = self._ports.probe_live
+        spend = self._ports.budget_spend
+        if probe is None or spend is None:
+            self._record_probe(None, "not configured")
+            return None
+        if not spend():
+            self._record_probe(None, "budget dry -- open-loop")
+            return None
+        try:
+            answer = probe()
+        except Exception:
+            # A failed probe must not kill the worker; degrade.
+            logger.exception("The stream state probe failed")
+            self._record_probe(None, "probe failed -- open-loop")
+            return None
+        self._record_probe(answer, None)
+        return answer
+
+    def _record_probe(self, live: bool | None, degraded: str | None) -> None:
+        with self._lock:
+            self._probe_record = (live, self._wall(), degraded)
+        self._publish_probe_status()
+
+    def _publish_probe_status(self) -> None:
+        if self._ports.publish_probe_status is None:
+            return
+        # A dedicated push, not piggybacked on the state row: the card's
+        # live badge updates the moment a probe answers, even mid-episode
+        # when the state row would dedup to nothing new.
+        self._ports.publish_probe_status(self.probe_status_payload())
 
     def _read_coupling(self) -> dict:
         """The live committed coupling, defended to exactly two keys."""

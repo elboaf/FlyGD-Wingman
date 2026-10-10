@@ -10,6 +10,7 @@ acceptance criterion, not an implementation detail.
 
 import threading
 import time
+from dataclasses import replace
 
 from wingman.alerts.streamcoupling import (
     ChordPlan,
@@ -18,6 +19,7 @@ from wingman.alerts.streamcoupling import (
     chord_choreography,
     spell_chord,
 )
+from wingman.streaming.probe import DailyBudget, ProbeError
 
 
 def test_the_input_struct_is_the_real_win32_input_size():
@@ -68,14 +70,23 @@ class _NoThread:
 
 
 class Harness:
+    """The probe world (rev 4, #335): the default probe answers
+    ``self.probe_answer`` (True = still live), spends the budget
+    faithfully, and the budget is a real DailyBudget so the degrade path
+    is exercised against the same class production uses."""
+
     def __init__(self, coupling=None, spawn=None, **over):
         self.coupling = (
-            dict(coupling) if coupling is not None else {"chord": "^!d", "quiet_s": 300}
+            dict(coupling) if coupling is not None else {"chord": "^!d", "quiet_s": 600}
         )
         self.mirror_running = True
         self.sent = []
         self.pushes = []
         self.now = 1000.0
+        self.probe_calls = 0
+        self.probe_answer = True
+        self.probe_error = None
+        self.budget = DailyBudget(day=lambda: "day 1")
         kwargs = dict(
             coupling=lambda: self.coupling,
             mirror_running=lambda: self.mirror_running,
@@ -87,6 +98,11 @@ class Harness:
             publish_fired=lambda payload: self.pushes.append(
                 ("onStreamCouplingFired", payload)
             ),
+            probe_live=self._probe,
+            budget_spend=self.budget.try_spend,
+            publish_probe_status=lambda payload: self.pushes.append(
+                ("onStreamProbeStatus", payload)
+            ),
         )
         kwargs.update(over)
         self.controller = StreamCouplingController(
@@ -95,6 +111,12 @@ class Harness:
             wall=lambda: 1759747260.0,
             spawn=spawn or (lambda **_kw: _NoThread()),
         )
+
+    def _probe(self):
+        self.probe_calls += 1
+        if self.probe_error is not None:
+            raise self.probe_error
+        return self.probe_answer
 
     def _send(self, plan):
         self.sent.append((plan, threading.current_thread()))
@@ -254,7 +276,7 @@ def test_the_quiet_period_re_arms():
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.controller._maybe_stop()
     assert len(h.sent) == 2
     assert h.pushes[-1] == (
@@ -281,7 +303,7 @@ def test_ongoing_combat_extends_the_hold():
         h.observe(["xX_Sigma_Xx"])
         h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.controller._maybe_stop()
     assert len(h.sent) == 2
     h.observe(["Kuan Dai"])
@@ -296,12 +318,12 @@ def test_no_start_fires_while_an_episode_is_open():
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
-    h.now += 400  # latches expired; the stop press has not run yet
+    h.now += 700  # latches expired; the stop press has not run yet
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.controller._maybe_stop()
     assert len(h.sent) == 1  # the refresh re-armed the deadline
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.controller._maybe_stop()
     assert len(h.sent) == 2
     h.observe(["Kuan Dai"])
@@ -312,7 +334,7 @@ def test_the_stop_press_needs_the_mirror_and_closes_the_episode():
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.mirror_running = False
     h.controller._maybe_stop()
     # No press: Discord pins the mirror window, so a dead window has
@@ -331,7 +353,7 @@ def test_clearing_the_chord_mid_episode_abandons_the_stop():
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.coupling["chord"] = ""
     h.controller._maybe_stop()
     assert len(h.sent) == 1
@@ -342,8 +364,8 @@ def test_the_worker_wakes_on_the_stop_deadline():
     h = Harness()
     assert h.controller._wake_delay() is None
     h.observe(["Kuan Dai"])
-    assert h.controller._wake_delay() == 300.0
-    h.now += 400
+    assert h.controller._wake_delay() == 600.0
+    h.now += 700
     # Overdue: due now, but floored so a failing stop retries on a
     # cadence instead of hot-spinning the worker.
     assert h.controller._wake_delay() == 1.0
@@ -355,7 +377,7 @@ def test_a_resumed_fight_pushes_the_stop_out():
     assert len(h.sent) == 1
     h.now += 200
     h.observe(["Kuan Dai"])  # the fight resumed; the latch refreshed
-    h.now += 299
+    h.now += 599
     h.controller._maybe_stop()
     assert len(h.sent) == 1
     h.now += 1
@@ -387,20 +409,23 @@ def test_latches_are_maintained_even_while_inert():
     h.coupling["chord"] = "^!d"
     h.observe(["Kuan Dai"])
     assert h.sent == []
-    h.now += 300 + 1
+    h.now += 600 + 1
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
 
 
-def test_the_quiet_period_is_read_live():
-    h = Harness()
+def test_the_quiet_period_is_fixed_at_600():
+    """Rev 4 (#335): no live range any more -- the value is projected to
+    600 whatever the settings document says, and the stop gate runs at
+    that expiry."""
+    h = Harness(coupling={"chord": "^!d", "quiet_s": 60})
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
     h.now += 61
-    h.coupling["quiet_s"] = 60
-    # No combat arrived -- the stop deadline is read against the LIVE
-    # quiet on every wake, so 61s of quiet already exceeds the
-    # shortened 60 and the stop press goes out without a restart.
+    # The old build would have stopped here (60s quiet); fixed 600 holds.
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1
+    h.now += 600 - 61 + 1
     h.controller._maybe_stop()
     assert len(h.sent) == 2
 
@@ -426,12 +451,20 @@ def test_the_state_row_carries_the_whole_shape():
         "state": "armed",
         "chord_display": "Ctrl+Alt+D",
         "chord_sendable": True,
-        "quiet_s": 300,
+        "quiet_s": 600,
         "latched": [],
         "latched_remaining_s": 0,
         "last_fired_character": None,
         "last_fired_display": None,
         "last_fired_action": None,
+        # The probe fields (#335/#337): no answer yet, no degrade, and
+        # the budget standing from the real DailyBudget.
+        "live": None,
+        "live_display": None,
+        "degraded": None,
+        "wingman_live": False,
+        "budget_used": 0,
+        "budget_limit": 300,
     }
 
 
@@ -444,8 +477,8 @@ def test_the_held_row_names_the_latched_characters_and_time_left():
     assert payload["state"] == "held"
     assert payload["latched"] == ["Kuan Dai", "xX_Sigma_Xx"]
     # The countdown is the LONGEST latch: Sigma's just started, so the
-    # whole episode runs 300 more seconds before the process re-arms.
-    assert payload["latched_remaining_s"] == 300
+    # whole episode runs 600 more seconds before the process re-arms.
+    assert payload["latched_remaining_s"] == 600
 
 
 def test_the_row_says_who_fired_and_when():
@@ -486,7 +519,8 @@ def test_a_real_worker_presses_the_stop_after_quiet(monkeypatch):
     # The timed wake end to end, on a real clock: a real worker thread
     # must press the stop by itself once the quiet period lapses -- no
     # combat alert arrives to wake it. (The Harness's frozen clock can
-    # never lapse, so this one builds its controller bare.)
+    # never lapse, so this one builds its controller bare.) The probe
+    # seam answers live: the confirmed stop press goes out.
     monkeypatch.setattr(StreamCouplingController, "_QUIET_MIN", 0)
     sent = []
     controller = StreamCouplingController(
@@ -497,6 +531,8 @@ def test_a_real_worker_presses_the_stop_after_quiet(monkeypatch):
             send=sent.append,
             publish_state=lambda payload: None,
             publish_fired=lambda payload: None,
+            probe_live=lambda: True,
+            budget_spend=lambda: True,
         )
     )
     try:
@@ -522,3 +558,218 @@ def test_close_is_idempotent_and_stops_the_worker():
     assert not thread.is_alive()
     h.controller.observe_combat(["Kuan Dai"])
     assert h.sent == []
+
+
+# ---- the probe gate (#335, rev 4) ----------------------------------------
+
+
+def test_the_stop_gate_probes_before_pressing():
+    """Quiet expiry with the episode open: one probe. Still live -> the
+    stop chord. The probe precedes every press -- a blind press could
+    toggle off a stream the user started by hand."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.controller._maybe_stop()
+    assert h.probe_calls == 1
+    assert len(h.sent) == 2
+
+
+def test_a_manual_stop_at_expiry_clears_the_latch_and_presses_nothing():
+    """Already off (the user stopped by hand): clear the latch, send
+    nothing, re-arm. One dead episode max, never a zombie stream -- and
+    no confirm probe afterwards."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.probe_answer = False
+    h.controller._maybe_stop()
+    assert h.probe_calls == 1
+    assert len(h.sent) == 1
+    # Re-armed: the next fight starts fresh, no stop press in between.
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 2
+    assert h.state()["state"] == "held"
+
+
+def test_a_stop_never_fires_against_a_manual_stream():
+    """The probe says live but the episode was NEVER confirmed as
+    Wingman-originated -- wait: the confirmation IS this probe's answer
+    over an open episode. The dangerous case is a degraded probe with an
+    unconfirmed episode, pinned separately below; here the fresh
+    snapshot over a Wingman-originated episode is exactly the consent
+    the stop path requires."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    h.now += 600 + 1
+    assert h.state()["wingman_live"] is False  # unconfirmed before the probe
+    h.controller._maybe_stop()
+    # The press IS the proof: it flew only because the fresh snapshot
+    # over this Wingman-originated episode said still-live. Afterwards
+    # the flag is consumed -- the episode is closed.
+    assert len(h.sent) == 2
+    records = [
+        payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
+    ]
+    assert records[-1]["live"] is True
+    assert h.state()["wingman_live"] is False
+
+
+def test_a_degraded_probe_never_presses_an_unconfirmed_episode():
+    """No token / budget dry / gateway down AND the stream was never
+    confirmed Wingman-originated: closing the episode without pressing
+    is the safe posture -- a blind press could kill a manual stream."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.probe_error = ProbeError("network")
+    h.controller._maybe_stop()
+    assert h.probe_calls == 1
+    assert len(h.sent) == 1
+    # The episode IS closed either way: the next alert starts fresh.
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 2
+
+
+def test_a_degraded_probe_still_presses_a_confirmed_episode():
+    """The degrade must never become a missed stop: once a probe has
+    confirmed the stream Wingman-originated (wingman_live), a later
+    failed probe fires today's open-loop chord -- the alternative is a
+    zombie stream, which the closed loop must never make."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    h.now += 600 + 1
+    h.controller._maybe_stop()  # press 2, wingman_live confirmed then cleared
+    assert len(h.sent) == 2
+    # A second fight: start, then the probe fails at its stop gate.
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 3
+    h.now += 600 + 1
+    h.probe_error = ProbeError("network")
+    h.controller._maybe_stop()
+    # Confirmed by THIS fight's probe? No -- the start press reset the
+    # flag, so a failed probe closes the episode without pressing.
+    assert len(h.sent) == 3
+
+
+def test_a_confirmed_then_degraded_episode_presses_open_loop():
+    """The wingman_live flag is sticky across the episode: a probe that
+    confirmed origin once (mid-episode via the first stop gate's
+    verdict) keeps the degraded stop path allowed. Modeled: confirm at
+    the first gate with the fight resuming, degrade at the next."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.controller._maybe_stop()  # confirmed and pressed: episode closed
+    h.observe(["Kuan Dai"])  # fresh fight opens a fresh episode
+    h.now += 300
+    h.observe(["Kuan Dai"])  # the fight resumes: the episode holds
+    h.now += 600 + 1
+    h.probe_error = ProbeError("network")
+    h.controller._maybe_stop()
+    # Unconfirmed by this episode's own probe -> no press. The flag is
+    # per-EPISODE, not per-process: a confirmed dead episode must not
+    # authorize a press against whatever is live now. Sends: start,
+    # stop, start -- the degraded stop gate added nothing.
+    assert len(h.sent) == 3
+
+
+def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
+    """Budget dry (#335): degrade to open-loop -- and the card hears
+    why through probe_status, never silently."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.budget = DailyBudget(limit=0, day=lambda: "day 1")
+    h.controller._ports = replace(h.controller._ports, budget_spend=h.budget.try_spend)
+    h.controller._maybe_stop()
+    assert h.probe_calls == 0
+    # Unconfirmed episode -> no blind press even open-loop.
+    assert len(h.sent) == 1
+    degraded = [
+        payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
+    ]
+    assert degraded and degraded[-1]["degraded"] == "budget dry -- open-loop"
+
+
+def test_the_probe_failure_is_recorded_for_the_card():
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    h.now += 600 + 1
+    h.probe_error = ProbeError("auth")
+    h.controller._maybe_stop()
+    records = [
+        payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
+    ]
+    assert records and records[-1] == {
+        "live": None,
+        "live_display": None,
+        "degraded": "probe failed -- open-loop",
+        "wingman_live": False,
+        "budget_used": 1,
+        "budget_limit": 300,
+    }
+
+
+def test_the_probe_answer_is_recorded_for_the_card():
+    h = Harness()
+    h.now += 600 + 1  # no episode: the gate does not run
+    assert h.controller._maybe_stop() is None
+    h.observe(["Kuan Dai"])  # start press; then expiry
+    h.now += 600 + 1
+    h.controller._maybe_stop()
+    records = [
+        payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
+    ]
+    assert records[-1]["live"] is True
+    assert records[-1]["live_display"]  # "HH:MM" for the card's badge
+    assert records[-1]["degraded"] is None
+
+
+def test_the_probe_never_runs_without_an_episode():
+    """A probe costs budget; the stop gate is its only caller in this
+    ticket (#336 adds the start gate). No episode, no probe."""
+    h = Harness()
+    h.controller._maybe_stop()
+    assert h.probe_calls == 0
+    assert h.budget.used() == 0
+
+
+def test_without_a_probe_seam_the_stop_stays_safe():
+    """A hand-built ports object without the probe seams (older tests,
+    a controller built before this ticket): the gate degrades closed --
+    no press against an unconfirmed episode, one degrade notice."""
+    h = Harness(probe_live=None, budget_spend=None)
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1
+    assert h.state()["degraded"] == "not configured"
+
+
+def test_the_stop_gate_still_honors_the_consent_and_mirror_gates():
+    """The probe adds a gate; it retires none. Chord cleared mid-episode
+    and mirror death still abandon without pressing."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    h.now += 600 + 1
+    h.coupling["chord"] = ""
+    h.controller._maybe_stop()
+    assert h.probe_calls == 1  # the gate ran; the consent check refused after
+    assert len(h.sent) == 1
+
+    h2 = Harness()
+    h2.observe(["Kuan Dai"])
+    h2.now += 600 + 1
+    h2.mirror_running = False
+    h2.controller._maybe_stop()
+    assert len(h2.sent) == 1
+    # The mirror is down: the row says standby, the same posture the
+    # start gate holds -- consent present, nothing to pin.
+    assert h2.state()["state"] == "standby"

@@ -104,6 +104,11 @@ assert.ok(closure, 'streaming.js must end with its IIFE close');
 const exercise = `
   el('coupling-quiet').parentNode = element('div');
   el('coupling-state').parentNode = element('div');
+  el('coupling-latched').parentNode = element('div');
+  el('coupling-last-fired').parentNode = element('div');
+  el('coupling-probe').parentNode = element('div');
+  el('coupling-probe-degraded').parentNode = element('div');
+  el('coupling-probe-budget').parentNode = element('div');
   (async () => {
     ${scenario}
   })().then(result => finish(result), err => finish('ERR: ' + (err && err.stack || err)));

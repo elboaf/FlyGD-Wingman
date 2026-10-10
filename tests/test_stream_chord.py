@@ -149,7 +149,9 @@ def test_an_unspellable_stored_chord_renders_as_no_chord(tmp_path):
     paths.settings_file().parent.mkdir(parents=True, exist_ok=True)
     paths.settings_file().write_text(json.dumps(raw), encoding="utf-8")
     coupling = settings.load()["preview"]["alerts"]["stream_coupling"]
-    assert coupling == {"chord": "", "quiet_s": 120, "mirror_on": True}
+    # Fixed 600 (rev 4): the stored 120 projects to 600; the chord still
+    # drops alone, mirror_on survives.
+    assert coupling == {"chord": "", "quiet_s": 600, "mirror_on": True}
 
     api = make_api(tmp_path)
     api._state.settings.setdefault("preview", {}).setdefault("alerts", {}).setdefault(

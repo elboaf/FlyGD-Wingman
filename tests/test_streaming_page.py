@@ -181,3 +181,71 @@ def test_the_card_carries_the_dictated_screenshot_and_nothing_else():
         assert f'id="{gone}"' not in html, gone
     assert 'id="stream-setup"' in html
     assert "Discord Setup Instructions" in html
+
+
+# ---- the probe record (#335/#337) ----------------------------------------
+
+
+PROBE_LIVE = {
+    "live": True,
+    "live_display": "14:22",
+    "degraded": None,
+    "wingman_live": True,
+    "budget_used": 2,
+    "budget_limit": 300,
+}
+
+
+def test_the_probe_push_renders_the_live_badge():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(PROBE_LIVE);
+      assert.ok(el('coupling-probe').textContent.indexOf('verified 14:22') !== -1,
+                    el('coupling-probe').textContent);
+      assert.equal(el('coupling-probe-degraded').hidden, true);
+      assert.equal(el('coupling-probe-budget').textContent,
+                   'Probes today: 2 of 300');
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+        PROBE_LIVE=PROBE_LIVE,
+    )
+
+
+def test_a_degraded_probe_names_the_open_loop_reason():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(
+        {live: null, live_display: null, degraded: 'budget dry -- open-loop',
+         wingman_live: false, budget_used: 300, budget_limit: 300});
+      assert.equal(el('coupling-probe').textContent, '');
+      assert.ok(el('coupling-probe-degraded').textContent.includes('budget dry'));
+      assert.equal(el('coupling-probe-degraded').hidden, false);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )
+
+
+def test_not_live_replaces_the_badge():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(PROBE_LIVE);
+      handlers.onStreamProbeStatus(
+        {live: false, live_display: '14:30', degraded: null,
+         wingman_live: false, budget_used: 2, budget_limit: 300});
+      assert.equal(el('coupling-probe').textContent, 'Not live');
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+        PROBE_LIVE=PROBE_LIVE,
+    )

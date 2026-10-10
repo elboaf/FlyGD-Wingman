@@ -117,3 +117,15 @@ reports A or B.
 - **`!! recv failed / timed out`** — network or Discord-side drop; record
   it under step 2c evidence and rerun.
 - **Token shown once and lost** — Applications → Bot → Reset Token again.
+
+
+## Product follow-up (#335): the probe is now a shipped subsystem
+
+The probe harness graduated: `wingman/streaming/probe.py` runs the same
+GUILD_CREATE snapshot read as one short synchronous session, gated by a
+daily budget (`DailyBudget`, 300/day) and driven by the stream-coupling
+worker at the stop gate. The bot token is stored DPAPI-protected
+(`wingman/streaming/probebot.py`); guild and user ids live in settings
+under `preview.alerts.stream_probe`. The card (#337) will add the token
+field and the ids to the Streaming card's setup walk. This runbook
+remains the manual-evidence record for #334's tier verdict.
