@@ -864,6 +864,8 @@
       live_display: null,
       degraded: null,
       wingman_live: false,
+      suppressed_display: null,
+      manual_live: devManualLive,
       budget_used: 0,
       budget_limit: 300
     });
@@ -880,6 +882,16 @@
     return Promise.resolve({
       applied: true, persisted: true, error: null, quiet_s: 600
     });
+  };
+
+  // The manual-live latch (#337): the card's checkbox sends the write on
+  // change; the double mutates its own coupling payload so the row and
+  // the probe line travel like the real bridge's republished pushes.
+  var devManualLive = false;
+  api.stream_manual_live_set = function (value) {
+    console.log('DEV api.stream_manual_live_set(', value, ')');
+    devManualLive = value === true;
+    return Promise.resolve({ok: true, manual_live: devManualLive});
   };
 
   // NOT generic stubs, for the same reason save_settings above is not: the

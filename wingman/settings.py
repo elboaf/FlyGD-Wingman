@@ -94,7 +94,13 @@ def _stream_coupling_defaults() -> dict:
     """
     # Rev 4 (#335): quiet_s is FIXED at 600 -- the stop is snapshot-gated,
     # so running long is a one-sided error and the 60-900 range is retired.
-    return {"chord": "", "quiet_s": 600, "mirror_on": False}
+    #
+    # ``manual_live`` is the one-click absolute suppressor (#337): the
+    # user says "I am live by hand -- touch nothing". Persisted so it
+    # survives a restart (a suppressor that silently forgets itself
+    # would be worse than none), shipped False -- the gated loop is the
+    # resting posture.
+    return {"chord": "", "quiet_s": 600, "mirror_on": False, "manual_live": False}
 
 
 def _stream_probe_defaults() -> dict:
@@ -866,6 +872,8 @@ def validated_alerts(raw) -> dict:
         coupling["quiet_s"] = 600
         if isinstance(raw_coupling.get("mirror_on"), bool):
             coupling["mirror_on"] = raw_coupling["mirror_on"]
+        if isinstance(raw_coupling.get("manual_live"), bool):
+            coupling["manual_live"] = raw_coupling["manual_live"]
     section["stream_coupling"] = coupling
     section["stream_probe"] = _validated_stream_probe(raw.get("stream_probe"))
     section["custom_rules"] = validated_custom_rules(raw.get("custom_rules"))

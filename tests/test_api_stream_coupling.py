@@ -7,7 +7,7 @@ see them; the page owns their rendering. None controller (a hand-built
 Api) means the inert payload off the bridge thread, never an exception.
 """
 
-from tests.test_api import make_api, pushes
+from tests.test_api import FakeWindow, make_api, pushes
 from wingman import settings
 
 
@@ -201,3 +201,68 @@ def test_the_probe_status_push_literal_is_visible_to_the_contract_sweep():
         Path(__file__).resolve().parent.parent / "wingman" / "ui" / "api.py"
     ).read_text(encoding="utf-8")
     assert '_push("onStreamProbeStatus", payload)' in source
+
+
+# ---- the manual-live latch (#337) ---------------------------------------
+
+
+class LatchCoupling:
+    """A coupling double that records probe-status publications."""
+
+    def __init__(self, payload):
+        self._payload = payload
+        self.published = []
+
+    def state_payload(self):
+        return self._payload
+
+    def probe_status_payload(self):
+        return {"manual_live": self._payload.get("manual_live")}
+
+
+def test_manual_live_set_without_a_controller_refuses_not_fatal(tmp_path):
+    api = make_api(tmp_path)
+    assert api._stream_coupling is None
+    result = api.stream_manual_live_set(True)
+    assert result["ok"] is False
+
+
+def test_manual_live_set_persists_and_republishes(tmp_path):
+    api = make_api(tmp_path)
+    window = FakeWindow()
+    api._window = window
+    latch = LatchCoupling(dict(ARMED))
+    api._stream_coupling = latch
+    result = api.stream_manual_live_set(True)
+    assert result == {"ok": True, "manual_live": True}
+    stored = api._state.settings["preview"]["alerts"]["stream_coupling"]["manual_live"]
+    assert stored is True
+    # Both pushes refreshed: the card's row and its probe line agree
+    # without waiting for the next poll tick or fight.
+    names = [name for name, _ in pushes(window)]
+    assert "onStreamProbeStatus" in names
+    assert "onStreamCouplingState" in names
+
+
+def test_manual_live_set_false_clears_the_latch(tmp_path):
+    api = make_api(tmp_path)
+    api._stream_coupling = LatchCoupling(dict(ARMED))
+    api.stream_manual_live_set(True)
+    result = api.stream_manual_live_set(False)
+    assert result["manual_live"] is False
+    stored = api._state.settings["preview"]["alerts"]["stream_coupling"]["manual_live"]
+    assert stored is False
+
+
+def test_the_wiring_binds_the_manual_live_seam():
+    """The latch port reads the committed projection, the same live
+    read every other seam gets (#337)."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parent.parent / "wingman" / "__main__.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def build_stream_coupling_controller(", 1)[1]
+    body = body.split("\ndef ", 1)[0]
+    assert "manual_live=" in body
+    assert "committed" in body.split("manual_live=")[1].split("publish_probe_status")[0]

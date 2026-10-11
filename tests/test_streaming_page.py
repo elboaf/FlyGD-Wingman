@@ -249,3 +249,99 @@ def test_not_live_replaces_the_badge():
         AVAILABLE_RUNNING=AVAILABLE_RUNNING,
         PROBE_LIVE=PROBE_LIVE,
     )
+
+
+# ---- the suppressed attempt and the manual-live latch (#337) -------------
+
+
+def test_a_suppressed_attempt_shows_its_line():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(
+        {live: true, live_display: '14:32', degraded: null, wingman_live: false,
+         suppressed_display: '14:32', manual_live: false,
+         budget_used: 1, budget_limit: 300});
+      assert.ok(el('coupling-probe-suppressed').textContent.indexOf(
+        'suppressed 14:32') !== -1, el('coupling-probe-suppressed').textContent);
+      assert.equal(el('coupling-probe-suppressed').hidden, false);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )
+
+
+def test_a_press_clears_the_suppressed_line():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(
+        {live: true, live_display: '14:32', degraded: null, wingman_live: false,
+         suppressed_display: '14:32', manual_live: false,
+         budget_used: 1, budget_limit: 300});
+      handlers.onStreamProbeStatus(
+        {live: false, live_display: '14:35', degraded: null, wingman_live: false,
+         suppressed_display: null, manual_live: false,
+         budget_used: 2, budget_limit: 300});
+      assert.equal(el('coupling-probe-suppressed').hidden, true);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )
+
+
+def test_the_manual_live_checkbox_draws_from_the_payload():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      handlers.onStreamProbeStatus(
+        {live: null, live_display: null, degraded: null, wingman_live: false,
+         suppressed_display: null, manual_live: true,
+         budget_used: 0, budget_limit: 300});
+      assert.equal(el('manual-live').checked, true);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )
+
+
+def test_clicking_the_manual_live_latch_sends_the_write():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      el('manual-live').checked = true;
+      el('manual-live').fire('change');
+      await tick();
+      assert.equal(calls[calls.length - 1][0], 'stream_manual_live_set');
+      assert.equal(calls[calls.length - 1][1], true);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )
+
+
+def test_a_refused_latch_write_unchecks_and_says_so():
+    _run_scenario(
+        """
+      setMirror(AVAILABLE_RUNNING);
+      setCoupling({state: 'armed', latched: [], quiet_s: 600, chord_sendable: true});
+      setReply('stream_manual_live_set', {ok: false, error: 'nope'});
+      document.fire('wm:section', {detail: 'streaming'});
+      await tick();
+      el('manual-live').checked = true;
+      el('manual-live').fire('change');
+      await tick();
+      assert.equal(el('manual-live').checked, false);
+      assert.ok(el('chord-msg').textContent.indexOf('nope') !== -1,
+                    el('chord-msg').textContent);
+    """,
+        AVAILABLE_RUNNING=AVAILABLE_RUNNING,
+    )

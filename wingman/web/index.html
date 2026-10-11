@@ -1872,12 +1872,24 @@
           <span class="hint" id="coupling-latched"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-last-fired"></span></div>
+        <div class="row">
+          <span class="lab" id="manual-live-label">I'm live by hand</span>
+          <label class="check" id="manual-live-row">
+            <input type="checkbox" id="manual-live"><span class="box"></span>
+            Suppress Wingman's stream presses
+          </label>
+          <span class="hint">Tick this when you are streaming by hand and
+          don't want Wingman to press the keybind at all &mdash; not to
+          start, not to stop. Untick it to hand control back.</span>
+        </div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-probe" role="status"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-probe-degraded" role="alert"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-probe-budget"></span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="coupling-probe-suppressed" role="status"></span></div>
         <div class="stream-setup" id="stream-setup">
           <h3 class="setup-head">Discord Setup Instructions</h3>
           <p class="hint" id="chord-ceremony">

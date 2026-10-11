@@ -151,7 +151,12 @@ def test_an_unspellable_stored_chord_renders_as_no_chord(tmp_path):
     coupling = settings.load()["preview"]["alerts"]["stream_coupling"]
     # Fixed 600 (rev 4): the stored 120 projects to 600; the chord still
     # drops alone, mirror_on survives.
-    assert coupling == {"chord": "", "quiet_s": 600, "mirror_on": True}
+    assert coupling == {
+        "chord": "",
+        "quiet_s": 600,
+        "mirror_on": True,
+        "manual_live": False,
+    }
 
     api = make_api(tmp_path)
     api._state.settings.setdefault("preview", {}).setdefault("alerts", {}).setdefault(

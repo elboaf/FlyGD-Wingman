@@ -530,10 +530,10 @@ The start side inherits the same freshness: the enter-combat probe's
 snapshot is seconds old, so the stale-snapshot race that revision 3's
 design would have had is collapsed to noise.
 
-### Shipped state (#335, #336, 1/3 + 2/3)
+### Shipped state (#335, #336, #337 -- the loop is complete)
 
 *Added with #335's implementation; extended with #336's enter-combat
-gate. #337's full card is the remaining child.*
+gate; completed with #337's card work.*
 
 The enter-combat gate (#336) lives in the same `_try_fire` start path,
 after the free gates (mirror, spelling) and before the send -- a probe
@@ -554,6 +554,23 @@ one:
   collision left.
 - The start probe shares the one `DailyBudget` with the stop gate, so a
   fight's two probes are both counted and the card sees the full spend.
+
+The card (#337) completes the loop:
+
+- The suppressed attempt is surfaced, never silent: the probe payload
+  carries `suppressed_display` (the wall time #336 suppressed the
+  chord), and the card shows "already live -- chord suppressed HH:MM"
+  until a later press replaces it.
+- The manual-live latch is the one-click absolute suppressor: a
+  persisted `manual_live` bool under `stream_coupling`, read live at
+  decision time through a port. While set, Wingman presses NOTHING in
+  either direction and spends no probe -- the user has settled every
+  decision the loop would make. The card draws its checkbox from the
+  payload (never from the click alone), and the write re-publishes both
+  pushes so the box and the probe line agree without a poll wait.
+- The probe badge ("live -- verified HH:MM" / "not live"), the budget
+  line ("probes today: N of 300") and the degrade notice shipped with
+  #335's `onStreamProbeStatus` push.
 
 The stop half is implemented in `wingman/alerts/streamcoupling.py`:
 

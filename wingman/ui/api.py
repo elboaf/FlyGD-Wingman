@@ -7515,6 +7515,40 @@ class Api:
             "quiet_s": clamped,
         }
 
+    def stream_manual_live_set(self, value) -> dict:
+        """The one-click absolute suppressor (#337): persist and apply.
+
+        While set, the controller presses nothing in either direction
+        and spends no probe -- the user has settled every decision the
+        loop would make. The write re-publishes the row so the card's
+        checkbox and the probe-status line agree without a poll wait.
+        """
+        if self._stream_coupling is None:
+            return {"ok": False, "error": "Combat auto-start is not available."}
+        wanted = value is True
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["manual_live"] = wanted
+        self._push_stream_coupling_tick()
+        self._push_stream_probe_tick()
+        return {"ok": True, "manual_live": wanted}
+
+    def _push_stream_probe_tick(self) -> None:
+        """The latch write's probe-status refresh (#337): the manual_live
+        flag rides the probe payload too, and the card's checkbox must
+        not wait for the next probe to hear about a click."""
+        if self._stream_coupling is None:
+            return
+        try:
+            self._publish_stream_probe_status(
+                self._stream_coupling.probe_status_payload()
+            )
+        except Exception:
+            logger.debug("Stream probe tick push failed", exc_info=True)
+
     def _push_stream_coupling_state(self, payload) -> None:
         """The worker's publish port, and the poll tick's: one deduped
         chokepoint so a transition and the next tick cannot double-push

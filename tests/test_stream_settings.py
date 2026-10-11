@@ -26,7 +26,12 @@ def test_defaults_are_off_inert_and_600s():
     to watch the grid after combat ends."""
     fresh = settings.validated_preview({"enabled": True})
     coupling = fresh["alerts"]["stream_coupling"]
-    assert coupling == {"chord": "", "quiet_s": 600, "mirror_on": False}
+    assert coupling == {
+        "chord": "",
+        "quiet_s": 600,
+        "mirror_on": False,
+        "manual_live": False,
+    }
 
 
 def test_mirror_on_persists_through_normalization():
@@ -63,7 +68,12 @@ def test_quiet_s_clamps_to_600():
 
 def test_a_malformed_section_falls_back_whole():
     coupling = sc("junk")
-    assert coupling == {"chord": "", "quiet_s": 600, "mirror_on": False}
+    assert coupling == {
+        "chord": "",
+        "quiet_s": 600,
+        "mirror_on": False,
+        "manual_live": False,
+    }
 
 
 def test_a_malformed_chord_falls_back_alone():
@@ -87,4 +97,9 @@ def test_validating_alerts_never_drops_the_coupling_section():
     survives a round trip."""
     once = sc({"chord": "^!d", "quiet_s": 120, "mirror_on": True})
     twice = sc(once)
-    assert twice == {"chord": "^!d", "quiet_s": 600, "mirror_on": True}
+    assert twice == {
+        "chord": "^!d",
+        "quiet_s": 600,
+        "mirror_on": True,
+        "manual_live": False,
+    }

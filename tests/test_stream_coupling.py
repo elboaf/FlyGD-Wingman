@@ -81,6 +81,7 @@ class Harness:
 
     def __init__(self, coupling=None, spawn=None, **over):
         self.start_probe_answer = False
+        self.manual_live = False
         self.coupling = (
             dict(coupling) if coupling is not None else {"chord": "^!d", "quiet_s": 600}
         )
@@ -105,6 +106,7 @@ class Harness:
             ),
             probe_live=self._probe,
             budget_spend=self.budget.try_spend,
+            manual_live=lambda: self.manual_live,
             budget_status=lambda: {
                 "budget_used": self.budget.used(),
                 "budget_limit": self.budget.used() + self.budget.remaining(),
@@ -474,6 +476,8 @@ def test_the_state_row_carries_the_whole_shape():
         "live_display": None,
         "degraded": None,
         "wingman_live": False,
+        "suppressed_display": None,
+        "manual_live": False,
         "budget_used": 0,
         "budget_limit": 300,
     }
@@ -710,6 +714,8 @@ def test_the_probe_failure_is_recorded_for_the_card():
         "live_display": None,
         "degraded": "probe failed -- open-loop",
         "wingman_live": False,
+        "suppressed_display": None,
+        "manual_live": False,
         "budget_used": 2,
         "budget_limit": 300,
     }
@@ -729,11 +735,7 @@ def test_the_probe_answer_is_recorded_for_the_card():
     assert records[-1]["live_display"]  # "HH:MM" for the card's badge
     assert records[-1]["degraded"] is None
     # The start gate probed too (#336) and heard not-live: the chord fired.
-    start_records = [
-        p
-        for p in records
-        if p["live"] is False and p["degraded"] is None
-    ]
+    start_records = [p for p in records if p["live"] is False and p["degraded"] is None]
     assert start_records, "the start gate's probe never reached the card"
 
 
@@ -867,3 +869,103 @@ def test_without_a_probe_seam_the_start_fires_open_loop():
     assert len(h.sent) == 1
     assert h.state()["last_fired_action"] == "start"
     assert h.state()["degraded"] == "not configured"
+
+
+# ---- the manual-live latch (#337) ---------------------------------------
+
+
+def test_the_manual_live_latch_suppresses_the_start_without_a_probe():
+    """The one-click absolute suppressor (#337): while set, the start
+    chord never fires and NO probe is spent -- the latch is absolute,
+    not another gated decision. Latches still refresh (trigger side
+    untouched); the next gated alert after the latch clears is fresh."""
+    h = Harness()
+    h.manual_live = True
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 0
+    assert len(h.sent) == 0
+    assert h.state()["last_fired_action"] is None
+    h.manual_live = False
+    h.now += 600 + 1  # the first observe's latches must expire first
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 1
+    assert len(h.sent) == 1
+
+
+def test_the_manual_live_latch_blocks_the_stop_press():
+    """The latch suppresses both directions -- it says 'I am live by
+    hand', and no Wingman press may touch that stream. The episode
+    closes without a press (no zombie by construction: nothing Wingman
+    opened is left running -- Wingman never opened this one)."""
+    h = Harness()
+    h.observe(["Kuan Dai"])  # opened before the user clicked the latch
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.manual_live = True
+    h.controller._maybe_stop()
+    assert len(h.sent) == 1  # no stop press
+    # The episode is closed: the next alert is a fresh decision.
+    h.manual_live = False
+    h.probe_calls = 0
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 2
+
+
+def test_the_latch_reads_live_on_every_decision():
+    """The port is read at decision time, not cached: the user clicks
+    the latch mid-session and the very next decision honors it."""
+    h = Harness()
+    answers = iter([False, True])
+    h.controller._ports = replace(
+        h.controller._ports, manual_live=lambda: next(answers)
+    )
+    h.observe(["Kuan Dai"])  # reads False: fires
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.observe(["Kuan Dai"])  # episode open: no fire
+    h.controller._maybe_stop()  # reads True: abandon, no press
+    assert len(h.sent) == 1
+
+
+def test_the_latch_state_rides_the_card_payload():
+    """The card needs the latch to draw its checkbox (#337): the state
+    row and every probe-status push carry it."""
+    h = Harness()
+    assert h.state()["manual_live"] is False
+    h.manual_live = True
+    assert h.state()["manual_live"] is True
+    h.controller._publish_probe_status()
+
+
+# ---- the suppressed attempt (#337) --------------------------------------
+
+
+def test_a_suppressed_start_is_surfaced_with_its_time():
+    """#336's suppression must never be silent (#337): the card hears
+    'already live -- chord suppressed 14:32' through the probe-status
+    push, and the state row carries the same record."""
+    h = Harness()
+    h.start_probe_answer = True  # the user is already live by hand
+    h.observe(["Kuan Dai"])
+    records = [
+        payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
+    ]
+    assert records, "the suppression never reached the card"
+    # The frozen wall, formatted the way the card sees it (TZ-independent).
+    expected = time.strftime("%H:%M", time.localtime(1759747260.0))
+    assert records[-1]["suppressed_display"] == expected
+    assert records[-1]["live"] is True
+    assert h.state()["suppressed_display"] == expected
+
+
+def test_a_fired_start_clears_the_suppression_record():
+    """The line is the LAST attempt's story: the next fired start (or
+    stop) replaces it -- the card never shows a stale suppression."""
+    h = Harness()
+    h.start_probe_answer = True
+    h.observe(["Kuan Dai"])  # suppressed
+    assert h.state()["suppressed_display"] is not None
+    h.start_probe_answer = False
+    h.now += 600 + 1
+    h.observe(["Kuan Dai"])  # fired
+    assert h.state()["suppressed_display"] is None

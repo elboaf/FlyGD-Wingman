@@ -62,7 +62,12 @@ def test_defaults_are_the_documented_values():
             "seen": [],
             "restore_preview_positions": True,
             "alerts": {
-                "stream_coupling": {"chord": "", "quiet_s": 600, "mirror_on": False},
+                "stream_coupling": {
+                    "chord": "",
+                    "quiet_s": 600,
+                    "mirror_on": False,
+                    "manual_live": False,
+                },
                 "stream_probe": {"guild_id": "", "user_id": ""},
                 "enabled": False,
                 "pve_filter": True,

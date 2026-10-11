@@ -331,6 +331,10 @@ class StreamCouplingPorts:
     ``publish_probe_status`` pushes the last probe's answer for the card
     (#337): ``{"live": bool|None, "display": "HH:MM"|None, "degraded":
     str|None, "budget_used": int, "budget_limit": int}``.
+    ``manual_live`` is the user's one-click absolute suppressor (#337):
+    read at decision time; while True Wingman presses NOTHING (the user
+    says they are live by hand), and no probe is spent on a decision it
+    has already settled.
     """
 
     coupling: Callable[[], dict]
@@ -343,6 +347,7 @@ class StreamCouplingPorts:
     budget_spend: Callable[[], bool] | None = None
     budget_status: Callable[[], dict] | None = None
     publish_probe_status: Callable[[dict], None] | None = None
+    manual_live: Callable[[], bool] | None = None
 
 
 class StreamCouplingController:
@@ -394,6 +399,10 @@ class StreamCouplingController:
         # The last probe's answer for the card (#337): (live, wall time,
         # degraded-code-or-None). None live = no answer yet.
         self._probe_record: tuple[bool | None, float, str | None] = (None, 0.0, None)
+        # The wall time #336's start gate last suppressed the chord, or
+        # None -- the card's "already live -- chord suppressed HH:MM"
+        # line (#337). Cleared by the next press in either direction.
+        self._suppressed_at: float | None = None
         self._closed = threading.Event()
         self._queue: queue.Queue = queue.Queue()
         self._thread = spawn(target=self._run, name="stream-coupling", daemon=True)
@@ -477,11 +486,19 @@ class StreamCouplingController:
         with self._lock:
             live, wall_time, degraded = self._probe_record
             wingman_live = self._wingman_live
+            suppressed_at = self._suppressed_at
         payload = {
             "live": live,
             "live_display": self._format_wall(wall_time) if live is not None else None,
             "degraded": degraded,
             "wingman_live": wingman_live,
+            # The suppressed-attempt line (#337): when the last start
+            # attempt was suppressed, when, and whether the latch (not
+            # the probe) is what is holding Wingman back right now.
+            "suppressed_display": (
+                self._format_wall(suppressed_at) if suppressed_at else None
+            ),
+            "manual_live": self._manual_live(),
         }
         budget = self._ports.budget_status
         if budget is not None:
@@ -562,19 +579,32 @@ class StreamCouplingController:
         if plan is None:
             logger.info("The recorded stream chord cannot be spelled for SendInput")
             return None
-        # The probe gate (#336), last and only gated spend: one budgeted
+        # The manual-live latch (#337) first: an absolute suppressor --
+        # the user clicked "I'm live by hand", so no press and NO probe
+        # spent on a decision the user has already settled.
+        if self._manual_live():
+            logger.info("Combat auto-start suppressed: the manual-live latch is set")
+            return None
+        # The probe gate (#336), the only gated spend: one budgeted
         # probe at decision time, when the newest possible snapshot is
         # ~2-3s old -- collapsing the stale-snapshot race to noise.
         # Live -> SUPPRESS, logged (never silent): the user is already
         # streaming by hand, and pressing the toggle would end it. The
         # suppression is a no-op on the trigger side -- no episode, no
-        # latch change, the next gated alert is a fresh decision.
-        # Not-live -> the chord. Degraded (no token, budget dry, gateway
-        # down) -> open-loop: fire today's chord, exactly rev 3's
-        # behaviour -- the degraded loop must never become a missed
-        # start. Residual edge, documented: a user going live by hand
-        # inside the probe window is the only collision left.
+        # latch change, the next gated alert is a fresh decision -- and
+        # its wall time is recorded for the card's suppressed line
+        # (#337). Not-live -> the chord. Degraded (no token, budget
+        # dry, gateway down) -> open-loop: fire today's chord, exactly
+        # rev 3's behaviour -- the degraded loop must never become a
+        # missed start. Residual edge, documented: a user going live by
+        # hand inside the probe window is the only collision left.
         if self._run_probe() is True:
+            with self._lock:
+                self._suppressed_at = self._wall()
+            # Re-publish: _record_probe pushed inside _run_probe, before
+            # this timestamp existed -- the card's suppressed line needs
+            # the complete record, not the time-less first draft.
+            self._publish_probe_status()
             logger.info(
                 "Combat auto-start suppressed: the probe says the user is already live"
             )
@@ -588,6 +618,7 @@ class StreamCouplingController:
         character = characters[0]
         wall_time = self._wall()
         with self._lock:
+            self._suppressed_at = None  # the last attempt's story is a press now
             self._last_fired = (character, wall_time, "start")
         logger.info("Stream chord fired for %s", character)
         return character, wall_time
@@ -641,6 +672,21 @@ class StreamCouplingController:
                 # The fight resumed between the wake and this check; the
                 # latches are refreshed and the next wake re-arms itself.
                 return
+
+        # The manual-live latch (#337): the user says they are live by
+        # hand, so no stop press may fire -- the latch suppresses both
+        # directions. The episode closes without a press (Wingman opened
+        # it before the click; closing it is what re-arms cleanly, and
+        # no probe is spent on a decision the user has settled).
+        if self._manual_live():
+            with self._lock:
+                self._episode = None
+            logger.info(
+                "Combat auto-stream episode closed without a stop press: "
+                "the manual-live latch is set"
+            )
+            self._ports.publish_state(self.state_payload())
+            return
 
         # The gate: one budgeted probe before anything else.
         verdict = self._run_probe()
@@ -704,6 +750,7 @@ class StreamCouplingController:
         wall_time = self._wall()
         with self._lock:
             self._wingman_live = False
+            self._suppressed_at = None  # the last attempt's story is a press now
             self._last_fired = (None, wall_time, "stop")
         logger.info("Stream chord fired to end the stream (fight quiet for %ss)", quiet)
         self._ports.publish_state(self.state_payload())
@@ -714,6 +761,22 @@ class StreamCouplingController:
                 "action": "stop",
             }
         )
+
+    def _manual_live(self) -> bool:
+        """The absolute suppressor (#337), read at decision time -- a
+        missing seam (older hand-built ports) reads False: the latch is
+        optional, its absence suppresses nothing."""
+        read = self._ports.manual_live
+        if read is None:
+            return False
+        try:
+            return bool(read())
+        except Exception:
+            # A failed read must not kill the worker; fail OPEN (the
+            # gated behaviour proceeds) -- the latch is belt-and-
+            # suspenders by the ticket's own words, non-load-bearing.
+            logger.exception("The manual-live latch read failed")
+            return False
 
     def _run_probe(self) -> bool | None:
         """One budgeted gateway probe at a decision gate. True/False is

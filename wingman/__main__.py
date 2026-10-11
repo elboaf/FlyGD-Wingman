@@ -810,6 +810,11 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
             probe_live=probe_live,
             budget_spend=budget.try_spend,
             budget_status=_budget_status,
+            manual_live=lambda: bool(
+                ((committed.get("alerts") or {}).get("stream_coupling") or {}).get(
+                    "manual_live"
+                )
+            ),
             publish_probe_status=(
                 lambda payload: api_box["api"]._publish_stream_probe_status(payload)
             ),

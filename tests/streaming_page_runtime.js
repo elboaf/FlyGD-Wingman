@@ -86,6 +86,9 @@ const WM = {
     if (method === 'stream_mirror_state') return Promise.resolve(mirrorState);
     if (method === 'stream_coupling_state') return Promise.resolve(couplingState);
     if (method === 'capture_bind') return Promise.resolve(null);
+    if (method === 'stream_manual_live_set' && !('stream_manual_live_set' in replies)) {
+      return Promise.resolve({ok: true, manual_live: args[1] === true});
+    }
     assert.ok(method in replies, 'unexpected bridge call: ' + method);
     return Promise.resolve(replies[method]);
   },
@@ -109,6 +112,8 @@ const exercise = `
   el('coupling-probe').parentNode = element('div');
   el('coupling-probe-degraded').parentNode = element('div');
   el('coupling-probe-budget').parentNode = element('div');
+  el('coupling-probe-suppressed').parentNode = element('div');
+  el('manual-live-row').parentNode = element('div');
   (async () => {
     ${scenario}
   })().then(result => finish(result), err => finish('ERR: ' + (err && err.stack || err)));
