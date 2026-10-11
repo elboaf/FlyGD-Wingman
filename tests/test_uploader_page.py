@@ -1271,3 +1271,46 @@ def test_the_clip_editor_releases_the_file_when_hidden():
         r"clip\.video\.load\(\);",
         PANEL_JS,
     )
+
+
+def test_stitch_reticks_and_title_prefills_on_selection_change():
+    """Two defaults on every new selection (user decisions, 2026-07):
+
+    Stitch re-ticks whenever 2+ recordings are selected, because most
+    batches are stitched+uploaded and unchecking is the individual-upload
+    opt-out. It is bound to wm:selection ONLY: refreshEnabled also runs on
+    the checkbox's own change event, so a re-tick there would make untick
+    impossible. Title prefills with today's date (local, MM-DD-YY) while
+    untouched; an input listener records the first human edit so the
+    re-prefill never clobbers a typed or deliberately cleared title.
+    """
+    assert re.search(
+        r"function applySelectionDefaults\(\) \{\s*"
+        r"var ids = WM\.list\.selectedIds\(\);\s*"
+        r"if \(ids\.length > 1\) WM\.el\('f-stitch'\)\.checked = true;\s*"
+        r"if \(ids\.length > 0 && !titleTouched\) \{",
+        PANEL_JS,
+    )
+    # Bound to selection events only, NOT to the checkbox's change event.
+    assert re.search(
+        r"document\.addEventListener\('wm:selection', applySelectionDefaults\);",
+        PANEL_JS,
+    )
+    tick_listener = re.search(
+        r"WM\.el\('f-stitch'\)\.addEventListener\('change', (\w+)\);",
+        PANEL_JS,
+    )
+    assert tick_listener and tick_listener.group(1) != "applySelectionDefaults"
+    # The date format, spelled out so a format change is a deliberate one.
+    assert re.search(
+        r"var mm = String\(now\.getMonth\(\) \+ 1\)\.padStart\(2, '0'\);\s*"
+        r"var dd = String\(now\.getDate\(\)\)\.padStart\(2, '0'\);\s*"
+        r"var yy = String\(now\.getFullYear\(\) % 100\)\.padStart\(2, '0'\);\s*"
+        r"WM\.el\('f-title'\)\.value = mm \+ '-' \+ dd \+ '-' \+ yy;",
+        PANEL_JS,
+    )
+    assert re.search(
+        r"WM\.el\('f-title'\)\.addEventListener\('input', function \(\) \{\s*"
+        r"titleTouched = true;",
+        PANEL_JS,
+    )

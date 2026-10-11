@@ -24,6 +24,12 @@
   // differently-named public videos. The round trip is in-process and
   // fires on a human click, so its cost is invisible.
   var panelSeq = 0;
+  // Title prefill state: true from the first human edit, so a user-cleared
+  // or re-titled field is never clobbered by the date re-prefill below.
+  var titleTouched = false;
+  WM.el('f-title').addEventListener('input', function () {
+    titleTouched = true;
+  });
 
   function refreshPanelText() {
     var seq = ++panelSeq;
@@ -116,6 +122,28 @@
     WM.setEnabled('btn-stitch-local', selected > 1);
   }
   document.addEventListener('wm:selection', refreshEnabled);
+
+  // ---- defaults on selection change -----------------------------------
+  // Runs on wm:selection ONLY, never on the checkbox's own change event --
+  // putting it in refreshEnabled would re-tick the box the instant the
+  // user unticks it, making "individual uploads" unreachable. On each new
+  // selection it (a) re-ticks stitch whenever 2+ are selected, because
+  // most batches are stitched and unchecking is the opt-out, and (b) re-
+  // prefills the title with today's date (local time, MM-DD-YY) while the
+  // user has not touched the field -- both deliberate user choices above
+  // (via input events) survive every refresh.
+  function applySelectionDefaults() {
+    var ids = WM.list.selectedIds();
+    if (ids.length > 1) WM.el('f-stitch').checked = true;
+    if (ids.length > 0 && !titleTouched) {
+      var now = new Date();
+      var mm = String(now.getMonth() + 1).padStart(2, '0');
+      var dd = String(now.getDate()).padStart(2, '0');
+      var yy = String(now.getFullYear() % 100).padStart(2, '0');
+      WM.el('f-title').value = mm + '-' + dd + '-' + yy;
+    }
+  }
+  document.addEventListener('wm:selection', applySelectionDefaults);
 
   // ---- actions -------------------------------------------------------
   // Upload still sends unconditionally, even though refreshEnabled above
