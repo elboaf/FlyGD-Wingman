@@ -451,6 +451,70 @@
     }
   });
 
+  // ---- the Discord-name picker (#335's one user-facing identity) ------
+  // The probe watches ONE Discord account's voice state, so each user
+  // must say which account is theirs. The token and guild are baked-in
+  // configuration; this picker is the only identity control on the
+  // card. The list comes live from the bot (nick > global name >
+  // username, humans only) so the pick is a name the user recognizes,
+  // and the stored value is the stable snowflake id.
+  var identityPick = WM.el('probe-identity-pick');
+  var identityCurrent = WM.el('probe-identity-current');
+  var identityMsg = WM.el('probe-identity-msg');
+
+  function renderIdentity() {
+    WM.send('stream_probe_identity').then(function (result) {
+      if (!result) return;
+      if (result.ok === false) {
+        // Unconfigured (no token / guild) is a fact about the install,
+        // not a user error: the row says so once and stays inert.
+        identityPick.disabled = true;
+        identityCurrent.textContent =
+          result.error === 'unconfigured' ? 'Not configured' : '';
+        return;
+      }
+      identityPick.disabled = false;
+      var picked = (result.members || []).filter(function (member) {
+        return member.id === result.current;
+      })[0];
+      identityCurrent.textContent = picked
+        ? 'Watching ' + picked.name
+        : 'Not set — pick your Discord name';
+    });
+  }
+
+  identityPick.addEventListener('click', function () {
+    identityMsg.textContent = '';
+    WM.send('stream_probe_identity').then(function (result) {
+      if (!result || result.ok === false) {
+        identityMsg.textContent =
+          (result && result.error === 'unconfigured')
+            ? 'The probe bot is not configured yet.'
+            : 'The member list could not be loaded.';
+        return;
+      }
+      WM.choose('Pick your Discord name', 'The probe watches this ' +
+        'account\u2019s stream state in the guild.',
+        [{label: 'Members', options: (result.members || []).map(function (member) {
+          return {value: member.id, label: member.name};
+        })}], 'Choose', 'Discord name', {compact: true}).then(function (choice) {
+        if (choice === null) return;
+        WM.send('stream_probe_identity_set', choice).then(function (stored) {
+          if (stored && stored.ok) {
+            renderIdentity();
+          } else {
+            identityMsg.textContent =
+              (stored && stored.error) || 'The pick could not be saved.';
+          }
+        });
+      });
+    });
+  });
+
+  document.addEventListener('wm:section', function (ev) {
+    if (ev.detail === 'streaming') { renderIdentity(); }
+  });
+
   document.addEventListener('wm:section', function (ev) {
     if (ev.detail === 'streaming') {
       if (!visible) { visible = true; }

@@ -894,6 +894,25 @@
     return Promise.resolve({ok: true, manual_live: devManualLive});
   };
 
+  // The Discord-name picker (#335): a fixture member list so the modal
+  // renders in the browser; the pick round-trips through the double's
+  // own state like the real bridge's settings write.
+  var devIdentity = {current: '', members: [
+    {id: '101', name: 'Dev Streamer One'},
+    {id: '102', name: 'Dev Streamer Two'}
+  ]};
+  api.stream_probe_identity = function () {
+    console.log('DEV api.stream_probe_identity()');
+    return Promise.resolve({
+      ok: true, current: devIdentity.current, members: devIdentity.members
+    });
+  };
+  api.stream_probe_identity_set = function (userId) {
+    console.log('DEV api.stream_probe_identity_set(', userId, ')');
+    devIdentity.current = String(userId || '');
+    return Promise.resolve({ok: true, user_id: devIdentity.current});
+  };
+
   // NOT generic stubs, for the same reason save_settings above is not: the
   // page guards on `!ok`, and the real bridge returns True even for a
   // no-op. A null here would make plan switching and forget dead in the

@@ -89,6 +89,13 @@ const WM = {
     if (method === 'stream_manual_live_set' && !('stream_manual_live_set' in replies)) {
       return Promise.resolve({ok: true, manual_live: args[1] === true});
     }
+    // The Discord-name picker (#335) sends its read on section entry;
+    // scenarios that don't test the picker still enter the section.
+    if (method === 'stream_probe_identity' && !('stream_probe_identity' in replies)) {
+      return Promise.resolve({
+        ok: true, current: '', members: [{id: '101', name: 'Dev Streamer One'}]
+      });
+    }
     assert.ok(method in replies, 'unexpected bridge call: ' + method);
     return Promise.resolve(replies[method]);
   },
