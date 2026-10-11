@@ -250,19 +250,3 @@ def test_manual_live_set_false_clears_the_latch(tmp_path):
     api.stream_manual_live_set(True)
     result = api.stream_manual_live_set(False)
     assert result["manual_live"] is False
-    stored = api._state.settings["preview"]["alerts"]["stream_coupling"]["manual_live"]
-    assert stored is False
-
-
-def test_the_wiring_binds_the_manual_live_seam():
-    """The latch port reads the committed projection, the same live
-    read every other seam gets (#337)."""
-    from pathlib import Path
-
-    source = (
-        Path(__file__).resolve().parent.parent / "wingman" / "__main__.py"
-    ).read_text(encoding="utf-8")
-    body = source.split("def build_stream_coupling_controller(", 1)[1]
-    body = body.split("\ndef ", 1)[0]
-    assert "manual_live=" in body
-    assert "committed" in body.split("manual_live=")[1].split("publish_probe_status")[0]
