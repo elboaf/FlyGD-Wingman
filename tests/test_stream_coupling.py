@@ -379,9 +379,10 @@ def test_the_worker_wakes_on_the_stop_deadline():
     h.observe(["Kuan Dai"])
     assert h.controller._wake_delay() == 600.0
     h.now += 700
-    # Overdue: due now, but floored so a failing stop retries on a
-    # cadence instead of hot-spinning the worker.
-    assert h.controller._wake_delay() == 1.0
+    # Overdue: due now, but the degraded stop no longer presses, so an
+    # overdue deadline wakes on a 60s probe-retry cadence instead of
+    # hot-spinning the worker (2026-10-11).
+    assert h.controller._wake_delay() == 60.0
 
 
 def test_a_resumed_fight_pushes_the_stop_out():
@@ -619,7 +620,9 @@ def test_a_stop_never_fires_against_a_manual_stream():
     h = Harness()
     h.observe(["Kuan Dai"])
     h.now += 600 + 1
-    assert h.state()["wingman_live"] is False  # unconfirmed before the probe
+    # The flag is set the MOMENT the confirmed start press went out
+    # (2026-10-11, the user's model) -- not retroactively by a probe.
+    assert h.state()["wingman_live"] is True
     h.controller._maybe_stop()
     # The press IS the proof: it flew only because the fresh snapshot
     # over this Wingman-originated episode said still-live. Afterwards
@@ -632,13 +635,13 @@ def test_a_stop_never_fires_against_a_manual_stream():
     assert h.state()["wingman_live"] is False
 
 
-def test_a_degraded_probe_still_presses_open_loop():
-    """No token / budget dry / gateway down: degrade to OPEN-LOOP -- the
-    episode is Wingman-originated by construction (the alternation
-    guard: only Wingman's start press opens one), so today's chord must
-    fire. The closed loop must never become a missed stop: a zombie
-    stream is exactly what the ticket forbids ("one dead episode max,
-    never a zombie stream")."""
+def test_a_degraded_stop_probe_defers_the_stop():
+    """No token / budget dry / gateway down at the STOP gate: NO PRESS
+    (2026-10-11 field incident -- a blind stop press can cut a stream
+    the user started by hand, the one outcome the probe exists to
+    prevent). The episode stays open and the stop is retried: a fight
+    resuming refreshes the latches; a quiet gateway run retries on the
+    60s wake cadence. The stream errs LONG, never cut."""
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
@@ -646,33 +649,40 @@ def test_a_degraded_probe_still_presses_open_loop():
     h.probe_error = ProbeError("network")
     h.controller._maybe_stop()
     assert h.probe_calls == 2  # the start probe answered; the stop probe failed
-    assert len(h.sent) == 2
-    # The episode is closed either way: the next alert starts fresh.
-    h.observe(["Kuan Dai"])
-    assert len(h.sent) == 3
+    assert len(h.sent) == 1  # deferred, not pressed
+    # The episode stays open: the start gate's reopen branch will hold
+    # Wingman's own stream, and the stop retries. No fight: probe retry.
+    assert h.state()["wingman_live"] is True
+    h.probe_error = None
+    h.controller._maybe_stop()
+    assert h.probe_calls == 3
+    assert len(h.sent) == 2  # the deferred stop lands once the probe answers
 
 
-def test_the_wingman_live_flag_is_per_episode():
-    """The confirmation is consumed by the stop press and reset by the
-    next start: a confirmed dead episode must not authorize a press
-    against whatever is live now. (Today the flag authorizes nothing on
-    the degraded path -- the alternation guard already proves origin --
-    but its lifecycle is pinned so a future use inherits it right.)"""
+def test_the_wingman_live_flag_is_set_at_start_and_consumed_at_stop():
+    """The user's model (2026-10-11): the flag is set the moment the
+    probe-confirmed start press goes out, and consumed by the stop
+    press. A degraded stop defers instead of pressing, so the flag
+    survives and the NEXT start gate recognizes its own still-live
+    stream -- reopening the episode instead of pressing into it."""
     h = Harness()
     h.observe(["Kuan Dai"])
     assert len(h.sent) == 1
+    assert h.state()["wingman_live"] is True  # set AT the start press
     h.now += 600 + 1
     h.controller._maybe_stop()  # confirmed and pressed: episode closed
     assert h.state()["wingman_live"] is False
     h.observe(["Kuan Dai"])  # fresh fight opens a fresh episode
-    assert h.state()["wingman_live"] is False
+    assert h.state()["wingman_live"] is True
     h.now += 300
     h.observe(["Kuan Dai"])  # the fight resumes: the episode holds
     h.now += 600 + 1
     h.probe_error = ProbeError("network")
     h.controller._maybe_stop()
-    # Sends: start, stop, start, degraded stop (open-loop).
-    assert len(h.sent) == 4
+    # Sends: start, stop, start, deferred stop -- 3 presses, not 4.
+    assert len(h.sent) == 3
+    # The flag survives the deferral; the episode is still open.
+    assert h.state()["wingman_live"] is True
 
 
 def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
@@ -691,32 +701,35 @@ def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
     )
     h.controller._maybe_stop()
     assert h.probe_calls == 1  # the start gate ran while the budget stood
-    assert len(h.sent) == 2  # open-loop press
+    assert len(h.sent) == 1  # deferred, never a blind press
     degraded = [
         payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
     ]
-    assert degraded and degraded[-1]["degraded"] == "budget dry -- open-loop"
+    assert degraded and degraded[-1]["degraded"] == "budget dry -- no press"
 
 
 def test_the_probe_failure_is_recorded_for_the_card():
     h = Harness()
     h.probe_error = ProbeError("auth")
     h.observe(["Kuan Dai"])
-    # The start gate (#336) degraded open-loop and pressed; the stop
-    # gate degraded the same way. The card's last record is the stop's.
+    # The degraded start gate presses NOTHING (2026-10-11: a blind
+    # start press cut a hand-started stream); the stop gate with no
+    # episode open never runs. The card's one record is the start's.
+    assert len(h.sent) == 0
     h.now += 600 + 1
     h.controller._maybe_stop()
+    assert h.probe_calls == 1  # the start gate's only spend
     records = [
         payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
     ]
     assert records and records[-1] == {
         "live": None,
         "live_display": None,
-        "degraded": "probe failed -- open-loop",
+        "degraded": "probe failed -- no press",
         "wingman_live": False,
         "suppressed_display": None,
         "manual_live": False,
-        "budget_used": 2,
+        "budget_used": 1,
         "budget_limit": 300,
     }
 
@@ -748,17 +761,18 @@ def test_the_probe_never_runs_without_an_episode():
     assert h.budget.used() == 0
 
 
-def test_without_a_probe_seam_the_stop_presses_open_loop():
+def test_without_a_probe_seam_the_stop_defers():
     """A hand-built ports object without the probe seams (older tests,
-    a controller built before this ticket): the gate degrades to
-    open-loop -- the alternation guard already proves the episode's
-    origin -- and one degrade notice says the loop is not configured."""
+    a controller built before this ticket): the start gate has no
+    answer and suppresses, so no episode ever opens and the stop gate
+    never runs -- the whole loop is inert, never blind (2026-10-11).
+    One degrade notice says the loop is not configured."""
     h = Harness(probe_live=None, budget_spend=None)
     h.observe(["Kuan Dai"])
-    assert len(h.sent) == 1
+    assert len(h.sent) == 0
     h.now += 600 + 1
     h.controller._maybe_stop()
-    assert len(h.sent) == 2
+    assert len(h.sent) == 0  # no episode, no press, ever
     assert h.state()["degraded"] == "not configured"
 
 
@@ -820,17 +834,25 @@ def test_the_start_gate_suppresses_when_already_live():
     assert len(h.sent) == 1
 
 
-def test_a_degraded_start_probe_still_fires_open_loop():
-    """No token / budget dry / gateway down at the START gate: fire
-    today's open-loop chord. The degraded loop must never become a
-    missed START -- that is the ticket's degrade invariant."""
+def test_a_degraded_start_probe_suppresses_the_start():
+    """No token / budget dry / gateway down at the START gate: NO PRESS
+    (2026-10-11 field incident: the old open-loop degrade fired the
+    chord blind while the user was live by hand -- the toggle cut their
+    stream). A suppressed start costs one fight without an auto-stream,
+    never a cut stream. The next gated alert is a fresh decision."""
     h = Harness()
     h.probe_error = ProbeError("network")
     h.observe(["Kuan Dai"])
     assert h.probe_calls == 1
-    assert len(h.sent) == 1  # open-loop fire
-    assert h.state()["last_fired_action"] == "start"
-    assert h.state()["degraded"] == "probe failed -- open-loop"
+    assert len(h.sent) == 0  # suppressed -- the probe has no answer
+    assert h.state()["last_fired_action"] is None
+    assert h.state()["degraded"] == "probe failed -- no press"
+    # Recovery: the probe answers again and the next alert fires.
+    h.probe_error = None
+    h.now += 600 + 1
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 2
+    assert len(h.sent) == 1
 
 
 def test_the_start_gate_runs_after_the_free_gates():
@@ -860,14 +882,15 @@ def test_the_start_gate_spends_the_shared_budget():
     assert h.state()["budget_limit"] == 300
 
 
-def test_without_a_probe_seam_the_start_fires_open_loop():
+def test_without_a_probe_seam_the_start_suppresses():
     """A hand-built ports object without the probe seams: the start
-    gate degrades to open-loop -- today's chord fires exactly as rev 3
-    did, and the row says the loop is not configured."""
+    gate has no answer, so it presses NOTHING (2026-10-11 -- the same
+    rule as every other degraded path) and the row says the loop is
+    not configured."""
     h = Harness(probe_live=None, budget_spend=None)
     h.observe(["Kuan Dai"])
-    assert len(h.sent) == 1
-    assert h.state()["last_fired_action"] == "start"
+    assert len(h.sent) == 0
+    assert h.state()["last_fired_action"] is None
     assert h.state()["degraded"] == "not configured"
 
 
@@ -969,3 +992,32 @@ def test_a_fired_start_clears_the_suppression_record():
     h.now += 600 + 1
     h.observe(["Kuan Dai"])  # fired
     assert h.state()["suppressed_display"] is None
+
+
+def test_a_live_stream_wingman_owns_reopens_the_episode_not_a_press():
+    """The self-heal (2026-10-11): a degraded stop left Wingman's own
+    stream live with the flag set. The next fight's start gate sees
+    live + wingman_live -> NOT a hand stream to suppress, and NOT a
+    chord to press: the episode reopens and the quiet clock re-arms,
+    which extends the after-combat timer until the stop gate can
+    actually answer. The zombie heals without ever toggling it."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    h.now += 600 + 1
+    h.probe_error = ProbeError("network")
+    h.controller._maybe_stop()  # deferred: stream still up, flag set
+    assert len(h.sent) == 1
+    # A new fight arrives while Wingman's stream is still live. The
+    # episode was NEVER closed (the stop deferred), so the alternation
+    # guard simply refreshes the latches -- no fire, no probe, the
+    # quiet clock re-arms and the after-combat timer extends.
+    h.probe_error = None
+    h.start_probe_answer = True  # irrelevant: no start decision runs
+    h.observe(["Faoble"])
+    assert h.probe_calls == 2  # no new probe spent on an open episode
+    assert len(h.sent) == 1  # no press in either direction
+    assert h.state()["wingman_live"] is True  # still Wingman's, still tracked
+    h.now += 600 + 1
+    h.controller._maybe_stop()
+    assert len(h.sent) == 2  # the stop lands once the probe can answer

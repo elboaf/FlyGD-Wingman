@@ -426,7 +426,7 @@
 
   WM.handle('onStreamProbeStatus', function (payload) {
     // The probe's answer (#335/#337): the last gateway snapshot, its
-    // time, the degrade notice when Wingman is open-loop, and the
+    // time, the degrade notice when Wingman has no probe answer, and the
     // budget standing. Tick-pushed like the armed row -- visible-only.
     if (visible) { renderProbe(payload); }
   });

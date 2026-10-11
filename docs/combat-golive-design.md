@@ -547,11 +547,16 @@ one:
   refresh, no episode opens, and the next gated alert is a fresh
   decision.
 - Snapshot says not live -> the start chord fires.
-- Degraded (no token / ids, budget dry, gateway down) -> OPEN-LOOP:
-  today's chord fires exactly as rev 3 did -- the degraded loop must
-  never become a missed start. The residual edge is documented: a user
-  going live by hand inside the ~2-3 s probe window is the only
-  collision left.
+- Degraded (no token / ids, budget dry, gateway down) -> NO PRESS
+  (2026-10-11, reversed from the rev-3 open-loop rule after the field
+  incident below): a start press is a toggle, and pressing it without
+  knowing the stream's state is exactly how a hand-started stream gets
+  cut. A suppressed start costs one fight without an auto-stream,
+  never a cut stream -- the degraded loop must never GUESS. The
+  alternation guard still holds: if the loop degraded while Wingman's
+  own stream stayed live (flag set), the next fight refreshes the open
+  episode's latches instead of pressing, and the stop gate answers
+  when it can -- the zombie heals without a toggle.
 - The start probe shares the one `DailyBudget` with the stop gate, so a
   fight's two probes are both counted and the card sees the full spend.
 
@@ -579,14 +584,27 @@ The stop half is implemented in `wingman/alerts/streamcoupling.py`:
   still live over a Wingman-originated episode -> stop chord; already
   off -> latch cleared, nothing sent, re-armed (no confirm probe -- a
   lost chord self-corrects here).
-- Degraded (no token / ids, budget dry, gateway down) -> degrade to
-  OPEN-LOOP: the chord fires unconditionally, exactly rev 3's
-  behaviour. The episode is Wingman-originated by construction (the
-  alternation guard: only Wingman's start press opens one), and the
-  ticket's sentence stands -- one dead episode max, never a zombie
-  stream. The degrade notice rides to the card as
-  `onStreamProbeStatus`; a manual toggle mid-episode remains the card
-  collision warning's territory, unchanged from rev 3.
+- Degraded (no token / ids, budget dry, gateway down) -> NO PRESS
+  (2026-10-11, reversed from the rev-3 open-loop rule): the same
+  toggle-blunder argument as the start gate -- a blind stop press can
+  cut a hand-started stream just as dead. The episode STAYS OPEN and
+  the `wingman_live` flag survives; the wake retries the probe on a
+  60 s cadence until the gateway answers, and the stop lands then.
+  The stream errs long, never cut. The degrade notice rides to the
+  card as `onStreamProbeStatus`; a manual stop while the gate is
+  waiting self-corrects at the next successful probe (`self_stream`
+  False -> episode closed, nothing pressed).
+
+### The 2026-10-11 field incident (the degrade rule's origin)
+
+The user went live by hand, entered combat, and Wingman cut the
+stream: the probe raised `ProbeError: auth` (the probe identity --
+guild/user ids -- was never configured in the shipped settings path;
+the old probe-tooling runs used a separate config surface), the
+degraded start gate fired the chord open-loop per the rev-3 rule, and
+the toggle ended the user's live stream. Every blind press is a
+toggle with no direction: the only safe posture when the probe cannot
+answer is to press nothing, in both directions, and keep waiting.
 - `quiet_s` is fixed 600: the settings validator projects any stored
   value to 600, and the bridge endpoint echoes 600 for any numeric
   input.

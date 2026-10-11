@@ -325,7 +325,7 @@ class StreamCouplingPorts:
     call returning True (live) / False (clean not-live snapshot), raised
     ProbeError on no answer -- it runs on this controller's worker only.
     ``budget_spend`` reserves one probe from the daily allowance and
-    returns False when the day is dry (degrade to open-loop).
+    returns False when the day is dry (degrade: no press).
     ``budget_status`` reports the day's standing for the card
     (``{"budget_used": int, "budget_limit": int}``).
     ``publish_probe_status`` pushes the last probe's answer for the card
@@ -481,7 +481,7 @@ class StreamCouplingController:
 
     def probe_status_payload(self) -> dict:
         """The card's probe fields (#337, carried by the state row): the
-        last probe's answer and when, the degrade notice when open-loop,
+        last probe's answer and when, the degrade notice when no answer,
         and the day's budget standing. ``live`` None = no answer yet."""
         with self._lock:
             live, wall_time, degraded = self._probe_record
@@ -547,11 +547,10 @@ class StreamCouplingController:
             with self._lock:
                 # The toggle just OPENED the stream; the stop press at
                 # quiet expiry is what closes it. That is the whole
-                # alternation: open here, closed in _maybe_stop. The
-                # confirmation flag starts false every episode and is
-                # consumed by whichever probe confirms or stop press
-                # ends it (#335 pins the lifecycle).
-                self._wingman_live = False
+                # alternation: open here, closed in _maybe_stop.
+                # _wingman_live was set by _try_fire at the moment the
+                # press went out (the user's model, 2026-10-11) -- it is
+                # NOT reset here; the stop press consumes it.
                 self._episode = fired[0]
         self._ports.publish_state(self.state_payload())
         if fired is not None:
@@ -589,24 +588,54 @@ class StreamCouplingController:
         # probe at decision time, when the newest possible snapshot is
         # ~2-3s old -- collapsing the stale-snapshot race to noise.
         # Live -> SUPPRESS, logged (never silent): the user is already
-        # streaming by hand, and pressing the toggle would end it. The
-        # suppression is a no-op on the trigger side -- no episode, no
-        # latch change, the next gated alert is a fresh decision -- and
-        # its wall time is recorded for the card's suppressed line
-        # (#337). Not-live -> the chord. Degraded (no token, budget
-        # dry, gateway down) -> open-loop: fire today's chord, exactly
-        # rev 3's behaviour -- the degraded loop must never become a
-        # missed start. Residual edge, documented: a user going live by
-        # hand inside the probe window is the only collision left.
-        if self._run_probe() is True:
+        # streaming by hand, and pressing the toggle would end it. The suppression
+        # is a no-op on the trigger side -- no episode, no latch change,
+        # the next gated alert is a fresh decision -- and its wall time
+        # is recorded for the card's suppressed line (#337). Not-live ->
+        # the chord. Degraded (no token, budget dry, gateway down) -> NO
+        # PRESS (2026-10-11 field incident): a start press is a toggle,
+        # and firing it without knowing the stream's state is how a
+        # hand-started stream gets cut -- the exact outcome the probe
+        # gate exists to prevent. The degraded loop must never GUESS.
+        # A suppressed start costs a fight without an auto-stream, never
+        # a stream the user is watching.
+        verdict = self._run_probe()
+        if verdict is not None:
             with self._lock:
-                self._suppressed_at = self._wall()
-            # Re-publish: _record_probe pushed inside _run_probe, before
-            # this timestamp existed -- the card's suppressed line needs
-            # the complete record, not the time-less first draft.
+                wingman_live = self._wingman_live
+            if verdict is True and wingman_live:
+                # Not a hand stream: this is Wingman's own stream still
+                # up because a stop press never landed (degraded stop,
+                # 2026-10-11). Do not press and do not suppress -- the
+                # episode reopens and the quiet clock re-arms, which
+                # extends the after-combat timer until the stop gate
+                # can actually answer. Self-heals the zombie WITHOUT
+                # ever toggling it.
+                with self._lock:
+                    self._episode = characters[0]
+                    self._suppressed_at = None
+                logger.info(
+                    "Combat auto-start skipped: the live stream is Wingman's own "
+                    "-- episode reopened, the stop gate will answer later"
+                )
+                return None
+            if verdict is True:
+                with self._lock:
+                    self._suppressed_at = self._wall()
+                # Re-publish: _record_probe pushed inside _run_probe, before
+                # this timestamp existed -- the card's suppressed line needs
+                # the complete record, not the time-less first draft.
+                self._publish_probe_status()
+                logger.info(
+                    "Combat auto-start suppressed: the probe says the user is already live"
+                )
+                return None
+        else:
+            with self._lock:
+                self._suppressed_at = None
             self._publish_probe_status()
             logger.info(
-                "Combat auto-start suppressed: the probe says the user is already live"
+                "Combat auto-start suppressed: the probe has no answer -- no press"
             )
             return None
         try:
@@ -620,6 +649,12 @@ class StreamCouplingController:
         with self._lock:
             self._suppressed_at = None  # the last attempt's story is a press now
             self._last_fired = (character, wall_time, "start")
+            # The user's model (2026-10-11), in one line: Wingman set the
+            # flag BECAUSE it just started the stream -- not retroactively
+            # via a later probe. The probe already answered not-live
+            # before this chord went out, so the stream this press opens
+            # is Wingman's by direct evidence.
+            self._wingman_live = True
         logger.info("Stream chord fired for %s", character)
         return character, wall_time
 
@@ -627,7 +662,11 @@ class StreamCouplingController:
         """How long the worker may idle before re-checking an open
         episode's stop deadline, or None to block until the next
         combat alert. Recomputed after every wake, so a fight that
-        resumes pushes the stop out without anyone re-programming it."""
+        resumes pushes the stop out without anyone re-programming it.
+        A stop whose probe had no answer stays due, so the wake repeats
+        on a 60s cadence -- a probe retry every minute, never a hot
+        loop, until the gateway answers (2026-10-11: the degraded stop
+        no longer presses, it waits; waiting needs a cadence)."""
         quiet = self._read_coupling()["quiet_s"]
         now = self._clock()
         with self._lock:
@@ -636,7 +675,9 @@ class StreamCouplingController:
             deadline = max(self._latches.values()) + quiet
         # The 1s floor: an expired deadline is due NOW, but a stop that
         # keeps failing must retry on a cadence, not hot-spin the worker.
-        return max(1.0, deadline - now)
+        if deadline - now <= 0.0:
+            return 60.0
+        return deadline - now
 
     def _maybe_stop(self) -> None:
         """The toggle's other half, rev 4 (#335): the stop decision is
@@ -692,9 +733,74 @@ class StreamCouplingController:
         verdict = self._run_probe()
         if verdict is True:
             with self._lock:
-                # Confirmed Wingman-originated and still live: this is
-                # the one state in which the stop chord may fire.
-                self._wingman_live = True
+                wingman_live = self._wingman_live
+            if not wingman_live:
+                # "Live" but Wingman never started this one: the user
+                # stopped Wingman's stream by hand and went live
+                # themselves mid-episode. Their stream is not ours to
+                # end -- close the episode without a press and re-arm
+                # (2026-10-11: the stop press requires the flag, per
+                # the user's own model of the loop).
+                with self._lock:
+                    self._wingman_live = False
+                    self._episode = None
+                logger.info(
+                    "Combat auto-stream episode closed without a stop press: "
+                    "the live stream is not Wingman's"
+                )
+                self._ports.publish_state(self.state_payload())
+                return
+            # Confirmed Wingman-originated and still live: this is the
+            # one state in which the stop chord may fire. The consent
+            # and mirror checks still apply -- consent withdrawn
+            # mid-episode switches PRESSES off (the empty field is the
+            # off switch), and a dead mirror has already ended the
+            # share on its own; a press could only toggle something
+            # that is not ours.
+            with self._lock:
+                self._episode = None
+
+            def abandon(reason: str) -> None:
+                logger.info(
+                    "Combat auto-stream episode closed without a stop press: %s",
+                    reason,
+                )
+                self._ports.publish_state(self.state_payload())
+
+            if not chord:
+                abandon("the chord was cleared")
+                return
+            if not self._ports.mirror_running():
+                abandon("the mirror is not running")
+                return
+            plan = spell_chord(chord, char_vk=self._ports.char_vk)
+            if plan is None:
+                abandon("the chord cannot be spelled any more")
+                return
+            try:
+                self._ports.send(plan)
+            except Exception:
+                # A failed seam must not kill the worker; the episode is
+                # already closed, so a real fight's next press starts fresh.
+                logger.exception("Could not send the stream stop chord")
+                abandon("the stop press failed")
+                return
+            wall_time = self._wall()
+            with self._lock:
+                self._wingman_live = False
+                self._suppressed_at = None  # the last attempt's story is a press now
+                self._last_fired = (None, wall_time, "stop")
+            logger.info(
+                "Stream chord fired to end the stream (fight quiet for %ss)", quiet
+            )
+            self._ports.publish_state(self.state_payload())
+            self._ports.publish_fired(
+                {
+                    "character": None,
+                    "display": self._format_wall(wall_time),
+                    "action": "stop",
+                }
+            )
         elif verdict is False:
             with self._lock:
                 # Already off -- the user stopped it by hand, or the
@@ -707,60 +813,22 @@ class StreamCouplingController:
             )
             self._ports.publish_state(self.state_payload())
             return
-        # verdict None: degraded -- open-loop below. The episode is
-        # Wingman-originated by construction (the alternation guard:
-        # only Wingman's start press opens one), so today's chord fires
-        # unconditionally -- "degrade to open-loop", never a zombie
-        # stream. A manual stream the user toggled mid-episode is the
-        # card collision warning's territory, not a new gate here.
-
-        with self._lock:
-            self._episode = None
-
-        def abandon(reason: str) -> None:
+        else:
+            # Degraded -- NO PRESS (2026-10-11 field incident: an
+            # unanswered probe used to mean open-loop, and a blind stop
+            # press is the same toggle-blunder the start gate learned to
+            # fear: it can cut a hand-started stream just as dead). The
+            # episode STAYS OPEN and the flag stays set: the next
+            # quiet-expiry wake retries the gate, and if the user
+            # enters combat again meanwhile the start gate's
+            # wingman_live branch reopens/extends the episode instead
+            # of pressing. The stream errs long, never cut; the card
+            # says why the stop is waiting (#337's degrade notice).
             logger.info(
-                "Combat auto-stream episode closed without a stop press: %s", reason
+                "Combat auto-stream stop deferred: the probe has no answer -- no press"
             )
             self._ports.publish_state(self.state_payload())
-
-        if not chord:
-            # Consent was withdrawn mid-episode: the empty field is the
-            # off switch, and it switches off PRESSES -- including this
-            # one. Whatever the stream is doing now is the user's to end.
-            abandon("the chord was cleared")
             return
-        if not self._ports.mirror_running():
-            # Discord pins the mirror window; a dead window has already
-            # ended the share on its own, and a press now could only
-            # toggle off a stream the user started by hand afterwards.
-            abandon("the mirror is not running")
-            return
-        plan = spell_chord(chord, char_vk=self._ports.char_vk)
-        if plan is None:
-            abandon("the chord cannot be spelled any more")
-            return
-        try:
-            self._ports.send(plan)
-        except Exception:
-            # A failed seam must not kill the worker; the episode is
-            # already closed, so a real fight's next press starts fresh.
-            logger.exception("Could not send the stream stop chord")
-            abandon("the stop press failed")
-            return
-        wall_time = self._wall()
-        with self._lock:
-            self._wingman_live = False
-            self._suppressed_at = None  # the last attempt's story is a press now
-            self._last_fired = (None, wall_time, "stop")
-        logger.info("Stream chord fired to end the stream (fight quiet for %ss)", quiet)
-        self._ports.publish_state(self.state_payload())
-        self._ports.publish_fired(
-            {
-                "character": None,
-                "display": self._format_wall(wall_time),
-                "action": "stop",
-            }
-        )
 
     def _manual_live(self) -> bool:
         """The absolute suppressor (#337), read at decision time -- a
@@ -790,14 +858,14 @@ class StreamCouplingController:
             self._record_probe(None, "not configured")
             return None
         if not spend():
-            self._record_probe(None, "budget dry -- open-loop")
+            self._record_probe(None, "budget dry -- no press")
             return None
         try:
             answer = probe()
         except Exception:
             # A failed probe must not kill the worker; degrade.
             logger.exception("The stream state probe failed")
-            self._record_probe(None, "probe failed -- open-loop")
+            self._record_probe(None, "probe failed -- no press")
             return None
         self._record_probe(answer, None)
         return answer
