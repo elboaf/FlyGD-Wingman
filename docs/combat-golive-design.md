@@ -530,10 +530,30 @@ The start side inherits the same freshness: the enter-combat probe's
 snapshot is seconds old, so the stale-snapshot race that revision 3's
 design would have had is collapsed to noise.
 
-### Shipped state (#335, 1/3)
+### Shipped state (#335, #336, 1/3 + 2/3)
 
-*Added with #335's implementation. The stop gate is live; #336's
-enter-combat gate and #337's full card are the remaining children.*
+*Added with #335's implementation; extended with #336's enter-combat
+gate. #337's full card is the remaining child.*
+
+The enter-combat gate (#336) lives in the same `_try_fire` start path,
+after the free gates (mirror, spelling) and before the send -- a probe
+costs budget, so a dead mirror or an unspellable chord never spends
+one:
+
+- The armed trigger spends one budgeted probe. Snapshot says already
+  live -> **suppress the start chord, logged** (never silent): pressing
+  the toggle would end the user's hand-started stream. The suppression
+  is a no-op on the trigger side -- latches and the quiet clock still
+  refresh, no episode opens, and the next gated alert is a fresh
+  decision.
+- Snapshot says not live -> the start chord fires.
+- Degraded (no token / ids, budget dry, gateway down) -> OPEN-LOOP:
+  today's chord fires exactly as rev 3 did -- the degraded loop must
+  never become a missed start. The residual edge is documented: a user
+  going live by hand inside the ~2-3 s probe window is the only
+  collision left.
+- The start probe shares the one `DailyBudget` with the stop gate, so a
+  fight's two probes are both counted and the card sees the full spend.
 
 The stop half is implemented in `wingman/alerts/streamcoupling.py`:
 

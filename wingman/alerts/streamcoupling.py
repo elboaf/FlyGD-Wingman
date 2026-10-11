@@ -549,8 +549,8 @@ class StreamCouplingController:
 
     def _try_fire(self, chord: str, characters: tuple[str, ...]):
         """Every gate passed the consent check; run the mirror and
-        spelling gates. Returns (character, wall time) when the chord
-        went out, None when a gate refused."""
+        spelling gates, then the probe gate (#336). Returns (character,
+        wall time) when the chord went out, None when a gate refused."""
         if not self._ports.mirror_running():
             # The spec's failure-modes line: the feature stays inert
             # without a mirror window to pin -- and a chord pressed with
@@ -561,6 +561,23 @@ class StreamCouplingController:
         plan = spell_chord(chord, char_vk=self._ports.char_vk)
         if plan is None:
             logger.info("The recorded stream chord cannot be spelled for SendInput")
+            return None
+        # The probe gate (#336), last and only gated spend: one budgeted
+        # probe at decision time, when the newest possible snapshot is
+        # ~2-3s old -- collapsing the stale-snapshot race to noise.
+        # Live -> SUPPRESS, logged (never silent): the user is already
+        # streaming by hand, and pressing the toggle would end it. The
+        # suppression is a no-op on the trigger side -- no episode, no
+        # latch change, the next gated alert is a fresh decision.
+        # Not-live -> the chord. Degraded (no token, budget dry, gateway
+        # down) -> open-loop: fire today's chord, exactly rev 3's
+        # behaviour -- the degraded loop must never become a missed
+        # start. Residual edge, documented: a user going live by hand
+        # inside the probe window is the only collision left.
+        if self._run_probe() is True:
+            logger.info(
+                "Combat auto-start suppressed: the probe says the user is already live"
+            )
             return None
         try:
             self._ports.send(plan)

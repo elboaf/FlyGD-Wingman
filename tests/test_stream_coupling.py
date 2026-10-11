@@ -70,12 +70,17 @@ class _NoThread:
 
 
 class Harness:
-    """The probe world (rev 4, #335): the default probe answers
-    ``self.probe_answer`` (True = still live), spends the budget
-    faithfully, and the budget is a real DailyBudget so the degrade path
-    is exercised against the same class production uses."""
+    """The probe world (rev 4, #335/#336): the default probe answers by
+    the gate that calls it -- at the START gate (no episode open) it
+    answers ``self.start_probe_answer`` (False = not live, the chord
+    fires); at the STOP gate (episode open) it answers
+    ``self.probe_answer`` (True = still live, the stop presses). It
+    spends the budget faithfully, and the budget is a real DailyBudget
+    so the degrade path is exercised against the same class production
+    uses."""
 
     def __init__(self, coupling=None, spawn=None, **over):
+        self.start_probe_answer = False
         self.coupling = (
             dict(coupling) if coupling is not None else {"chord": "^!d", "quiet_s": 600}
         )
@@ -120,7 +125,9 @@ class Harness:
         self.probe_calls += 1
         if self.probe_error is not None:
             raise self.probe_error
-        return self.probe_answer
+        if self.controller._episode is None:
+            return self.start_probe_answer  # the start gate (#336)
+        return self.probe_answer  # the stop gate (#335)
 
     def _send(self, plan):
         self.sent.append((plan, threading.current_thread()))
@@ -535,7 +542,7 @@ def test_a_real_worker_presses_the_stop_after_quiet(monkeypatch):
             send=sent.append,
             publish_state=lambda payload: None,
             publish_fired=lambda payload: None,
-            probe_live=lambda: True,
+            probe_live=lambda: len(sent) >= 1,  # start gate: False, stop: True
             budget_spend=lambda: True,
         )
     )
@@ -576,7 +583,7 @@ def test_the_stop_gate_probes_before_pressing():
     assert len(h.sent) == 1
     h.now += 600 + 1
     h.controller._maybe_stop()
-    assert h.probe_calls == 1
+    assert h.probe_calls == 2  # the start gate (#336) + the stop gate
     assert len(h.sent) == 2
 
 
@@ -590,7 +597,7 @@ def test_a_manual_stop_at_expiry_clears_the_latch_and_presses_nothing():
     h.now += 600 + 1
     h.probe_answer = False
     h.controller._maybe_stop()
-    assert h.probe_calls == 1
+    assert h.probe_calls == 2  # start + stop
     assert len(h.sent) == 1
     # Re-armed: the next fight starts fresh, no stop press in between.
     h.observe(["Kuan Dai"])
@@ -634,7 +641,7 @@ def test_a_degraded_probe_still_presses_open_loop():
     h.now += 600 + 1
     h.probe_error = ProbeError("network")
     h.controller._maybe_stop()
-    assert h.probe_calls == 1
+    assert h.probe_calls == 2  # the start probe answered; the stop probe failed
     assert len(h.sent) == 2
     # The episode is closed either way: the next alert starts fresh.
     h.observe(["Kuan Dai"])
@@ -679,7 +686,7 @@ def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
         budget_status=lambda: {"budget_used": 0, "budget_limit": 0},
     )
     h.controller._maybe_stop()
-    assert h.probe_calls == 0
+    assert h.probe_calls == 1  # the start gate ran while the budget stood
     assert len(h.sent) == 2  # open-loop press
     degraded = [
         payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
@@ -689,9 +696,11 @@ def test_a_dry_budget_degrades_the_stop_gate_and_says_so():
 
 def test_the_probe_failure_is_recorded_for_the_card():
     h = Harness()
-    h.observe(["Kuan Dai"])
-    h.now += 600 + 1
     h.probe_error = ProbeError("auth")
+    h.observe(["Kuan Dai"])
+    # The start gate (#336) degraded open-loop and pressed; the stop
+    # gate degraded the same way. The card's last record is the stop's.
+    h.now += 600 + 1
     h.controller._maybe_stop()
     records = [
         payload for handler, payload in h.pushes if handler == "onStreamProbeStatus"
@@ -701,7 +710,7 @@ def test_the_probe_failure_is_recorded_for_the_card():
         "live_display": None,
         "degraded": "probe failed -- open-loop",
         "wingman_live": False,
-        "budget_used": 1,
+        "budget_used": 2,
         "budget_limit": 300,
     }
 
@@ -719,11 +728,18 @@ def test_the_probe_answer_is_recorded_for_the_card():
     assert records[-1]["live"] is True
     assert records[-1]["live_display"]  # "HH:MM" for the card's badge
     assert records[-1]["degraded"] is None
+    # The start gate probed too (#336) and heard not-live: the chord fired.
+    start_records = [
+        p
+        for p in records
+        if p["live"] is False and p["degraded"] is None
+    ]
+    assert start_records, "the start gate's probe never reached the card"
 
 
 def test_the_probe_never_runs_without_an_episode():
-    """A probe costs budget; the stop gate is its only caller in this
-    ticket (#336 adds the start gate). No episode, no probe."""
+    """A probe costs budget; no episode open, the stop gate does not
+    run. (The start gate (#336) only runs on an armed fire.)"""
     h = Harness()
     h.controller._maybe_stop()
     assert h.probe_calls == 0
@@ -752,7 +768,7 @@ def test_the_stop_gate_still_honors_the_consent_and_mirror_gates():
     h.now += 600 + 1
     h.coupling["chord"] = ""
     h.controller._maybe_stop()
-    assert h.probe_calls == 1  # the gate ran; the consent check refused after
+    assert h.probe_calls == 2  # the start gate + the stop gate
     assert len(h.sent) == 1
 
     h2 = Harness()
@@ -764,3 +780,90 @@ def test_the_stop_gate_still_honors_the_consent_and_mirror_gates():
     # The mirror is down: the row says standby, the same posture the
     # start gate holds -- consent present, nothing to pin.
     assert h2.state()["state"] == "standby"
+
+
+# ---- the start gate (#336) ----------------------------------------------
+
+
+def test_the_start_gate_probes_before_pressing():
+    """The armed trigger fires only after a fresh probe says not-live:
+    the enter-combat gate probes at decision time (~2-3s old), which
+    collapses the stale-snapshot race to noise. Not-live -> the chord."""
+    h = Harness()
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 1
+    assert len(h.sent) == 1
+    assert h.state()["last_fired_action"] == "start"
+
+
+def test_the_start_gate_suppresses_when_already_live():
+    """Snapshot live -> suppress the start chord, LOGGED (never silent).
+    The suppression is a no-op on the trigger side: the alert chain, the
+    latches and the quiet clock are untouched; no episode opens, so the
+    next gated alert may fire."""
+    h = Harness()
+    h.start_probe_answer = True  # the user is already live by hand
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 1
+    assert len(h.sent) == 0  # suppressed
+    assert h.state()["last_fired_action"] is None
+    # No episode opened: the next gated alert is a fresh decision. The
+    # latches DID refresh (the trigger side is untouched by design), so
+    # the next decision waits for its own quiet period.
+    assert h.state()["state"] == "held" and h.state()["latched"]
+    h.start_probe_answer = False
+    h.now += 600 + 1
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 2
+    assert len(h.sent) == 1
+
+
+def test_a_degraded_start_probe_still_fires_open_loop():
+    """No token / budget dry / gateway down at the START gate: fire
+    today's open-loop chord. The degraded loop must never become a
+    missed START -- that is the ticket's degrade invariant."""
+    h = Harness()
+    h.probe_error = ProbeError("network")
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 1
+    assert len(h.sent) == 1  # open-loop fire
+    assert h.state()["last_fired_action"] == "start"
+    assert h.state()["degraded"] == "probe failed -- open-loop"
+
+
+def test_the_start_gate_runs_after_the_free_gates():
+    """A probe costs budget: the mirror and spelling gates (free) run
+    first, so a dead mirror or an unspellable chord never spends one."""
+    h = Harness(mirror_running=lambda: False)
+    h.observe(["Kuan Dai"])
+    assert h.probe_calls == 0
+    assert len(h.sent) == 0
+
+    h2 = Harness(coupling={"chord": "unspellable!", "quiet_s": 600})
+    h2.observe(["Kuan Dai"])
+    assert h2.probe_calls == 0
+    assert len(h2.sent) == 0
+
+
+def test_the_start_gate_spends_the_shared_budget():
+    """The start probe is 1 of the 2-per-fight allowance: the same
+    DailyBudget as the stop gate, so a fight's two probes are both
+    counted and the card sees the spend."""
+    h = Harness()
+    h.observe(["Kuan Dai"])  # start probe (not live) -> fire
+    h.now += 600 + 1
+    h.controller._maybe_stop()  # stop probe (still live) -> stop press
+    assert h.budget.used() == 2
+    assert h.state()["budget_used"] == 2
+    assert h.state()["budget_limit"] == 300
+
+
+def test_without_a_probe_seam_the_start_fires_open_loop():
+    """A hand-built ports object without the probe seams: the start
+    gate degrades to open-loop -- today's chord fires exactly as rev 3
+    did, and the row says the loop is not configured."""
+    h = Harness(probe_live=None, budget_spend=None)
+    h.observe(["Kuan Dai"])
+    assert len(h.sent) == 1
+    assert h.state()["last_fired_action"] == "start"
+    assert h.state()["degraded"] == "not configured"
