@@ -34,6 +34,14 @@ inputs:
     description: "OAuth client secret. Required when inject-credentials is true."
     required: false
     default: ""
+  discord-bot-token:
+    description: "Discord bot token for the Go Live probe. Required when inject-credentials is true."
+    required: false
+    default: ""
+  discord-guild-id:
+    description: "Discord guild id the probe watches. Required when inject-credentials is true."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -156,6 +164,30 @@ runs:
         $content = $content.Replace("REPLACE_AT_BUILD_TIME", $env:OAUTH_CLIENT_SECRET)
         Set-Content $file $content -NoNewline
 
+    - name: Inject the Discord probe identity
+      if: ${{ inputs.inject-credentials == 'true' }}
+      shell: pwsh
+      env:
+        DISCORD_BOT_TOKEN: ${{ inputs.discord-bot-token }}
+        DISCORD_GUILD_ID: ${{ inputs.discord-guild-id }}
+      run: |
+        if (-not $env:DISCORD_BOT_TOKEN) { throw "inject_credentials was requested but DISCORD_BOT_TOKEN is not set" }
+        if (-not $env:DISCORD_GUILD_ID) { throw "inject_credentials was requested but DISCORD_GUILD_ID is not set" }
+        $file = "wingman/streaming/baked.py"
+        $content = Get-Content $file -Raw
+        # Same placeholder literal in both slots, so replace the token
+        # FIRST and assert it did not eat the guild's placeholder: the
+        # token's value cannot contain "REPLACE_AT_BUILD_TIME" (it is a
+        # Discord base64.hmac shape), but a wrong order or a botched
+        # count would otherwise silently put the guild id in the token
+        # slot and vice versa.
+        $tokenSlot = "BAKED_BOT_TOKEN = `"REPLACE_AT_BUILD_TIME`""
+        $guildSlot = "BAKED_GUILD_ID = `"REPLACE_AT_BUILD_TIME`""
+        $replaced = $content.Replace($tokenSlot, "BAKED_BOT_TOKEN = `"$env:DISCORD_BOT_TOKEN`"")
+        $replaced = $replaced.Replace($guildSlot, "BAKED_GUILD_ID = `"$env:DISCORD_GUILD_ID`"")
+        if ($replaced -eq $content) { throw "the placeholders in baked.py did not match - the file's shape drifted from this step" }
+        Set-Content $file $replaced -NoNewline
+
     - name: Verify the injected credentials are well-formed
       if: ${{ inputs.inject-credentials == 'true' }}
       # The importability check above runs BEFORE injection, so nothing
@@ -182,6 +214,18 @@ runs:
       run: |
         uv run python .github/scripts/verify_credentials.py
         if ($LASTEXITCODE -ne 0) { throw "injected credentials failed verification" }
+
+    - name: Verify the injected probe identity is well-formed
+      if: ${{ inputs.inject-credentials == 'true' }}
+      shell: pwsh
+      run: |
+        # Prints only shapes and lengths, never the values. Same reason
+        # as the OAuth verify step above: nothing validates baked.py
+        # after the injection rewrote it, and a pasted-command-line or
+        # trailing-space secret must fail HERE, not as a mysterious
+        # ProbeError("auth") on a user's card.
+        uv run python -c "from wingman.streaming import baked; from wingman.streaming.probe import validate_token_format; tok, gid = baked.BAKED_BOT_TOKEN, baked.BAKED_GUILD_ID; assert not baked.is_placeholder(), 'the token replace did not take'; assert validate_token_format(tok), 'the injected token is not Discord token-shaped (len=%d)' % len(tok); assert gid != 'REPLACE_AT_BUILD_TIME' and gid != gid.strip() and gid.isdigit() and len(gid) >= 15, 'the injected guild id is not a snowflake-shaped id (len=%d)' % len(gid); print('probe identity: token %d chars, guild %d chars' % (len(tok), len(gid)))"
+        if ($LASTEXITCODE -ne 0) { throw "injected probe identity failed verification" }
 
     - name: Warn that credentials are placeholders
       if: ${{ inputs.inject-credentials != 'true' }}

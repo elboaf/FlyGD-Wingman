@@ -201,6 +201,8 @@ jobs:
           inject-credentials: "true"
           oauth-client-id: ${{ secrets.OAUTH_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          discord-bot-token: ${{ secrets.DISCORD_BOT_TOKEN }}
+          discord-guild-id: ${{ secrets.DISCORD_GUILD_ID }}
 
       - name: Publish
         # dry_run dispatches stop here: everything before this built and

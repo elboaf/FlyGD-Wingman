@@ -87,6 +87,8 @@ jobs:
           inject-credentials: ${{ inputs.inject_credentials }}
           oauth-client-id: ${{ secrets.OAUTH_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          discord-bot-token: ${{ secrets.DISCORD_BOT_TOKEN }}
+          discord-guild-id: ${{ secrets.DISCORD_GUILD_ID }}
 
       - name: Upload installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
