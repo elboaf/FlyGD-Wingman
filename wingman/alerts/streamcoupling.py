@@ -331,10 +331,6 @@ class StreamCouplingPorts:
     ``publish_probe_status`` pushes the last probe's answer for the card
     (#337): ``{"live": bool|None, "display": "HH:MM"|None, "degraded":
     str|None, "budget_used": int, "budget_limit": int}``.
-    ``manual_live`` is the user's one-click absolute suppressor (#337):
-    read at decision time; while True Wingman presses NOTHING (the user
-    says they are live by hand), and no probe is spent on a decision it
-    has already settled.
     """
 
     coupling: Callable[[], dict]
@@ -347,7 +343,6 @@ class StreamCouplingPorts:
     budget_spend: Callable[[], bool] | None = None
     budget_status: Callable[[], dict] | None = None
     publish_probe_status: Callable[[dict], None] | None = None
-    manual_live: Callable[[], bool] | None = None
 
 
 class StreamCouplingController:
@@ -498,7 +493,6 @@ class StreamCouplingController:
             "suppressed_display": (
                 self._format_wall(suppressed_at) if suppressed_at else None
             ),
-            "manual_live": self._manual_live(),
         }
         budget = self._ports.budget_status
         if budget is not None:
@@ -527,17 +521,19 @@ class StreamCouplingController:
     def _process(self, characters: tuple[str, ...]) -> None:
         coupling = self._read_coupling()
         chord = coupling["chord"]
-        quiet = coupling["quiet_s"]
         now = self._clock()
         with self._lock:
             # Armed means every latch was ALREADY expired when this alert
             # arrived AND Wingman holds no open episode: a late-arriving
-            # alert inside the window before the stop press must refresh
-            # the running fight, never toggle the live stream off. The
-            # refresh below then starts (or extends) this fight's episode.
-            armed = self._episode is None and all(
-                now - stamped >= quiet for stamped in self._latches.values()
-            )
+            # Armed means Wingman holds no open episode. (2026-10-11,
+            # the user's model, third incident: the old "latches must
+            # all be expired" conjunct is GONE -- combat happening plus
+            # no stream means START, always; the probe -- not a latch
+            # age -- decides whether the stream is up. A late-arriving
+            # alert inside the window before the stop press still only
+            # refreshes, because while Wingman's stream is live the
+            # episode is not None and armed is False.)
+            armed = self._episode is None
             for character in characters:
                 self._latches[character] = now
         fired = None
@@ -578,12 +574,6 @@ class StreamCouplingController:
         if plan is None:
             logger.info("The recorded stream chord cannot be spelled for SendInput")
             return None
-        # The manual-live latch (#337) first: an absolute suppressor --
-        # the user clicked "I'm live by hand", so no press and NO probe
-        # spent on a decision the user has already settled.
-        if self._manual_live():
-            logger.info("Combat auto-start suppressed: the manual-live latch is set")
-            return None
         # The probe gate (#336), the only gated spend: one budgeted
         # probe at decision time, when the newest possible snapshot is
         # ~2-3s old -- collapsing the stale-snapshot race to noise.
@@ -600,37 +590,13 @@ class StreamCouplingController:
         # A suppressed start costs a fight without an auto-stream, never
         # a stream the user is watching.
         verdict = self._run_probe()
-        if verdict is not None:
-            with self._lock:
-                wingman_live = self._wingman_live
-            if verdict is True and wingman_live:
-                # Not a hand stream: this is Wingman's own stream still
-                # up because a stop press never landed (degraded stop,
-                # 2026-10-11). Do not press and do not suppress -- the
-                # episode reopens and the quiet clock re-arms, which
-                # extends the after-combat timer until the stop gate
-                # can actually answer. Self-heals the zombie WITHOUT
-                # ever toggling it.
-                with self._lock:
-                    self._episode = characters[0]
-                    self._suppressed_at = None
-                logger.info(
-                    "Combat auto-start skipped: the live stream is Wingman's own "
-                    "-- episode reopened, the stop gate will answer later"
-                )
-                return None
-            if verdict is True:
-                with self._lock:
-                    self._suppressed_at = self._wall()
-                # Re-publish: _record_probe pushed inside _run_probe, before
-                # this timestamp existed -- the card's suppressed line needs
-                # the complete record, not the time-less first draft.
-                self._publish_probe_status()
-                logger.info(
-                    "Combat auto-start suppressed: the probe says the user is already live"
-                )
-                return None
-        else:
+        if verdict is None:
+            # Degraded (no token, budget dry, gateway down) -> NO
+            # PRESS (2026-10-11 field incident): a start press is a
+            # toggle, and firing it without knowing the stream's state
+            # is exactly how a hand-started stream gets cut. The
+            # degraded loop must never GUESS. One fight without an
+            # auto-stream, never a cut stream.
             with self._lock:
                 self._suppressed_at = None
             self._publish_probe_status()
@@ -638,6 +604,61 @@ class StreamCouplingController:
                 "Combat auto-start suppressed: the probe has no answer -- no press"
             )
             return None
+        if verdict is False:
+            # NOT LIVE: combat plus no stream plus consent -- the whole
+            # start rule. Wingman starts the stream and owns it.
+            return self._press_start(plan, characters)
+        # Live (verdict True): whose stream is it?
+        with self._lock:
+            wingman_live = self._wingman_live
+            open_episode = self._episode
+        if wingman_live:
+            # Combat + live + WINGMAN's stream: nothing to start,
+            # nothing to suppress. The episode (if somehow closed)
+            # reopens so the after-combat clock keeps counting from
+            # the latest alert.
+            with self._lock:
+                self._episode = self._episode or characters[0]
+                self._suppressed_at = None
+            logger.info(
+                "Combat auto-start: the live stream is Wingman's own "
+                "-- the after-combat clock holds"
+            )
+            return None
+        # Combat + live + NOT Wingman's: the user is streaming by
+        # hand. Wingman does NOTHING -- it is their stream. It
+        # WATCHES, though: if a stop was already due (a deferred
+        # stop from a degraded gate), the episode must NOT close
+        # over their hand stream -- clear it and let their stream
+        # run. The next Wingman-started fight starts fresh.
+        if open_episode is not None:
+            with self._lock:
+                self._episode = None
+                self._wingman_live = False
+            logger.info(
+                "Combat auto-start: the user is live by hand over a "
+                "stale episode -- the episode is released, their "
+                "stream is not ours to stop"
+            )
+        with self._lock:
+            self._suppressed_at = self._wall()
+        # Re-publish: _record_probe pushed inside _run_probe, before
+        # this timestamp existed -- the card's suppressed line needs
+        # the complete record, not the time-less first draft.
+        self._publish_probe_status()
+        logger.info(
+            "Combat auto-start suppressed: the user is live by hand -- "
+            "Wingman does nothing"
+        )
+        return None
+
+    def _press_start(self, plan, characters) -> tuple[str, float] | None:
+        """The not-live press: combat plus no stream plus consent is the
+        whole start rule. Clear the suppression story, fire, and record
+        Wingman's authorship AT the press (the user's model)."""
+        with self._lock:
+            self._suppressed_at = None
+        self._publish_probe_status()
         try:
             self._ports.send(plan)
         except Exception:
@@ -714,22 +735,10 @@ class StreamCouplingController:
                 # latches are refreshed and the next wake re-arms itself.
                 return
 
-        # The manual-live latch (#337): the user says they are live by
-        # hand, so no stop press may fire -- the latch suppresses both
-        # directions. The episode closes without a press (Wingman opened
-        # it before the click; closing it is what re-arms cleanly, and
-        # no probe is spent on a decision the user has settled).
-        if self._manual_live():
-            with self._lock:
-                self._episode = None
-            logger.info(
-                "Combat auto-stream episode closed without a stop press: "
-                "the manual-live latch is set"
-            )
-            self._ports.publish_state(self.state_payload())
-            return
-
-        # The gate: one budgeted probe before anything else.
+        # The gate: one budgeted probe before anything else. (The
+        # manual-live checkbox is GONE -- second field incident,
+        # 2026-10-11: the user's model has no user-set suppressor, the
+        # probe itself distinguishes hand-live from Wingman-live.)
         verdict = self._run_probe()
         if verdict is True:
             with self._lock:
@@ -829,22 +838,6 @@ class StreamCouplingController:
             )
             self._ports.publish_state(self.state_payload())
             return
-
-    def _manual_live(self) -> bool:
-        """The absolute suppressor (#337), read at decision time -- a
-        missing seam (older hand-built ports) reads False: the latch is
-        optional, its absence suppresses nothing."""
-        read = self._ports.manual_live
-        if read is None:
-            return False
-        try:
-            return bool(read())
-        except Exception:
-            # A failed read must not kill the worker; fail OPEN (the
-            # gated behaviour proceeds) -- the latch is belt-and-
-            # suspenders by the ticket's own words, non-load-bearing.
-            logger.exception("The manual-live latch read failed")
-            return False
 
     def _run_probe(self) -> bool | None:
         """One budgeted gateway probe at a decision gate. True/False is

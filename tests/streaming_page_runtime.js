@@ -86,9 +86,6 @@ const WM = {
     if (method === 'stream_mirror_state') return Promise.resolve(mirrorState);
     if (method === 'stream_coupling_state') return Promise.resolve(couplingState);
     if (method === 'capture_bind') return Promise.resolve(null);
-    if (method === 'stream_manual_live_set' && !('stream_manual_live_set' in replies)) {
-      return Promise.resolve({ok: true, manual_live: args[1] === true});
-    }
     // The Discord-name picker (#335) sends its read on section entry;
     // scenarios that don't test the picker still enter the section.
     if (method === 'stream_probe_identity' && !('stream_probe_identity' in replies)) {
@@ -120,7 +117,6 @@ const exercise = `
   el('coupling-probe-degraded').parentNode = element('div');
   el('coupling-probe-budget').parentNode = element('div');
   el('coupling-probe-suppressed').parentNode = element('div');
-  el('manual-live-row').parentNode = element('div');
   (async () => {
     ${scenario}
   })().then(result => finish(result), err => finish('ERR: ' + (err && err.stack || err)));

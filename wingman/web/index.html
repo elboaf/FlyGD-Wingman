@@ -1872,16 +1872,11 @@
           <span class="hint" id="coupling-latched"></span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-last-fired"></span></div>
-        <div class="row">
-          <span class="lab" id="manual-live-label">I'm live by hand</span>
-          <label class="check" id="manual-live-row">
-            <input type="checkbox" id="manual-live"><span class="box"></span>
-            Suppress Wingman's stream presses
-          </label>
-          <span class="hint">Tick this when you are streaming by hand and
-          don't want Wingman to press the keybind at all &mdash; not to
-          start, not to stop. Untick it to hand control back.</span>
-        </div>
+        <!-- The manual-live checkbox is GONE (2026-10-11, the user's
+             model): start and stop by hand as much as you like -- the
+             probe itself tells Wingman whose stream is up, so no
+             user-set suppressor is needed. Combat + hand-live = Wingman
+             does nothing; combat + no stream = Wingman starts. -->
         <div class="row"><span class="lab"></span>
           <span class="hint" id="coupling-probe" role="status"></span></div>
         <div class="row"><span class="lab" id="probe-identity-label">Discord name</span>

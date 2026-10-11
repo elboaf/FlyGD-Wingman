@@ -36,8 +36,6 @@
   var degradedEl = WM.el('coupling-probe-degraded');
   var budgetEl = WM.el('coupling-probe-budget');
   var suppressedEl = WM.el('coupling-probe-suppressed');
-  var manualLiveInput = WM.el('manual-live');
-  var manualLiveRow = WM.el('manual-live-row');
   var visible = false;
   var capturing = false;
   var chordDisplay = '';
@@ -103,7 +101,6 @@
       degradedEl.parentNode.hidden = true;
       budgetEl.parentNode.hidden = true;
       suppressedEl.parentNode.hidden = true;
-      manualLiveRow.parentNode.hidden = true;
       showMsg('');
       return;
     }
@@ -114,7 +111,6 @@
     degradedEl.parentNode.hidden = false;
     budgetEl.parentNode.hidden = false;
     suppressedEl.parentNode.hidden = false;
-    manualLiveRow.parentNode.hidden = false;
     chordDisplay = payload.chord_display || '';
     applyChord();
     showMsg('');
@@ -403,26 +399,8 @@
     // is what is stored, the same round-trip rule the quiet field
     // follows. The editing flag keeps the user's in-flight choice
     // under their hand until the bridge answers.
-    if (!manualLiveEditing) {
-      manualLiveInput.checked = payload.manual_live === true;
-    }
   }
 
-  var manualLiveEditing = false;
-  manualLiveInput.addEventListener('change', function () {
-    manualLiveEditing = true;
-    WM.send('stream_manual_live_set', manualLiveInput.checked === true).then(
-      function (result) {
-        manualLiveEditing = false;
-        if (!result || result.ok === false) {
-          // A refused write puts the box back to stored truth (the
-          // next push agrees) and says why on the chord row's line.
-          manualLiveInput.checked = false;
-          showMsg((result && result.error) || 'The change could not be saved.');
-        }
-      }
-    );
-  });
 
   WM.handle('onStreamProbeStatus', function (payload) {
     // The probe's answer (#335/#337): the last gateway snapshot, its
