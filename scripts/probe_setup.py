@@ -31,7 +31,16 @@ SSL = {"https": __import__("ssl")._create_unverified_context()}  # schannel-free
 
 
 def get(url, token):
-    req = urllib.request.Request(url, headers={"Authorization": "Bot " + token})
+    # Discord REQUIRES a User-Agent on REST calls; a missing one is a
+    # bare 403 that reads like a bad token (field note 2026-10-11). The
+    # gateway probe (streaming/probe.py) needs no such header.
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": "Bot " + token,
+            "User-Agent": "FlyGD Wingman probe setup",
+        },
+    )
     return json.load(urllib.request.urlopen(req, timeout=15, context=SSL["https"]))
 
 
