@@ -171,23 +171,48 @@ class _Session:
                     if payload.get("op") == 7:
                         raise ProbeError("protocol")
                     continue
-                if payload.get("t") == "READY":
-                    return self._answer(payload)
-                # Anything else before READY (e.g. a resumed session's
-                # backlog) is protocol noise the probe cannot use.
+                if payload.get("t") != "READY":
+                    continue
+                break
+            # FIELD FIX 2026-10-11: READY's guilds[] entries are
+            # unavailable placeholders with EMPTY voice_states (both of
+            # this bot's guilds arrive that way), so a READY-based read
+            # found no matching user and answered "not live"
+            # UNCONDITIONALLY -- the probe could never see a live
+            # stream, and every start gate fired (the 23:33 stream
+            # cut). The real snapshot is the GUILD_CREATE dispatch that
+            # follows READY (#334's original finding; the probe
+            # tooling waited for it, the product probe did not). Wait
+            # for it specifically -- the guild may legitimately not be
+            # unavailable in some orders, but its GUILD_CREATE always
+            # arrives for a bot that is a member.
+            deadline = time.monotonic() + _READY_TIMEOUT_S
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProbeError("protocol")
+                payload = self._recv(ws, remaining)
+                if payload.get("op") != _OP_DISPATCH:
+                    if payload.get("op") == 7:
+                        raise ProbeError("protocol")
+                    continue
+                if payload.get("t") == "GUILD_CREATE":
+                    guild = payload.get("d") or {}
+                    if guild.get("id") == self._guild_id:
+                        return self._answer(guild)
+                # Other dispatches (presence noise, other guilds'
+                # GUILD_CREATE) are protocol noise for this read.
 
-    def _answer(self, ready: dict) -> bool:
-        guilds = (ready.get("d") or {}).get("guilds") or []
-        for guild in guilds:
-            if guild.get("id") != self._guild_id:
-                continue
-            for state in guild.get("voice_states") or []:
-                if state.get("user_id") == self._user_id:
-                    return bool(state.get("self_stream"))
-            return False
-        # READY omits or misnames the guild: the bot is not a member of
-        # the configured guild (removed, or the id is wrong).
-        raise ProbeError("guild")
+    def _answer(self, guild: dict) -> bool:
+        """The GUILD_CREATE dispatch's full guild object, with the real
+        ``voice_states`` (READY's placeholders carry none -- see the
+        field-fix note in ``run``)."""
+        for state in guild.get("voice_states") or []:
+            if state.get("user_id") == self._user_id:
+                return bool(state.get("self_stream"))
+        # The guild arrived but the user is in no voice channel: a
+        # clean not-live answer.
+        return False
 
     @staticmethod
     def _send(ws, frame: dict) -> None:

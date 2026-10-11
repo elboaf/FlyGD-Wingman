@@ -109,7 +109,10 @@ def _hello():
     return '{"op":10,"d":{"heartbeat_interval":412500}}'
 
 
-def _ready(guild_id, voice_states):
+def _ready():
+    """READY carries UNAVAILABLE placeholders (field fix 2026-10-11):
+    both of the shared bot's guilds arrive as {'unavailable': True,
+    'id': ...} with no voice_states at all."""
     import json
 
     return json.dumps(
@@ -117,7 +120,23 @@ def _ready(guild_id, voice_states):
             "op": 0,
             "t": "READY",
             "s": 1,
-            "d": {"guilds": [{"id": guild_id, "voice_states": voice_states}]},
+            "d": {"guilds": [{"unavailable": True, "id": "111"}]},
+        }
+    )
+
+
+def _guild_create(guild_id, voice_states):
+    """The full guild dispatch the probe must WAIT FOR -- READY's
+    placeholders are empty and a READY-based read answers 'not live'
+    unconditionally (the 2026-10-11 stream cut)."""
+    import json
+
+    return json.dumps(
+        {
+            "op": 0,
+            "t": "GUILD_CREATE",
+            "s": 2,
+            "d": {"id": guild_id, "voice_states": voice_states},
         }
     )
 
@@ -134,7 +153,11 @@ def _run(monkeypatch, frames, guild="111", user="222"):
 def test_a_live_snapshot_answers_true(monkeypatch):
     answer, identify = _run(
         monkeypatch,
-        [_hello(), _ready("111", [{"user_id": "222", "self_stream": True}])],
+        [
+            _hello(),
+            _ready(),
+            _guild_create("111", [{"user_id": "222", "self_stream": True}]),
+        ],
     )
     assert answer is True
     # GUILDS only: #334 found the snapshot carries everything; no
@@ -143,7 +166,7 @@ def test_a_live_snapshot_answers_true(monkeypatch):
 
 
 def test_an_empty_snapshot_answers_false(monkeypatch):
-    assert _run(monkeypatch, [_hello(), _ready("111", [])])[0] is False
+    assert _run(monkeypatch, [_hello(), _ready(), _guild_create("111", [])])[0] is False
 
 
 def test_the_watched_user_is_matched_by_id(monkeypatch):
@@ -151,7 +174,8 @@ def test_the_watched_user_is_matched_by_id(monkeypatch):
         monkeypatch,
         [
             _hello(),
-            _ready(
+            _ready(),
+            _guild_create(
                 "111",
                 [
                     {"user_id": "999", "self_stream": True},
@@ -163,13 +187,29 @@ def test_the_watched_user_is_matched_by_id(monkeypatch):
     assert answer is False
 
 
-def test_a_wrong_guild_id_raises_guild(monkeypatch):
+def test_another_guilds_create_is_skipped_until_the_right_one(monkeypatch):
+    """Dispatch order is not guaranteed: another guild's GUILD_CREATE
+    (and any other dispatch) must be skipped, not read as the answer."""
+    answer, _ = _run(
+        monkeypatch,
+        [
+            _hello(),
+            _ready(),
+            _guild_create("999", [{"user_id": "222", "self_stream": True}]),
+            _guild_create("111", [{"user_id": "222"}]),
+        ],
+    )
+    assert answer is False
+
+
+def test_a_missing_guild_create_raises(monkeypatch):
+    """No GUILD_CREATE for the watched guild (bot kicked, wrong id):
+    the walk cannot answer, so it raises rather than guessing. The
+    scripted socket simply runs dry -- the same shape as the real
+    deadline exhaustion -- and maps to `network` at the boundary."""
     with pytest.raises(ProbeError) as excinfo:
-        _run(
-            monkeypatch,
-            [_hello(), _ready("999", [{"user_id": "222", "self_stream": True}])],
-        )
-    assert excinfo.value.code == "guild"
+        _run(monkeypatch, [_hello(), _ready()])
+    assert excinfo.value.code == "network"
 
 
 def test_a_socket_death_raises_network(monkeypatch):
