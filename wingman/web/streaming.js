@@ -32,6 +32,10 @@
   var couplingStateEl = WM.el('coupling-state');
   var latchedEl = WM.el('coupling-latched');
   var lastFiredEl = WM.el('coupling-last-fired');
+  var probeEl = WM.el('coupling-probe');
+  var degradedEl = WM.el('coupling-probe-degraded');
+  var budgetEl = WM.el('coupling-probe-budget');
+  var suppressedEl = WM.el('coupling-probe-suppressed');
   var visible = false;
   var capturing = false;
   var chordDisplay = '';
@@ -93,12 +97,20 @@
       couplingStateEl.parentNode.hidden = true;
       latchedEl.parentNode.hidden = true;
       lastFiredEl.parentNode.hidden = true;
+      probeEl.parentNode.hidden = true;
+      degradedEl.parentNode.hidden = true;
+      budgetEl.parentNode.hidden = true;
+      suppressedEl.parentNode.hidden = true;
       showMsg('');
       return;
     }
     chordBtn.hidden = false;
     chordClear.hidden = false;
     chordRowHintEl.hidden = false;
+    probeEl.parentNode.hidden = false;
+    degradedEl.parentNode.hidden = false;
+    budgetEl.parentNode.hidden = false;
+    suppressedEl.parentNode.hidden = false;
     chordDisplay = payload.chord_display || '';
     applyChord();
     showMsg('');
@@ -341,6 +353,62 @@
     if (visible) { renderCoupling(payload); }
   });
 
+  // The probe record (#335/#337): the card reports Discord's answer,
+  // never the latch's belief. "live -- verified 14:22" when the last
+  // snapshot said self_stream; "not live" when it did not; nothing
+  // before the first probe. The degrade line names the open-loop
+  // reason -- a broken closed loop must be visible, not silent.
+  function renderProbe(payload) {
+    if (!payload) return;
+    if (payload.live === true) {
+      probeEl.textContent = 'Live \u2014 verified ' + (payload.live_display || '');
+    } else if (payload.live === false) {
+      probeEl.textContent = 'Not live';
+    } else {
+      probeEl.textContent = '';
+    }
+    probeEl.hidden = !probeEl.textContent;
+    if (payload.degraded) {
+      degradedEl.textContent = payload.degraded;
+      degradedEl.hidden = false;
+    } else {
+      degradedEl.textContent = '';
+      degradedEl.hidden = true;
+    }
+    if (typeof payload.budget_used === 'number' && typeof payload.budget_limit === 'number') {
+      budgetEl.textContent = 'Probes today: ' + payload.budget_used + ' of ' +
+        payload.budget_limit;
+      budgetEl.hidden = false;
+    } else {
+      budgetEl.hidden = true;
+    }
+    // The suppressed attempt (#337): #336's "already live -- suppress"
+    // must never be silent. Shown only while the suppression IS the
+    // last attempt's story -- a later press in either direction
+    // replaces it.
+    if (payload.suppressed_display) {
+      suppressedEl.textContent = 'Already live \u2014 chord suppressed ' +
+        payload.suppressed_display;
+      suppressedEl.hidden = false;
+    } else {
+      suppressedEl.textContent = '';
+      suppressedEl.hidden = true;
+    }
+    // The manual-live latch (#337): the checkbox draws from the
+    // payload, never from the user's click alone -- what the box shows
+    // is what is stored, the same round-trip rule the quiet field
+    // follows. The editing flag keeps the user's in-flight choice
+    // under their hand until the bridge answers.
+  }
+
+
+  WM.handle('onStreamProbeStatus', function (payload) {
+    // The probe's answer (#335/#337): the last gateway snapshot, its
+    // time, the degrade notice when Wingman has no probe answer, and the
+    // budget standing. Tick-pushed like the armed row -- visible-only.
+    if (visible) { renderProbe(payload); }
+  });
+
   WM.handle('onStreamCouplingFired', function (payload) {
     // The one-chord-per-fight event -- now both directions: start when
     // the fight opens the stream, stop when the quiet period closes it.
@@ -359,6 +427,70 @@
         ' \u2014 ' + payload.character;
       lastFiredEl.hidden = false;
     }
+  });
+
+  // ---- the Discord-name picker (#335's one user-facing identity) ------
+  // The probe watches ONE Discord account's voice state, so each user
+  // must say which account is theirs. The token and guild are baked-in
+  // configuration; this picker is the only identity control on the
+  // card. The list comes live from the bot (nick > global name >
+  // username, humans only) so the pick is a name the user recognizes,
+  // and the stored value is the stable snowflake id.
+  var identityPick = WM.el('probe-identity-pick');
+  var identityCurrent = WM.el('probe-identity-current');
+  var identityMsg = WM.el('probe-identity-msg');
+
+  function renderIdentity() {
+    WM.send('stream_probe_identity').then(function (result) {
+      if (!result) return;
+      if (result.ok === false) {
+        // Unconfigured (no token / guild) is a fact about the install,
+        // not a user error: the row says so once and stays inert.
+        identityPick.disabled = true;
+        identityCurrent.textContent =
+          result.error === 'unconfigured' ? 'Not configured' : '';
+        return;
+      }
+      identityPick.disabled = false;
+      var picked = (result.members || []).filter(function (member) {
+        return member.id === result.current;
+      })[0];
+      identityCurrent.textContent = picked
+        ? 'Watching ' + picked.name
+        : 'Not set — pick your Discord name';
+    });
+  }
+
+  identityPick.addEventListener('click', function () {
+    identityMsg.textContent = '';
+    WM.send('stream_probe_identity').then(function (result) {
+      if (!result || result.ok === false) {
+        identityMsg.textContent =
+          (result && result.error === 'unconfigured')
+            ? 'The probe bot is not configured yet.'
+            : 'The member list could not be loaded.';
+        return;
+      }
+      WM.choose('Pick your Discord name', 'The probe watches this ' +
+        'account\u2019s stream state in the guild.',
+        [{label: 'Members', options: (result.members || []).map(function (member) {
+          return {value: member.id, label: member.name};
+        })}], 'Choose', 'Discord name', {compact: true}).then(function (choice) {
+        if (choice === null) return;
+        WM.send('stream_probe_identity_set', choice).then(function (stored) {
+          if (stored && stored.ok) {
+            renderIdentity();
+          } else {
+            identityMsg.textContent =
+              (stored && stored.error) || 'The pick could not be saved.';
+          }
+        });
+      });
+    });
+  });
+
+  document.addEventListener('wm:section', function (ev) {
+    if (ev.detail === 'streaming') { renderIdentity(); }
   });
 
   document.addEventListener('wm:section', function (ev) {

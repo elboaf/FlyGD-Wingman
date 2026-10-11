@@ -736,13 +736,18 @@ def build_alerts_controller(state, host, api_box) -> AlertsController:
 def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
     """The combat trigger (#320), built before the Api whose push adapters
     it borrows -- the ports resolve through api_box lazily, the same way
-    build_alerts_controller's health ports do."""
+    build_alerts_controller's health ports do. The probe seams (#335)
+    ride the same ports object: the gateway probe, the daily budget and
+    the probe-status push."""
     from .alerts.streamcoupling import (
         StreamCouplingController,
         StreamCouplingPorts,
         send_keystrokes,
     )
     from .keylayout import char_vk as layout_char_vk
+    from .streaming import baked
+    from .streaming.probe import DailyBudget, ProbeError, probe_live_state
+    from .streaming.probebot import BotTokenStore, CredentialError
 
     # The committed reader, retained for this document's lifetime: the
     # worker reads the coupling through it on every decision, so a quiet
@@ -750,8 +755,52 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
     # observe a half-normalized settings document mid-update.
     committed = settings_mod.committed_preview(state.settings)
 
+    # The probe identity, read live the same way: the user can paste ids
+    # (or remove them) while Wingman runs.
+    def probe_identity():
+        alerts = committed.get("alerts") or {}
+        probe_section = alerts.get("stream_probe") or {}
+        return probe_section.get("guild_id") or "", probe_section.get("user_id") or ""
+
+    # The token store is owned here, constructed once; load() raises a
+    # fixed CredentialError on a broken store, which degrades the probe
+    # to open-loop rather than crashing the worker. One budget for the
+    # process lifetime; the day rollover is the counter's own business.
+    # 2026-10-11: the token and guild are BAKED IN (streaming/baked.py)
+    # -- the user's explicit call for the testing phase. The store is
+    # still consulted first (an operator who ran the setup script gets
+    # their replacement honoured); the baked constants are the fallback
+    # so a fresh install works out of the box. The per-user Discord
+    # pick stays in settings -- that identity is inherently personal.
+    token_store = BotTokenStore()
+    budget = DailyBudget()
+
+    def probe_live():
+        """The gateway probe seam. Raises ProbeError on no answer; a
+        missing/mistyped configuration raises too -- the controller
+        degrades on any exception, and the card says why."""
+        token = None
+        try:
+            token = token_store.load()
+        except CredentialError:
+            token = None
+        if not token:
+            token = baked.BAKED_BOT_TOKEN
+        guild_id, user_id = probe_identity()
+        if not guild_id:
+            guild_id = baked.BAKED_GUILD_ID
+        if not guild_id or not user_id:
+            raise ProbeError("auth")
+        return probe_live_state(token, guild_id, user_id)
+
     def mirror_running():
         return mirror_supervisor is not None and mirror_supervisor.is_running()
+
+    def _budget_status() -> dict:
+        return {
+            "budget_used": budget.used(),
+            "budget_limit": budget.used() + budget.remaining(),
+        }
 
     return StreamCouplingController(
         StreamCouplingPorts(
@@ -766,6 +815,12 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
             ),
             publish_fired=lambda payload: api_box["api"]._publish_stream_coupling_fired(
                 payload
+            ),
+            probe_live=probe_live,
+            budget_spend=budget.try_spend,
+            budget_status=_budget_status,
+            publish_probe_status=(
+                lambda payload: api_box["api"]._publish_stream_probe_status(payload)
             ),
         )
     )

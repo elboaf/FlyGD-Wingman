@@ -61,6 +61,7 @@
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
                  'onMirrorStatus',
                  'onStreamCouplingState', 'onStreamCouplingFired',
+                 'onStreamProbeStatus',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
                  'onFittingsScreenshotState', 'onFleetSharingState', 'onTheme'];

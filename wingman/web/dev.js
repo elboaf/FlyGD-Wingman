@@ -849,18 +849,24 @@
   // armed row at "Checking..." forever under ?dev=1. Starts armed with a
   // fired history so every row renders; stream_quiet_set mutates it the
   // way the real bridge would (refuse non-numeric, clamp the range).
-  var devQuiet = 300;
   api.stream_coupling_state = function () {
     console.log('DEV api.stream_coupling_state()');
     return Promise.resolve({
       state: devChord ? 'armed' : 'inert',
       chord_display: devChord ? devChordDisplay() : '',
       chord_sendable: !!devChord,
-      quiet_s: devQuiet,
+      quiet_s: 600,
       latched: [],
       latched_remaining_s: 0,
       last_fired_character: 'Kuan Dai',
-      last_fired_display: '12:41'
+      last_fired_display: '12:41',
+      live: null,
+      live_display: null,
+      degraded: null,
+      wingman_live: false,
+      suppressed_display: null,
+      budget_used: 0,
+      budget_limit: 300
     });
   };
   api.stream_quiet_set = function (value) {
@@ -869,13 +875,31 @@
     if (isNaN(n)) {
       return Promise.resolve({
         applied: false, persisted: false,
-        error: 'Enter a number of seconds between 60 and 900.'
+        error: 'The after-combat delay is fixed at 600 seconds.'
       });
     }
-    devQuiet = Math.max(60, Math.min(900, n));
     return Promise.resolve({
-      applied: true, persisted: true, error: null, quiet_s: devQuiet
+      applied: true, persisted: true, error: null, quiet_s: 600
     });
+  };
+
+  // The Discord-name picker (#335): a fixture member list so the modal
+  // renders in the browser; the pick round-trips through the double's
+  // own state like the real bridge's settings write.
+  var devIdentity = {current: '', members: [
+    {id: '101', name: 'Dev Streamer One'},
+    {id: '102', name: 'Dev Streamer Two'}
+  ]};
+  api.stream_probe_identity = function () {
+    console.log('DEV api.stream_probe_identity()');
+    return Promise.resolve({
+      ok: true, current: devIdentity.current, members: devIdentity.members
+    });
+  };
+  api.stream_probe_identity_set = function (userId) {
+    console.log('DEV api.stream_probe_identity_set(', userId, ')');
+    devIdentity.current = String(userId || '');
+    return Promise.resolve({ok: true, user_id: devIdentity.current});
   };
 
   // NOT generic stubs, for the same reason save_settings above is not: the

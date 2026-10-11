@@ -7466,7 +7466,7 @@ class Api:
                 "state": "inert",
                 "chord_display": "",
                 "chord_sendable": False,
-                "quiet_s": 300,
+                "quiet_s": 600,
                 "latched": [],
                 "latched_remaining_s": 0,
                 "last_fired_character": None,
@@ -7475,13 +7475,14 @@ class Api:
         return self._stream_coupling.state_payload()
 
     def stream_quiet_set(self, value) -> dict:
-        """Persist the quiet period before re-arm (60-900 seconds).
+        """Persist the quiet period -- fixed at 600 (rev 4, #335).
 
-        The card's free-text rule: commits on Enter only, through this
-        one endpoint. A non-numeric value is refused with the range in
-        the message; a numeric one is clamped to the same range the
-        load validator enforces and the clamped value rides back so the
-        field shows exactly what was stored -- forgiving, but visible.
+        The field survives so the card keeps showing the value it is
+        storing, but the range 60-900 is retired: any numeric input
+        persists 600, visibly echoed, and the refusal message names the
+        fixed value. The controller reads its quiet from the same
+        projection, so a hand-edited settings file cannot shorten the
+        stop gate either.
         """
         if isinstance(value, bool):
             number = None
@@ -7495,9 +7496,9 @@ class Api:
             return {
                 "applied": False,
                 "persisted": False,
-                "error": "Enter a number of seconds between 60 and 900.",
+                "error": "The after-combat delay is fixed at 600 seconds.",
             }
-        clamped = max(60, min(900, number))
+        clamped = 600
         from wingman import settings as settings_mod
 
         with settings_mod.update(self._state.settings) as document:
@@ -7513,6 +7514,131 @@ class Api:
             "error": None,
             "quiet_s": clamped,
         }
+
+    def stream_manual_live_set(self, value) -> dict:
+        """The one-click absolute suppressor (#337): persist and apply.
+
+        While set, the controller presses nothing in either direction
+        and spends no probe -- the user has settled every decision the
+        loop would make. The write re-publishes the row so the card's
+        checkbox and the probe-status line agree without a poll wait.
+        """
+        if self._stream_coupling is None:
+            return {"ok": False, "error": "Combat auto-start is not available."}
+        wanted = value is True
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_coupling", {}
+            )["manual_live"] = wanted
+        self._push_stream_coupling_tick()
+        self._push_stream_probe_tick()
+        return {"ok": True, "manual_live": wanted}
+
+    def stream_probe_identity(self) -> dict:
+        """The member-list picker's data: the currently stored Discord
+        user id, and the guild's human members (nick / global name /
+        username) to pick from (#335's setup walk). The token and guild
+        are baked-in configuration, not user-facing; the ONE identity a
+        user must choose is their own Discord account, because the
+        probe watches that user's voice state. The member list comes
+        from the bot's own token, so this returns an `unconfigured`
+        error rather than leaking setup steps when the store or guild
+        is missing. Runs on the bridge thread (a network round trip is
+        its own promise's problem, never the page's)."""
+        if self._stream_coupling is None:
+            return {"ok": False, "error": "Combat auto-start is not available."}
+
+        guild_id, current = "", ""
+        alerts = (self._state.settings.get("preview") or {}).get("alerts") or {}
+        probe_section = alerts.get("stream_probe") or {}
+        current = probe_section.get("user_id") or ""
+        guild_id = probe_section.get("guild_id") or ""
+        token = None
+        from wingman.streaming import baked
+        from wingman.streaming.probebot import BotTokenStore
+
+        try:
+            token = BotTokenStore().load()
+        except Exception:  # noqa: BLE001 -- the store's own error names the break
+            token = None
+        if not token:
+            token = baked.BAKED_BOT_TOKEN
+        if not token or not guild_id:
+            guild_id = guild_id or baked.BAKED_GUILD_ID
+        if not token or not guild_id:
+            return {"ok": False, "error": "unconfigured"}
+        try:
+            return self._member_list(token, guild_id, current)
+        except Exception as exc:  # noqa: BLE001 -- network boundary
+            logger.debug("member list fetch failed: %r", exc)
+            return {"ok": False, "error": "network"}
+
+    def _member_list(self, token: str, guild_id: str, current: str) -> dict:
+        """The REST member fetch, split off so the bridge method stays a
+        thin decision shell. One paginated GET (the corp is one page in
+        practice; 1000/page is the cap), humans only, sorted by the
+        name the card will show."""
+        import json as _json
+        import ssl as _ssl
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"https://discord.com/api/v10/guilds/{guild_id}/members?limit=1000",
+            headers={
+                "Authorization": "Bot " + token,
+                # Discord REQUIRES a User-Agent on REST; a bare 403 is
+                # what its absence reads like (field note 2026-10-11).
+                "User-Agent": "FlyGD Wingman member list",
+            },
+        )
+        raw = urllib.request.urlopen(
+            request, timeout=15, context=_ssl.create_default_context()
+        ).read()
+        members = _json.loads(raw)
+        options = []
+        for member in members:
+            user = member.get("user") or {}
+            if user.get("bot"):
+                continue
+            label = (
+                member.get("nick")
+                or user.get("global_name")
+                or user.get("username")
+                or ""
+            )
+            if label:
+                options.append({"id": user.get("id") or "", "name": label})
+        options.sort(key=lambda option: option["name"].lower())
+        return {"ok": True, "current": current, "members": options}
+
+    def stream_probe_identity_set(self, user_id) -> dict:
+        """Persist the picked Discord member id (the probe watches THIS
+        user's voice state). Empty string clears the pick."""
+        if self._stream_coupling is None:
+            return {"ok": False, "error": "Combat auto-start is not available."}
+        wanted = user_id.strip() if isinstance(user_id, str) else ""
+        from wingman import settings as settings_mod
+
+        with settings_mod.update(self._state.settings) as document:
+            document.setdefault("preview", {}).setdefault("alerts", {}).setdefault(
+                "stream_probe", {}
+            )["user_id"] = wanted
+        return {"ok": True, "user_id": wanted}
+
+    def _push_stream_probe_tick(self) -> None:
+        """The latch write's probe-status refresh (#337): the manual_live
+        flag rides the probe payload too, and the card's checkbox must
+        not wait for the next probe to hear about a click."""
+        if self._stream_coupling is None:
+            return
+        try:
+            self._publish_stream_probe_status(
+                self._stream_coupling.probe_status_payload()
+            )
+        except Exception:
+            logger.debug("Stream probe tick push failed", exc_info=True)
 
     def _push_stream_coupling_state(self, payload) -> None:
         """The worker's publish port, and the poll tick's: one deduped
@@ -7540,6 +7666,13 @@ class Api:
         semantic one-chord-per-fight event, distinct from the row push
         so the card can mark the moment without diffing state."""
         self._push("onStreamCouplingFired", payload)
+
+    def _publish_stream_probe_status(self, payload) -> None:
+        """Literal adapter for the controller's publish_probe_status
+        port (#335/#337): the last probe's answer, timestamped, with the
+        budget standing and the degrade notice. Distinct from the row
+        push so the live badge updates the moment a probe answers."""
+        self._push("onStreamProbeStatus", payload)
 
     # ---- Where a preview opens ------------------------------------------
 

@@ -86,6 +86,13 @@ const WM = {
     if (method === 'stream_mirror_state') return Promise.resolve(mirrorState);
     if (method === 'stream_coupling_state') return Promise.resolve(couplingState);
     if (method === 'capture_bind') return Promise.resolve(null);
+    // The Discord-name picker (#335) sends its read on section entry;
+    // scenarios that don't test the picker still enter the section.
+    if (method === 'stream_probe_identity' && !('stream_probe_identity' in replies)) {
+      return Promise.resolve({
+        ok: true, current: '', members: [{id: '101', name: 'Dev Streamer One'}]
+      });
+    }
     assert.ok(method in replies, 'unexpected bridge call: ' + method);
     return Promise.resolve(replies[method]);
   },
@@ -104,6 +111,12 @@ assert.ok(closure, 'streaming.js must end with its IIFE close');
 const exercise = `
   el('coupling-quiet').parentNode = element('div');
   el('coupling-state').parentNode = element('div');
+  el('coupling-latched').parentNode = element('div');
+  el('coupling-last-fired').parentNode = element('div');
+  el('coupling-probe').parentNode = element('div');
+  el('coupling-probe-degraded').parentNode = element('div');
+  el('coupling-probe-budget').parentNode = element('div');
+  el('coupling-probe-suppressed').parentNode = element('div');
   (async () => {
     ${scenario}
   })().then(result => finish(result), err => finish('ERR: ' + (err && err.stack || err)));

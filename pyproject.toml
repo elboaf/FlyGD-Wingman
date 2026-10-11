@@ -57,6 +57,7 @@ dependencies = [
     # them. That failure would surface at authentication, not at install.
     "cryptography",
     "pyyaml>=6.0.3",
+    "websockets>=13,<16",
 ]
 
 [project.urls]
