@@ -224,7 +224,7 @@ runs:
         # after the injection rewrote it, and a pasted-command-line or
         # trailing-space secret must fail HERE, not as a mysterious
         # ProbeError("auth") on a user's card.
-        uv run python -c "from wingman.streaming import baked; from wingman.streaming.probe import validate_token_format; tok, gid = baked.BAKED_BOT_TOKEN, baked.BAKED_GUILD_ID; assert not baked.is_placeholder(), 'the token replace did not take'; assert validate_token_format(tok), 'the injected token is not Discord token-shaped (len=%d)' % len(tok); assert gid != 'REPLACE_AT_BUILD_TIME' and gid != gid.strip() and gid.isdigit() and len(gid) >= 15, 'the injected guild id is not a snowflake-shaped id (len=%d)' % len(gid); print('probe identity: token %d chars, guild %d chars' % (len(tok), len(gid)))"
+        uv run python -c "from wingman.streaming import baked; from wingman.streaming.probe import validate_token_format; tok, gid = baked.BAKED_BOT_TOKEN, baked.BAKED_GUILD_ID; assert not baked.is_placeholder(), 'the token replace did not take'; assert validate_token_format(tok), 'the injected token is not Discord token-shaped (len=%d)' % len(tok); assert gid != 'REPLACE_AT_BUILD_TIME' and gid == gid.strip() and gid.isdigit() and len(gid) >= 15, 'the injected guild id is not a snowflake-shaped id (len=%d)' % len(gid); print('probe identity: token %d chars, guild %d chars' % (len(tok), len(gid)))"
         if ($LASTEXITCODE -ne 0) { throw "injected probe identity failed verification" }
 
     - name: Warn that credentials are placeholders
