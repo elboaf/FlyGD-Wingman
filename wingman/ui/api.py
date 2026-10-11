@@ -7556,12 +7556,17 @@ class Api:
         current = probe_section.get("user_id") or ""
         guild_id = probe_section.get("guild_id") or ""
         token = None
+        from wingman.streaming import baked
         from wingman.streaming.probebot import BotTokenStore
 
         try:
             token = BotTokenStore().load()
         except Exception:  # noqa: BLE001 -- the store's own error names the break
             token = None
+        if not token:
+            token = baked.BAKED_BOT_TOKEN
+        if not token or not guild_id:
+            guild_id = guild_id or baked.BAKED_GUILD_ID
         if not token or not guild_id:
             return {"ok": False, "error": "unconfigured"}
         try:

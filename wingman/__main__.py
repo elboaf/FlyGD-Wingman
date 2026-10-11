@@ -745,6 +745,7 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
         send_keystrokes,
     )
     from .keylayout import char_vk as layout_char_vk
+    from .streaming import baked
     from .streaming.probe import DailyBudget, ProbeError, probe_live_state
     from .streaming.probebot import BotTokenStore, CredentialError
 
@@ -765,6 +766,12 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
     # fixed CredentialError on a broken store, which degrades the probe
     # to open-loop rather than crashing the worker. One budget for the
     # process lifetime; the day rollover is the counter's own business.
+    # 2026-10-11: the token and guild are BAKED IN (streaming/baked.py)
+    # -- the user's explicit call for the testing phase. The store is
+    # still consulted first (an operator who ran the setup script gets
+    # their replacement honoured); the baked constants are the fallback
+    # so a fresh install works out of the box. The per-user Discord
+    # pick stays in settings -- that identity is inherently personal.
     token_store = BotTokenStore()
     budget = DailyBudget()
 
@@ -776,10 +783,12 @@ def build_stream_coupling_controller(state, api_box, *, mirror_supervisor=None):
         try:
             token = token_store.load()
         except CredentialError:
-            raise ProbeError("auth") from None
+            token = None
         if not token:
-            raise ProbeError("auth")
+            token = baked.BAKED_BOT_TOKEN
         guild_id, user_id = probe_identity()
+        if not guild_id:
+            guild_id = baked.BAKED_GUILD_ID
         if not guild_id or not user_id:
             raise ProbeError("auth")
         return probe_live_state(token, guild_id, user_id)
