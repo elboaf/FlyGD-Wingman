@@ -199,7 +199,7 @@ IniRead, KB_FinL,        %IniFile%, Keybinds, FinL,
 IniRead, KB_FinS,        %IniFile%, Keybinds, FinS,      
 IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,      
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
-IniRead, KB_SuspendToggle, %IniFile%, Keybinds, SuspendToggle
+IniRead, KB_SuspendToggle, %IniFile%, Keybinds, SuspendToggle,
 Return
 
 ; ============================================================
@@ -223,8 +223,8 @@ StatusBody := "{"
     . """next_num"":""" . JsonEsc(NextNumText) . ""","
     . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
     . """failed_binds"":[" . JsonList(FailedBinds) . "],"
-    . """prime"":" . BuildPrimeJson() . ""","
-    . """suspended"":""" . (SuspendState() = "On" ? "true" : "false") . ""","
+    . """prime"":" . BuildPrimeJson() . ","
+    . """suspended"":" . (SuspendState() = "On" ? "true" : "false") . ","
     . """written"":" . EpochNow()
     . "}"
 FileDelete, eve_status.json.tmp
@@ -267,6 +267,7 @@ JsonList(csv) {
 ; status payload. The global is flipped by KB_SuspendToggle on every
 ; press and reset to "Off" on script start/reload.
 SuspendState() {
+    global _SuspendState
     return _SuspendState
 }
 

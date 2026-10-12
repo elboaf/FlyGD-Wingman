@@ -685,11 +685,30 @@ def test_suspend_toggle_uses_error_level(source):
 def test_suspend_state_is_reported_in_status_file(lowered):
     """The status file must include a 'suspended' boolean field so
     Wingman can surface the state on the Bookmarks screen."""
-    # AHK double-quote escaping: "" inside a string produces a literal ".
-    # The key in the JSON body is """suspended"":""" (open-quote + ""
-    # escaped + key + "" escaped + colon + "" escaped + close-quote).
-    # The pattern '""suspended' matches the first escaped-quote + key pair.
-    assert '""suspended' in lowered
+    # AHK double-quote escaping: two quotes inside a string produce a
+    # literal quote. The key is open-quote + escaped + suspended + escaped
+    # + colon + close-quote, and the value must come from the
+    # SuspendState() EXPRESSION. A quoted literal value emits a JSON
+    # *string* (python's isinstance-bool check then falls back forever),
+    # and one escaped quote too many after the colon appends a stray
+    # quote that corrupts the document -- every poll reads as stale
+    # ("Not responding" with a live engine, blank sig bar). Both shapes
+    # sailed through the original substring pin, so pin the seam itself:
+    # key, colon, then the concatenated expression.
+    assert 'suspended"":" . (' in lowered, (
+        "the suspended value must be the SuspendState() expression, "
+        "not a quoted literal (corrupts the status JSON)"
+    )
+
+
+def test_prime_json_tail_is_comma_only(lowered):
+    """BuildPrimeJson() emits a bare null/object, so the literal after it
+    must be exactly a comma -- a doubled quote in the tail emits a stray
+    quote after the value and the whole status JSON fails to parse (the
+    #329 regression: engine running, UI stuck on Not responding)."""
+    assert 'buildprimejson() . ","' in lowered, (
+        "the prime line must end with a comma inside the literal, no stray quote"
+    )
 
 
 def test_kb_suspend_toggle_variable_exists(source):
