@@ -80,11 +80,21 @@
       // line is only ever news when it contradicts the switch, and it
       // cannot contradict anything we have not been told.
       writeEngineState(el, 'off', '');
+      // WINGMAN: clear the suspended indicator after a save.
+      var suspRow = WM.el('eve-suspended-row');
+      if (suspRow) suspRow.hidden = true;
       return;
     }
     // The reason matters more than the state: "Stopped" alone leaves the
     // user with no idea the engine is missing rather than merely idle.
     writeEngineState(el, engine.state, engine.last_error);
+    // WINGMAN: surface the suspend toggle state right after a save.
+    var suspRow = WM.el('eve-suspended-row');
+    if (suspRow) {
+      suspRow.hidden = !engine.suspended;
+      var suspEl = WM.el('eve-suspended');
+      if (suspEl) suspEl.textContent = engine.suspended ? 'All bookmark hotkeys are suspended' : '';
+    }
   }
 
   // Both engine-state write sites go through this. They already drifted
@@ -495,7 +505,7 @@
     host.hidden = (payload.state === 'off');
     // Paint even Off before returning: an Off error populates this row and
     // must not leave the previous Running text or treatment in it. Both
-    // update paths retain the full last_error in the same live status owner.
+    // update paths retain the full last_error in the same live owner.
     writeEngineState(WM.el('eve-engine-state'), payload.state, payload.last_error);
     if (payload.state === 'off') return;
 
@@ -515,6 +525,14 @@
       ? failed.length + ' keybind(s) failed to register — see Settings › '
         + 'Bookmarks'
       : '';
+
+    // WINGMAN: suspend state indicator (#329). Rendered only while
+    // running and suspended, so it does not clutter the status when
+    // the engine is normal.
+    var suspRow = WM.el('eve-suspended-row');
+    if (suspRow) {
+      suspRow.hidden = !live || !payload.suspended;
+    }
 
     host.classList.toggle('degraded', !live);
   });

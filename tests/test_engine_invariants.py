@@ -118,6 +118,14 @@ def source():
 
 
 @pytest.fixture
+def full_source():
+    """The raw engine script with comments intact (for ; WINGMAN: checks)."""
+    script = paths.engine_script()
+    assert script is not None, "vendored engine script is missing"
+    return script.read_text(encoding="utf-8", errors="replace")
+
+
+@pytest.fixture
 def lowered(source):
     """For substring assertions. AHK commands are case-insensitive, so a
     lowercase `iniwrite` would otherwise evade a case-sensitive check."""
@@ -329,6 +337,7 @@ def test_nothing_sends_the_engine_commands(source, lowered):
         "next_alpha",
         "failed_binds",
         "prime",
+        "suspended",
         "written",
     }, published
 
@@ -337,11 +346,22 @@ def test_every_registration_records_failures(source):
     """Registration must go through RegisterBind, which checks ErrorLevel.
     Any Hotkey line dereferencing a KB_ variable directly has bypassed it --
     whether or not it also passes UseErrorLevel, since omitting that swallows
-    the failure just as silently."""
+    the failure just as silently.
+
+    Exception: KB_SuspendToggle is registered globally (not window-scoped)
+    through RegisterBind's per-window loop, so it uses a direct Hotkey call
+    with UseErrorLevel. The suspend toggle is not a bookmark bind, so it
+    does not need failure recording through FailedBinds.
+    """
     direct = re.findall(
         r"^\s*Hotkey\s*,[^\n]*%KB_\w+%", source, re.MULTILINE | re.IGNORECASE
     )
-    assert direct == [], f"registration bypassing RegisterBind: {direct}"
+    # KB_SuspendToggle is the only allowed exception: it registers globally
+    # (not window-scoped) so it fires in any app.
+    for entry in direct:
+        assert "SuspendToggle" in entry, (
+            f"registration bypassing RegisterBind: {entry}"
+        )
     assert re.search(r"RegisterBind\s*\(", source, re.IGNORECASE)
 
 
@@ -604,4 +624,89 @@ def test_cross_family_finisher_correction_releases_the_superseded_slot(source):
     ), "the released family's counter is not rewound to the first free slot"
     assert "ReadyToIncrement := True" in body, (
         "the new family's slot is not consumed after the release"
+    )
+
+
+def test_suspend_toggle_exists_and_is_marked(full_source):
+    """The suspend-toggle hotkey (#329) is registered through the same
+    RegisterBind-free path as every other bind: a global Hotkey call
+    (not window-scoped) so it fires in any app. The label must exist
+    and be marked ; WINGMAN: so a re-vendor does not strip it.
+
+    full_source is the un-stripped file (comments intact).
+    """
+    assert re.search(r"^KB_SuspendToggle:", full_source, re.MULTILINE), (
+        "KB_SuspendToggle label not found"
+    )
+    assert "; WINGMAN" in full_source and "suspend" in full_source.lower(), (
+        "the suspend toggle must carry a ; WINGMAN: marker"
+    )
+
+
+def test_suspend_toggle_first_line_is_suspend(source):
+    """AHK v1 exemption: a hotkey whose FIRST line is Suspend remains
+    functional while the script is suspended. This is the mechanic that
+    makes the same key able to re-arm itself."""
+    body = _label_body(source, "KB_SuspendToggle")
+    # Strip blank lines and comments to find the first code line.
+    lines = [l for l in body.splitlines() if l.strip() and not l.strip().startswith(";")]
+    assert lines, "KB_SuspendToggle label is empty"
+    first_line = lines[0].strip().lower()
+    assert first_line == "suspend", (
+        f"KB_SuspendToggle's first code line is {first_line!r}, not 'Suspend' "
+        "-- the key will not work while the script is already suspended"
+    )
+
+
+def test_suspend_toggle_is_registered_globally(source):
+    """The suspend toggle must be registered in the global context
+    (no IfWinActive), so it fires in any app. The stated use case is
+    to reclaim numpad keys outside EVE."""
+    # The registration must appear as `Hotkey, %KB_SuspendToggle%` in the
+    # global context (after Hotkey, IfWinActive resets, not inside a
+    # per-window loop).
+    assert re.search(
+        r"Hotkey,\s*%\s*KB_SuspendToggle%\s*,\s*KB_SuspendToggle\s*,\s*On",
+        source,
+        re.IGNORECASE,
+    ), "KB_SuspendToggle is not registered via Hotkey"
+
+
+def test_suspend_toggle_uses_error_level(source):
+    """Every bind registration must go through UseErrorLevel so a
+    Windows-refused key is reported, not silently dropped."""
+    assert re.search(
+        r"Hotkey,\s*%\s*KB_SuspendToggle%\s*,.*On\s+UseErrorLevel",
+        source,
+        re.IGNORECASE | re.DOTALL,
+    ), "KB_SuspendToggle registration must use UseErrorLevel"
+
+
+def test_suspend_state_is_reported_in_status_file(lowered):
+    """The status file must include a 'suspended' boolean field so
+    Wingman can surface the state on the Bookmarks screen."""
+    # AHK double-quote escaping: "" inside a string produces a literal ".
+    # The key in the JSON body is """suspended"":""" (open-quote + ""
+    # escaped + key + "" escaped + colon + "" escaped + close-quote).
+    # The pattern '""suspended' matches the first escaped-quote + key pair.
+    assert '""suspended' in lowered
+
+
+def test_kb_suspend_toggle_variable_exists(source):
+    """The INI value is read into KB_SuspendToggle and used for registration."""
+    assert re.search(r"KB_SuspendToggle\s*:=\s*\"\"", source) or re.search(
+        r"KB_SuspendToggle\s*:=\s*\"\"", source
+    ), "KB_SuspendToggle default variable not found"
+    assert re.search(r"IniRead,\s*KB_SuspendToggle", source, re.IGNORECASE), (
+        "KB_SuspendToggle is not read from INI"
+    )
+
+
+def test_suspend_tracking_variable_exists(source):
+    """AHK v1 does not reliably expose Suspend state via Suspend, Current,
+    so we track it with a global variable. The label flips it on every press
+    and the engine resets it on launch."""
+    assert "_SuspendState" in source, "_SuspendState tracking variable not found"
+    assert re.search(r"_SuspendState\s*:=\s*\"Off\"", source), (
+        "_SuspendState must initialize to \"Off\""
     )

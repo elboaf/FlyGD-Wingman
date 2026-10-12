@@ -70,6 +70,11 @@ class EngineStatus:
     failed_binds: list = field(default_factory=list)
     last_error: str | None = None
     prime: "PrimeRecord | None" = None
+    # WINGMAN: whether the AHK engine is currently suspended (#329).
+    # The user-visible meaning: all bookmark hotkeys are inert until the
+    # suspend toggle is pressed again. Reset to False on start, updated
+    # from the status file on each poll.
+    suspended: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,13 @@ class HotkeyEngine:
         self._state_dir = Path(state_dir)
         self._script = Path(script) if script else None
         self.last_error = self._guard.last_error
+        # WINGMAN: initial suspended state (#329). Reset to False on every
+        # start() because the AHK script initializes _SuspendState to "Off"
+        # on launch. The status file outlives the process, so without this
+        # a crash that left the script suspended would carry that state
+        # into a fresh Wingman launch — the user would find their keys
+        # inert with no explanation.
+        self._suspended: bool = False
 
     # -- config ------------------------------------------------------
     def apply(self, section: dict) -> None:
@@ -229,6 +241,9 @@ class HotkeyEngine:
             failure_message="The bookmark engine could not start",
         )
         self.last_error = self._guard.last_error
+        # WINGMAN: the AHK script resets _SuspendState to "Off" on launch,
+        # so the engine is always unsuspended after a fresh start.
+        self._suspended = False
         return ok
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -263,13 +278,13 @@ class HotkeyEngine:
             # the failure mode the bound exists to prevent.
             if len(text) > _MAX_STATUS_CHARS:
                 logger.warning("Engine status file is oversized; ignoring it.")
-                return EngineStatus(state="stale")
+                return EngineStatus(state="stale", suspended=self._suspended)
             raw = json.loads(text)
             written = float(raw["written"])
         except (OSError, ValueError, KeyError, TypeError):
-            return EngineStatus(state="stale")
+            return EngineStatus(state="stale", suspended=self._suspended)
         if now - written > STALE_AFTER_S:
-            return EngineStatus(state="stale")
+            return EngineStatus(state="stale", suspended=self._suspended)
 
         failed = raw.get("failed_binds")
         if not isinstance(failed, list):
@@ -279,7 +294,11 @@ class HotkeyEngine:
             # "every hotkey registered fine", which is exactly what we do
             # not know.
             logger.warning("Engine status has a malformed failed_binds.")
-            return EngineStatus(state="stale")
+            return EngineStatus(state="stale", suspended=self._suspended)
+
+        suspended = raw.get("suspended")
+        if not isinstance(suspended, bool):
+            suspended = self._suspended
 
         return EngineStatus(
             state="running",
@@ -289,6 +308,7 @@ class HotkeyEngine:
             next_alpha=_text(raw.get("next_alpha")),
             failed_binds=[str(b) for b in failed],
             prime=_prime_from_raw(raw.get("prime")),
+            suspended=suspended,
         )
 
     # -- paths -------------------------------------------------------

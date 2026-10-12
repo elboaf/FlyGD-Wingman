@@ -5220,7 +5220,7 @@
   // drifted to seventeen would put the harness back to lying, just less
   // obviously than an empty list does.
   var bookmarkBinds = [
-    'GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout',
+    'GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout', 'SuspendToggle',
     'FinH', 'FinL', 'FinN', 'Fin13',
     'Fin1', 'Fin2', 'Fin3', 'Fin4', 'Fin5', 'Fin6',
     'FinETag', 'FinSlash', 'FinS', 'FinC'
@@ -5232,6 +5232,7 @@
     GrabSig: 'Grab Sig ID', SetRoot: 'Set Root',
     FormatEnf: 'Format Enforcer',
     ConvertScout: 'Convert EvE-Scout Bookmarks',
+    SuspendToggle: 'Suspend all bookmark hotkeys',
     FinH: 'Finisher: HS (highsec)', FinL: 'Finisher: LS (lowsec)',
     FinN: 'Finisher: NS (nullsec)', Fin13: 'Finisher: C13 (shattered)',
     Fin1: 'Finisher: C1', Fin2: 'Finisher: C2', Fin3: 'Finisher: C3',
@@ -5246,10 +5247,11 @@
   // is meant to be a fixture for -- and asserted against the real
   // derivation by tests/test_dev_harness.py, so it cannot drift.
   var bookmarkGroups = [
-    { name: '', ids: ['GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout'],
+    { name: '', ids: ['GrabSig', 'SetRoot', 'FormatEnf', 'ConvertScout', 'SuspendToggle'],
       short: { GrabSig: 'Grab Sig ID', SetRoot: 'Set Root',
                FormatEnf: 'Format Enforcer',
-               ConvertScout: 'Convert EvE-Scout Bookmarks' } },
+               ConvertScout: 'Convert EvE-Scout Bookmarks',
+               SuspendToggle: 'Suspend all bookmark hotkeys' } },
     { name: 'Finishers',
       ids: ['FinH', 'FinL', 'FinN', 'Fin13',
             'Fin1', 'Fin2', 'Fin3', 'Fin4', 'Fin5', 'Fin6'],

@@ -135,6 +135,7 @@ BIND_IDS = (
     "SetRoot",
     "FormatEnf",
     "ConvertScout",
+    "SuspendToggle",
     "FinH",
     "FinL",
     "FinN",
@@ -157,6 +158,7 @@ BIND_LABELS = {
     "SetRoot": "Set Root",
     "FormatEnf": "Format Enforcer",
     "ConvertScout": "Convert EvE-Scout Bookmarks",
+    "SuspendToggle": "Suspend all bookmark hotkeys",
     "FinH": "Finisher: HS (highsec)",
     "FinL": "Finisher: LS (lowsec)",
     "FinN": "Finisher: NS (nullsec)",
@@ -242,11 +244,15 @@ DEFAULT_BINDS = {bid: ("^+s" if bid == "ConvertScout" else "") for bid in BIND_I
 #
 # ConvertScout stays at the script's compiled default rather than the ^s
 # the shipped INI carries -- maintainer's call.
+# SuspendToggle has no recommended default: the user picks a chord they
+# want to reach while the engine is suspended, and there is no universal
+# default for that.
 RECOMMENDED_BINDS = {
     "GrabSig": "^q",
     "SetRoot": "^;",
     "FormatEnf": "^e",
     "ConvertScout": "^+s",
+    "SuspendToggle": "",
     "FinH": "^y",
     "FinL": "^p",
     "FinN": "^.",

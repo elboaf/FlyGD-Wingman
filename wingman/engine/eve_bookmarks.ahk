@@ -97,6 +97,12 @@ NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
 
+; WINGMAN: suspend state tracker (#329).
+; Suspend, Current does not reliably expose the state in all v1 builds,
+; so we track it ourselves. KB_SuspendToggle's label flips this on every
+; toggle; the engine resets to "Off" on script start / reload.
+_SuspendState := "Off"
+
 ; --- WINGMAN: pre-jump prime (#295) ---
 ; Set Root on a SINGLE selected bookmark captures the root J-code plus the
 ; finisher tags parsed from the bookmark text, for the status relay. Every
@@ -125,7 +131,8 @@ KB_FinN        := ""
 KB_FinL        := ""
 KB_FinS        := ""
 KB_FinC        := ""
-KB_ConvertScout := "^+s"   ; Ctrl+Shift+S default
+KB_ConvertScout  := "^+s"  ; Ctrl+Shift+S default
+KB_SuspendToggle := ""     ; blank = off
 
 ; Maps hotkey string -> label, so we can disable by exact label
 HotkeyLabelMap := {}
@@ -192,6 +199,7 @@ IniRead, KB_FinL,        %IniFile%, Keybinds, FinL,
 IniRead, KB_FinS,        %IniFile%, Keybinds, FinS,      
 IniRead, KB_FinC,        %IniFile%, Keybinds, FinC,      
 IniRead, KB_ConvertScout, %IniFile%, Keybinds, ConvertScout, ^+s
+IniRead, KB_SuspendToggle, %IniFile%, Keybinds, SuspendToggle
 Return
 
 ; ============================================================
@@ -215,7 +223,8 @@ StatusBody := "{"
     . """next_num"":""" . JsonEsc(NextNumText) . ""","
     . """next_alpha"":""" . JsonEsc(NextAlphaText) . ""","
     . """failed_binds"":[" . JsonList(FailedBinds) . "],"
-    . """prime"":" . BuildPrimeJson() . ","
+    . """prime"":" . BuildPrimeJson() . ""","
+    . """suspended"":""" . (SuspendState() = "On" ? "true" : "false") . ""","
     . """written"":" . EpochNow()
     . "}"
 FileDelete, eve_status.json.tmp
@@ -251,6 +260,14 @@ JsonList(csv) {
     Loop, Parse, csv, `,
         out .= (out = "" ? "" : ",") . """" . JsonEsc(A_LoopField) . """"
     return out
+}
+
+; WINGMAN: report whether the script is currently suspended (#329).
+; Reads the tracked global so RefreshStatusTab can include it in the
+; status payload. The global is flipped by KB_SuspendToggle on every
+; press and reset to "Off" on script start/reload.
+SuspendState() {
+    return _SuspendState
 }
 
 RemoveTooltip:
@@ -297,6 +314,15 @@ For idx, OldTitle in RegisteredWindows
 Hotkey, IfWinActive
 RegisteredWindows := []
 FailedBinds := ""
+
+; WINGMAN: register the suspend-toggle globally (no window context) so it
+; fires in any app. The user's use case is to reclaim numpad keys outside
+; EVE, and it must remain reachable even while the script is suspended.
+; The label KB_SuspendToggle is exempt because its first line is `Suspend`
+; (AHK v1 rule), so the key re-arms itself every time the script suspends.
+Hotkey, IfWinActive
+if (KB_SuspendToggle != "")
+    Hotkey, %KB_SuspendToggle%, KB_SuspendToggle, On UseErrorLevel
 
 ; Step 2: Read all enabled windows
 IniRead, EnabledSection, %IniFile%, Enabled
@@ -1120,6 +1146,28 @@ NewSlash := 1
 NewFFlag := 0
 NewC := 0
 GoSub, FormatClipAndPaste
+Return
+
+; WINGMAN: suspend-toggle hotkey (#329).
+; AHK v1 exemption: a hotkey whose FIRST line is Suspend remains
+; functional while the script is suspended, which is what makes the
+; same key able to re-arm itself. Everything else in this script
+; (all 18 bookmark binds) is suspended until the user presses this
+; again to restore normal operation.
+;
+; Registered globally (no IfWinActive) so it fires in any app --
+; the stated use case is to temporarily reclaim numpad keys outside
+; EVE. AHK's Suspend is script-wide, so this toggles exactly and
+; only the bookmark binds (no preview/overlay/alert hotkeys are
+; registered here).
+;
+; We track the state in _SuspendState because Suspend, Current does
+; not reliably expose it in all v1 builds. The status file is
+; refreshed so Wingman surfaces the change on the Bookmarks screen.
+KB_SuspendToggle:
+Suspend
+_SuspendState := (SuspendState() = "On") ? "Off" : "On"
+GoSub, RefreshStatusTab
 Return
 
 ReadField:

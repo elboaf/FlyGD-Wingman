@@ -3558,9 +3558,20 @@ pytest — the engine is AutoHotkey.
       existing keybinds untouched
 - [ ] Importing a config with `Mode=1` says Protean naming is not supported;
       one with `Mode=2` says nothing about it
-- [ ] **Reset to defaults** replaces all 18 binds after confirmation,
-      and the confirmation says 18 — bookmarks.py's BIND_IDS is the
+- [ ] **Reset to defaults** replaces all 19 binds after confirmation,
+      and the confirmation says 19 — bookmarks.py's BIND_IDS is the
       count, and three places used to disagree with it
+- [ ] **Suspend toggle (SuspendToggle) appears as the 19th bind.**
+      Open Settings > Bookmarks. The SuspendToggle row is in the first
+      flat group (after GrabSig, SetRoot, FormatEnf, ConvertScout) with
+      label "Suspend all bookmark hotkeys" and no recommended default.
+      Set any key (e.g. `^+a`) and enable the engine. With EVE in focus,
+      press the key: the engine toggles suspended state and the status
+      bar shows "suspended" (the indicator row appears). Press it again:
+      the indicator disappears and the engine resumes normal operation.
+      While suspended, bookmark keybinds do not fire (numpad keys are
+      normal), but the toggle keybind remains functional (AHK's Suspend
+      exemption for the first line of a label).
 - [ ] **Refresh** on the EVE windows card picks up a client launched while
       the section was already open
 - [ ] Config changes apply within 10s without losing root or used slots
