@@ -34,6 +34,8 @@ def test_every_bind_is_written_even_when_blank():
         assert f"{bid}=" in text
     assert "ConvertScout=^+s\r\n" in text
     assert "FinH=\r\n" in text
+    # WINGMAN: SuspendToggle is the 19th bind; it ships blank (off by default).
+    assert "SuspendToggle=\r\n" in text
 
 
 def test_enabled_windows_are_written_as_one_and_zero():

@@ -17,6 +17,7 @@ class FakeEngine:
         self.commands = []
         self.running = False
         self.last_error = None
+        self.suspended_state = False
 
     def apply(self, section):
         self.applied.append(section)
@@ -24,6 +25,7 @@ class FakeEngine:
     def start(self):
         self.started += 1
         self.running = True
+        self.suspended_state = False
         return True
 
     def stop(self, timeout=5.0):
@@ -45,7 +47,9 @@ class FakeEngine:
             return hotkeys.EngineStatus(state="off")
         if not self.running:
             return hotkeys.EngineStatus(state="stopped", last_error=self.last_error)
-        return hotkeys.EngineStatus(state="running", root="J1234")
+        return hotkeys.EngineStatus(
+            state="running", root="J1234", suspended=self.suspended_state
+        )
 
 
 @pytest.fixture
@@ -67,6 +71,9 @@ def test_get_returns_settings_labels_and_order(api):
     assert got["settings"]["enabled"] is False
     assert got["order"] == list(bookmarks.BIND_IDS)
     assert got["labels"]["FinH"] == "Finisher: HS (highsec)"
+    # WINGMAN: SuspendToggle is the 19th bind.
+    assert "SuspendToggle" in got["order"]
+    assert got["labels"]["SuspendToggle"] == "Suspend all bookmark hotkeys"
 
 
 def test_get_returns_human_labels_for_bound_keys(api):
@@ -224,6 +231,8 @@ def test_reset_binds_overwrites_every_bind(api):
     )
     binds = api.reset_binds()["settings"]["keybinds"]
     assert binds == bookmarks.RECOMMENDED_BINDS
+    # WINGMAN: SuspendToggle has no recommended default (empty string).
+    assert binds["SuspendToggle"] == ""
 
 
 def test_import_cancelled_changes_nothing(api, monkeypatch):
@@ -250,6 +259,13 @@ def test_a_failed_start_does_not_crash_the_save(api):
     api._state.engine.start = lambda: False
     section = dict(api.get_bookmarks()["settings"], enabled=True)
     assert api.save_bookmarks(section)["settings"]["enabled"] is True
+
+
+def test_get_reports_suspended_false_when_engine_is_off(api):
+    """The engine starts unsuspended; suspended must be False when the
+    feature is off (no engine to be suspended)."""
+    got = api.get_bookmarks()
+    assert got["engine"]["suspended"] is False
 
 
 def test_import_does_not_claim_success_when_the_save_fails(api, tmp_path, monkeypatch):

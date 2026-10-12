@@ -4253,6 +4253,8 @@ class Api:
                 # actionable thing the user can be told ("the engine is
                 # missing, reinstall").
                 "last_error": status.last_error,
+                # WINGMAN: whether the AHK engine is suspended (#329).
+                "suspended": status.suspended,
             },
         )
 
@@ -7956,6 +7958,10 @@ class Api:
                     if section["enabled"]
                     else []
                 ),
+                # WINGMAN: whether the AHK engine is suspended (#329).
+                # Surfaced here so the Bookmarks page can show it next to
+                # the existing engine-state line.
+                "suspended": status.suspended if status else False,
             },
         }
 

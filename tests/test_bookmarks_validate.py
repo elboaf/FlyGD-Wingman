@@ -3,15 +3,17 @@ import pytest
 from wingman import bookmarks
 
 
-def test_there_are_eighteen_binds():
-    """18 of the standalone script's 21. Copy and Paste are gone -- their
+def test_there_are_nineteen_binds():
+    """19 of the standalone script's 22. Copy and Paste are gone -- their
     handlers were Send ^c and Send ^v (111unified.ahk:988-995), a global
     keyboard hook spent on what Windows already does -- and the medium-hole
-    tag went with the helper author's own tag rework."""
-    assert len(bookmarks.BIND_IDS) == 18
+    tag went with the helper author's own tag rework. SuspendToggle is the
+    19th bind, registered globally outside the EVE-window scope."""
+    assert len(bookmarks.BIND_IDS) == 19
     for gone in ("Copy", "Paste", "FinM"):
         assert gone not in bookmarks.BIND_IDS
-    assert len(set(bookmarks.BIND_IDS)) == 18
+    assert "SuspendToggle" in bookmarks.BIND_IDS
+    assert len(set(bookmarks.BIND_IDS)) == 19
 
 
 def test_the_tag_labels_name_the_character_the_engine_writes():
@@ -240,7 +242,7 @@ def test_a_group_marker_that_stops_being_contiguous_cannot_reorder_the_list(
     # The renamed tag opens its OWN trailing unnamed group rather than
     # joining the leading one.
     assert [(g["name"], len(g["ids"])) for g in groups] == [
-        ("", 4),
+        ("", 5),
         ("Finishers", 10),
         ("Tags", 3),
         ("", 1),
