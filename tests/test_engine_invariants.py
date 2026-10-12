@@ -359,9 +359,7 @@ def test_every_registration_records_failures(source):
     # KB_SuspendToggle is the only allowed exception: it registers globally
     # (not window-scoped) so it fires in any app.
     for entry in direct:
-        assert "SuspendToggle" in entry, (
-            f"registration bypassing RegisterBind: {entry}"
-        )
+        assert "SuspendToggle" in entry, f"registration bypassing RegisterBind: {entry}"
     assert re.search(r"RegisterBind\s*\(", source, re.IGNORECASE)
 
 
@@ -649,7 +647,9 @@ def test_suspend_toggle_first_line_is_suspend(source):
     makes the same key able to re-arm itself."""
     body = _label_body(source, "KB_SuspendToggle")
     # Strip blank lines and comments to find the first code line.
-    lines = [l for l in body.splitlines() if l.strip() and not l.strip().startswith(";")]
+    lines = [
+        ln for ln in body.splitlines() if ln.strip() and not ln.strip().startswith(";")
+    ]
     assert lines, "KB_SuspendToggle label is empty"
     first_line = lines[0].strip().lower()
     assert first_line == "suspend", (
@@ -708,5 +708,5 @@ def test_suspend_tracking_variable_exists(source):
     and the engine resets it on launch."""
     assert "_SuspendState" in source, "_SuspendState tracking variable not found"
     assert re.search(r"_SuspendState\s*:=\s*\"Off\"", source), (
-        "_SuspendState must initialize to \"Off\""
+        '_SuspendState must initialize to "Off"'
     )
