@@ -47,6 +47,10 @@ MAX_INSTALLER_BYTES = 256 * 1024 * 1024
 _ASSET_URL_HOST = "github.com"
 _ASSET_URL_OWNER_REPO = "elboaf/FlyGD-Wingman"
 _VERSION_RE = re.compile(r"(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
+# The debug distribution's version, e.g. "5.14.1-debug1". Only
+# latest_release strips it, before handing the base to the strict parser;
+# release tags and comparisons never see this tolerance.
+_DEBUG_SUFFIX_RE = re.compile(r"-\d*debug\d+\Z")
 _DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 _CONTENT_TYPES = {"application/x-msdos-program", "application/octet-stream"}
 Version = tuple[int, int, int]
@@ -287,7 +291,13 @@ def latest_release(
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UpdateFailure("check", "metadata", str(exc)) from exc
 
-    return release_from_payload(payload, current_version)
+    # A -debugN running version is the same stable line: compare its base
+    # (GitHub already hides pre-releases from releases/latest, so a newer
+    # stable is still offered and upgrades over the debug build). Any other
+    # suffix still fails the strict parse below -- this tolerance exists
+    # for this repo's own debug builds and nothing else.
+    stripped = _DEBUG_SUFFIX_RE.sub("", current_version)
+    return release_from_payload(payload, stripped)
 
 
 # ---- Task 2: safe streaming and staging lifecycle -------------------------

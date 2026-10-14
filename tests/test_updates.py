@@ -379,6 +379,33 @@ def test_latest_release_returns_none_when_already_current():
     assert release is None
 
 
+def test_a_debug_suffixed_running_version_still_compares_against_releases():
+    """The debug distribution's `-debugN` suffix never fails the check.
+
+    GitHub's releases/latest already excludes pre-releases, so the running
+    debug build compares its base version against the stable line: equal is
+    "no update" rather than a version error, a newer stable is still offered,
+    and any other suffix shape still fails the strict parse.
+    """
+    equal = release_payload(tag="v5.14.1", version="5.14.1")
+    assert (
+        updates.latest_release(
+            "5.14.1-debug1", urlopen=lambda r, timeout: _JsonResponse(equal)
+        )
+        is None
+    )
+    newer = release_payload(tag="v5.14.2", version="5.14.2")
+    release = updates.latest_release(
+        "5.14.1-debug1", urlopen=lambda r, timeout: _JsonResponse(newer)
+    )
+    assert release is not None
+    assert release.version == (5, 14, 2)
+    with pytest.raises(updates.UpdateFailure, match="version"):
+        updates.latest_release(
+            "5.14.1-beta1", urlopen=lambda r, timeout: _JsonResponse(newer)
+        )
+
+
 def test_latest_release_wraps_a_network_failure():
     import urllib.error
 

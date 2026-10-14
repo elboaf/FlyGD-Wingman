@@ -127,7 +127,15 @@ jobs:
           # previous tag. A tag pushed without a release being created would
           # silently make the next release's list span two versions.
           generate_release_notes: true
+          prerelease: true
           body: |
+            **Debug build** (`5.14.1-debug1`, branch `debug/prime-api-log`) —
+            a temporary test build, not a numbered release. It adds an
+            always-on trace of the Wanderer prime-staging lane:
+            `%LOCALAPPDATA%\FlyGD Wingman\logs\wanderer_prime_debug.log`
+            (one JSON line per event; tail it live). The next stable release
+            will upgrade over it normally.
+
             [FlyGD Wingman](https://wingman.zoolanders.vip/) — your OBS
             recording wingman. Watches your OBS recording folder, and uploads
             the recordings you select to your own YouTube channel.
