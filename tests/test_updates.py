@@ -390,19 +390,19 @@ def test_a_debug_suffixed_running_version_still_compares_against_releases():
     equal = release_payload(tag="v5.14.1", version="5.14.1")
     assert (
         updates.latest_release(
-            "5.14.1-debug1", urlopen=lambda r, timeout: _JsonResponse(equal)
+            "5.14.1+debug1", urlopen=lambda r, timeout: _JsonResponse(equal)
         )
         is None
     )
     newer = release_payload(tag="v5.14.2", version="5.14.2")
     release = updates.latest_release(
-        "5.14.1-debug1", urlopen=lambda r, timeout: _JsonResponse(newer)
+        "5.14.1+debug1", urlopen=lambda r, timeout: _JsonResponse(newer)
     )
     assert release is not None
     assert release.version == (5, 14, 2)
     with pytest.raises(updates.UpdateFailure, match="version"):
         updates.latest_release(
-            "5.14.1-beta1", urlopen=lambda r, timeout: _JsonResponse(newer)
+            "5.14.1-bogus1", urlopen=lambda r, timeout: _JsonResponse(newer)
         )
 
 

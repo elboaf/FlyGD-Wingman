@@ -128,7 +128,7 @@ jobs:
           generate_release_notes: true
           prerelease: true
           body: |
-            **Debug build** (`5.14.1-debug1`, branch `debug/prime-api-log`) —
+            **Debug build** (`5.14.1+debug1`, branch `debug/prime-api-log`) —
             a temporary test build, not a numbered release. It adds an
             always-on trace of the Wanderer prime-staging lane:
             `%LOCALAPPDATA%\FlyGD Wingman\logs\wanderer_prime_debug.log`

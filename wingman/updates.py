@@ -47,10 +47,11 @@ MAX_INSTALLER_BYTES = 256 * 1024 * 1024
 _ASSET_URL_HOST = "github.com"
 _ASSET_URL_OWNER_REPO = "elboaf/FlyGD-Wingman"
 _VERSION_RE = re.compile(r"(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
-# The debug distribution's version, e.g. "5.14.1-debug1". Only
-# latest_release strips it, before handing the base to the strict parser;
-# release tags and comparisons never see this tolerance.
-_DEBUG_SUFFIX_RE = re.compile(r"-\d*debug\d+\Z")
+# The debug distribution's version, e.g. "5.14.1+debug1" (a PEP 440 local
+# label; the hyphen spelling is tolerated too). Only latest_release strips
+# it, before handing the base to the strict parser; release tags and
+# comparisons never see this tolerance.
+_DEBUG_SUFFIX_RE = re.compile(r"[-+]\d*debug\d+\Z")
 _DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 _CONTENT_TYPES = {"application/x-msdos-program", "application/octet-stream"}
 Version = tuple[int, int, int]
