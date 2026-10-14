@@ -110,7 +110,6 @@ jobs:
           files: dist/FlyGD-Wingman-Setup-*.exe
           # The OAuth app is PUBLISHED (production) and Google-verified,
           # so anyone can sign in with no warning interstitial.
-          prerelease: false
           # Until this line, a release body was the static blurb below and
           # nothing else: the notes never said what changed in the version
           # being downloaded. GitHub builds the list from the titles of the
