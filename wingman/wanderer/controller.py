@@ -26,6 +26,14 @@ from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
 logger = logging.getLogger(__name__)
 
+
+class _NullLog:
+    """The shipped no-op sink: the debug branch injects primelog.Sink."""
+
+    def write(self, event, **fields) -> None:
+        pass
+
+
 MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool, int], None]
 HEALTH_INTERVAL = 0.25
 STAGING_ATTEMPTS = 3
@@ -71,6 +79,7 @@ class WandererController:
         thread_factory=threading.Thread,
         staging=None,
         prime_credentials: CredentialStore | None = None,
+        prime_log=None,
     ) -> None:
         self._ports = ports
         self._credentials = (
@@ -131,9 +140,55 @@ class WandererController:
         # one prime exists until the engine overwrites it, and replacement
         # stages a new event, so a small ring is a whole history.
         self._staged_events = deque(maxlen=8)
+        # The debug build's trace of the staging lane (#297): an injected
+        # sink with `write(event, **fields)`; None ships as a no-op. Like
+        # every logger here it observes, never decides -- the gates below
+        # behave identically with the sink absent.
+        self._prime_log = prime_log if prime_log is not None else _NullLog()
+        # Decline gates fire on every relay tick for the same standing
+        # event; suppress repeats per event id, bounded like the ledger.
+        self._logged_events = deque(maxlen=8)
         self._staging_state = threading.Lock()
         self._staging_thread: threading.Thread | None = None
         self._staging_pending: tuple | None = None
+
+    def _log_prime_received(self, prime, identity) -> None:
+        # The relay re-offers the standing prime every poll tick; log the
+        # arrival once per event id, exactly like the decline gates.
+        if prime.event in self._logged_events:
+            return
+        self._logged_events.append(prime.event)
+        self._prime_log.write(
+            "prime_received",
+            engine_event=prime.event,
+            system_name=prime.jcode.strip(),
+            flags="".join(prime.flags),
+            captured=prime.captured,
+            character_id=identity.character_id,
+        )
+
+    def log_relay_decline(self, prime, reason: str) -> None:
+        """The bridge-side declines (stale prime, no identity), logged.
+
+        Api._relay_prime declines before the controller's own gates can
+        see the prime; routing those through this controller keeps every
+        staging-lane entry on one sink and one dedup ring, so poll-tick
+        re-offers stay one line, not hundreds.
+        """
+        self._log_declined(prime, None, reason)
+
+    def _log_declined(self, prime, identity, reason: str) -> None:
+        if prime.event in self._logged_events:
+            return
+        self._logged_events.append(prime.event)
+        self._prime_log.write(
+            "declined",
+            engine_event=prime.event,
+            reason=reason,
+            system_name=prime.jcode.strip(),
+            flags="".join(prime.flags),
+            character_id=getattr(identity, "character_id", None),
+        )
 
     def _load_prime(self, section) -> str | None:
         if section["base_url"] and section["map_identifier"]:
@@ -366,16 +421,30 @@ class WandererController:
                 or identity is None
                 or identity.solar_system_id is None
             ):
+                reason = (
+                    "no_saved_connection"
+                    if not binding[0] or not binding[1]
+                    else (
+                        "no_prime_token"
+                        if token is None
+                        else "no_identity"
+                        if identity is None
+                        else "identity_unmapped"
+                    )
+                )
+                self._log_declined(prime, identity, reason)
                 return False
             try:
                 record = build_prime_record(prime, identity, *binding)
             except ValueError:
+                self._log_declined(prime, identity, "unstageable_record")
                 return False
             event = prime.event
             if event in self._staged_events:
                 return False
             self._staged_events.append(event)
             self._staging_pending = (binding, token, record)
+            self._log_prime_received(prime, identity)
             thread = self._staging_thread
             if thread is not None and thread.is_alive():
                 # The live lane drains the newest pending record itself.
@@ -410,11 +479,34 @@ class WandererController:
             base, map_identifier = pending[0]
             token, record = pending[1], pending[2]
             for attempt in range(STAGING_ATTEMPTS):
+                self._prime_log.write(
+                    "post",
+                    event_id=record["event_id"],
+                    attempt=attempt + 1,
+                    url=base.rstrip("/")
+                    + "/api/maps/"
+                    + map_identifier
+                    + "/prejump-primes",
+                    record=record,
+                )
                 result = self._staging.stage(base, map_identifier, token, record)
                 if isinstance(result, Staged):
+                    self._prime_log.write(
+                        "staged",
+                        event_id=record["event_id"],
+                        attempt=attempt + 1,
+                        record=record,
+                    )
                     break
                 failure = result if isinstance(result, StagingFailure) else None
                 code = failure.code if failure is not None else "transport_error"
+                self._prime_log.write(
+                    "failed" if code in _STAGING_RETRYABLE else "declined_outcome",
+                    event_id=record["event_id"],
+                    attempt=attempt + 1,
+                    error_code=code,
+                    status=None if failure is None else failure.status,
+                )
                 if failure is not None and failure.authentication_failed:
                     # A denied credential must not keep POSTing it; the token
                     # is wrong, revoked, or out of scope. Silent give-up;

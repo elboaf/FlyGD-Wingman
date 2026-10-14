@@ -37,6 +37,27 @@ class StagingCall:
         self.replies.put(result)
 
 
+class CapturingPrimeLog:
+    """Stands in for the debug branch's primelog.Sink at the seam."""
+
+    def __init__(self):
+        self._cv = threading.Condition()
+        self._entries = []
+
+    def write(self, event, **fields):
+        with self._cv:
+            self._entries.append({"event": event, **fields})
+            self._cv.notify_all()
+
+    def captured(self):
+        with self._cv:
+            return [dict(entry) for entry in self._entries]
+
+    def wait_for(self, predicate, timeout=2.0):
+        with self._cv:
+            return self._cv.wait_for(lambda: predicate(self._entries), timeout)
+
+
 class FakeStaging:
     """Mirrors the worker-test Client: stage() blocks until the test replies."""
 
@@ -151,6 +172,7 @@ class Rig:
         with_prime_credential=False,
         staging=None,
         prime_credentials=None,
+        prime_log=None,
     ):
         from wingman.wanderer.controller import WandererController, WandererPorts
 
@@ -181,6 +203,7 @@ class Rig:
         if with_prime_credential:
             self.prime_store.replace(BASE, "map", PRIME_TOKEN)
         self.staging = staging if staging is not None else FakeStaging()
+        self.prime_log = prime_log if prime_log is not None else CapturingPrimeLog()
         self.clock = Clock()
         self.worker_cv = ObservedCondition()
         self.client = Client()
@@ -208,6 +231,7 @@ class Rig:
             worker_factory=factory,
             staging=self.staging,
             prime_credentials=self.prime_store,
+            prime_log=self.prime_log,
             ports=WandererPorts(
                 update_settings=lambda: settings.update(self.cfg),
                 set_metadata_callback=self.host.subscribe,

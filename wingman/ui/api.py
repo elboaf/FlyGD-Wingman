@@ -88,6 +88,7 @@ from ..upload.controller import (
     folder_note,
 )
 from ..upload.gate import WorkGate
+from ..wanderer import primelog as primelog_mod
 from ..wanderer.controller import WandererController, WandererPorts
 from . import copy as copy_mod
 from .fleetpresentation import (
@@ -414,6 +415,7 @@ class Api:
         update_spawn=threading.Thread,
         is_frozen=lambda: bool(getattr(sys, "frozen", False)),
         webhook_lookup=None,
+        prime_log=None,
     ):
         self._state = state
         # Admission/publication only — never held across Discord HTTP. Every
@@ -708,6 +710,10 @@ class Api:
         self._preview_runtime.set_state_callback(self._preview_runtime_changed)
         self._profiles = self._build_profiles_controller()
         self._settingsshare = self._build_settings_share_controller()
+        # The debug branch's always-on prime trace: one sink per launch,
+        # handed to the Wanderer controller's staging lane. None (an
+        # unopenable log dir) degrades to the controller's internal no-op.
+        self._prime_log = prime_log if prime_log is not None else primelog_mod.enable()
         self._wanderer = self._build_wanderer_controller()
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
@@ -5189,6 +5195,7 @@ class Api:
         return WandererController(
             self._state.settings.get("wanderer"),
             previews_enabled=self._preview_config.get("enabled", False),
+            prime_log=self._prime_log,
             ports=WandererPorts(
                 update_settings=lambda: settings_mod.update(self._state.settings),
                 set_metadata_callback=self._wanderer_metadata_callback,
@@ -5244,9 +5251,11 @@ class Api:
             if not isinstance(captured, (int, float)) or isinstance(captured, bool):
                 return
             if time.time() - float(captured) > PRIME_MAX_AGE_SECONDS:
+                self._wanderer.log_relay_decline(prime, "stale_prime")
                 return
             identity = self._wanderer_prime_identity()
             if identity is None:
+                self._wanderer.log_relay_decline(prime, "no_identity")
                 return
             self._wanderer.stage_prime(prime, identity)
         except Exception:

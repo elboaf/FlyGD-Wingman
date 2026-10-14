@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 from typing import get_args
 
 import pytest
@@ -16,6 +17,7 @@ from wingman.preview.host import PreviewHost
 from wingman.preview.store import LayoutStore
 from wingman.ui import copy as copy_mod
 from wingman.ui.api import Api
+from wingman.wanderer import primelog
 from wingman.wanderer.client import ErrorCode
 from wingman.wanderer.worker import WorkerStatus
 
@@ -461,3 +463,64 @@ def test_push_eve_status_survives_raising_identity_and_staging(tmp_path):
     handler, payload = pushes(api._window)[-1]
     assert handler == "onEveStatus"
     assert payload["prime"] is not None
+
+
+# ---- The debug branch's prime trace -----------------------------------------
+
+
+def test_the_launch_builds_the_prime_sink_once_and_hands_it_to_the_lane(tmp_path):
+    from wingman.wanderer import primelog
+
+    api = make_api(tmp_path)
+    try:
+        assert isinstance(api._prime_log, primelog.Sink)
+        assert api._wanderer._prime_log is api._prime_log
+        # One sink per launch: rebuilding the controller (a re-test, a
+        # re-commit) keeps writing the same tailable file.
+        rebuilt = api._build_wanderer_controller()
+        assert rebuilt._prime_log is api._prime_log
+    finally:
+        api.shutdown_previews()
+
+
+def test_the_relay_declines_are_visible_at_the_bridge(tmp_path):
+    from tests.test_wanderer_controller import CapturingPrimeLog
+    from wingman.hotkeys import PrimeRecord
+
+    captured = CapturingPrimeLog()
+    api = make_api(tmp_path, prime_log=captured)
+    try:
+        # No focused client: the bridge-side identity lookup declines, the
+        # oldest failure mode the shipped app answers with pure silence.
+        api._relay_prime(
+            PrimeRecord(
+                jcode="J1",
+                flags=("e",),
+                event="a" * 32,
+                captured=time.time(),
+            )
+        )
+        assert captured.wait_for(lambda e: e, 2)
+        (record,) = captured.captured()
+        assert record["event"] == "declined"
+        assert record["reason"] == "no_identity"
+    finally:
+        api.shutdown_previews()
+
+
+def test_the_sink_opens_the_real_log_file_under_the_state_dir(tmp_path):
+    import json
+
+    from wingman import paths
+
+    sink_path = paths.log_dir() / primelog.LOG_NAME
+    assert not sink_path.exists()
+    sink = primelog.enable()
+    try:
+        assert sink is not None
+        sink.write("prime_received", engine_event="e" * 32, system_name="J1")
+    finally:
+        assert sink_path.exists()
+    record = json.loads(sink_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["event"] == "prime_received"
+    assert record["system_name"] == "J1"
