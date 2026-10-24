@@ -4,7 +4,7 @@
 # depends on whatever pip happens to resolve. build.yml:41 records what
 # a silently-wrong install costs here.
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
