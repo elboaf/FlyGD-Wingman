@@ -2,6 +2,7 @@
 
 import json
 import threading
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -461,3 +462,152 @@ def test_push_eve_status_survives_raising_identity_and_staging(tmp_path):
     handler, payload = pushes(api._window)[-1]
     assert handler == "onEveStatus"
     assert payload["prime"] is not None
+
+
+# ---- Bounded no_identity retry (#349) --------------------------------------
+
+
+class StoppedEngine:
+    """A bookmark engine whose status is anything but running."""
+
+    def __init__(self, state="stopped"):
+        self.state = state
+
+    def status(self, enabled, now=None):
+        from wingman import hotkeys
+
+        return hotkeys.EngineStatus(state=self.state)
+
+
+def retry_api(tmp_path, *, identity_sequence, focused=object()):
+    """An Api whose map answers identities from a sequence, tick by tick."""
+    api, _stub = relay_api(tmp_path, None)
+    api._state.engine = RelayEngine(None)
+    api._wanderer = StubWanderer()
+    api._wanderer.identity_sequence = list(identity_sequence)
+    api._wanderer.identity = None
+    api._preview_host = FocusedHost() if focused is None else focused
+    return api, api._wanderer
+
+
+def _sequence_identity(self, session):
+    if getattr(self, "identity_sequence", None):
+        return self.identity_sequence.pop(0)
+    return self.identity
+
+
+StubWanderer.prime_identity = _sequence_identity
+
+
+def test_no_identity_parks_the_prime_with_its_client_and_retries(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    # Tick 1: identity is None -> parked. Tick 2: identity returns -> staged.
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None, PrimeIdentity(character_id=1, solar_system_id=2)],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()
+    assert stub.staged == []
+    assert api._pending_prime is not None
+    assert api._pending_prime[1] == session
+
+    # The engine's standing prime persists; the second tick stages it.
+    api._push_eve_status()
+    assert len(stub.staged) == 1
+    assert api._pending_prime is None
+
+
+def test_retry_never_fires_when_the_engine_is_not_running(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()  # parks
+    assert api._pending_prime is not None
+
+    # Engine gone (stopped/stale/off all answer prime=None without it).
+    api._state.engine = StoppedEngine("stopped")
+    api._push_eve_status()
+    assert stub.staged == []
+    # Suspended, not silently kept: no running engine means no retry.
+    assert api._pending_prime is None
+
+
+def test_retry_never_stages_under_a_newly_focused_client(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+
+    alice = ClientSessionId(16, 101, "Alice", 1)
+    bob = ClientSessionId(17, 102, "Bob", 1)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: alice),
+    )
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()  # Alice captures; map identity is None -> parked
+
+    # Focus moved to Bob by the next tick. The parked prime must drop,
+    # never stage under Bob's identity.
+    api._preview_host = SimpleNamespace(focused_session=lambda: bob)
+    stub.identity = "BOBS-IDENTITY"
+    api._push_eve_status()
+    assert stub.staged == []
+
+
+def test_retry_requires_a_provable_focused_client(tmp_path):
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()  # parked
+
+    # Focus became unprovable: nothing stages, and the park is dropped --
+    # the #296 rule is a front-door gate, not a retry-eligible state.
+    api._preview_host = SimpleNamespace(focused_session=lambda: None)
+    stub.identity = "IDENTITY"
+    api._push_eve_status()
+    assert stub.staged == []
+    assert api._pending_prime is None
+
+
+def test_a_capture_with_no_provable_client_is_never_parked(tmp_path):
+    api, stub = retry_api(tmp_path, identity_sequence=[], focused=None)
+    api._preview_host = SimpleNamespace(focused_session=lambda: None)
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()
+    assert stub.staged == []
+    assert api._pending_prime is None
+
+
+def test_a_parked_prime_past_the_consume_window_stops_retrying(tmp_path):
+    import time
+
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    # A prime captured before the consume window: every relay tick,
+    # including the standing re-offer, drops it instead of parking.
+    api._state.engine = RelayEngine(prime_record(captured=time.time() - 60 * 16))
+    api._push_eve_status()
+    assert stub.staged == []
+    assert api._pending_prime is None

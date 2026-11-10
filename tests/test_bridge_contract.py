@@ -1011,7 +1011,11 @@ def test_prime_relay_keeps_the_page_payload_and_the_outbound_lane_separate():
     # The relay only feeds the controller's staging lane; it never touches
     # the page push, which _push_eve_status owns.
     assert "self._push(" not in body
-    assert "stage_prime" in body and "_wanderer_prime_identity" in body
+    # #349's bounded retry joins the focused session and the map identity
+    # separately: the session must be readable even when the identity is
+    # not, because the parked retry binds to the client, not the map.
+    assert "stage_prime" in body and "_focused_prime_session" in body
+    assert "prime_identity" in body and "_pending_prime" in body
     # The #295 page payload contract is untouched by #297.
     push_body = api_method_body("_push_eve_status")
     assert '"prime"' in push_body and '"onEveStatus"' in push_body
