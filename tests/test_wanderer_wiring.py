@@ -378,12 +378,16 @@ class RelayEngine:
 
 
 class StubWanderer:
-    def __init__(self, identity="IDENTITY"):
+    def __init__(self, identity="IDENTITY", identity_sequence=()):
         self.identity = identity
+        # Pop answers front-to-back, then fall back to `identity`.
+        self.identity_sequence = list(identity_sequence)
         self.staged = []
         self.fail = False
 
     def prime_identity(self, session):
+        if self.identity_sequence:
+            return self.identity_sequence.pop(0)
         return self.identity
 
     def stage_prime(self, prime, identity):
@@ -479,24 +483,17 @@ class StoppedEngine:
         return hotkeys.EngineStatus(state=self.state)
 
 
-def retry_api(tmp_path, *, identity_sequence, focused=object()):
+def retry_api(tmp_path, *, identity_sequence, focused=object):
     """An Api whose map answers identities from a sequence, tick by tick."""
     api, _stub = relay_api(tmp_path, None)
     api._state.engine = RelayEngine(None)
-    api._wanderer = StubWanderer()
-    api._wanderer.identity_sequence = list(identity_sequence)
-    api._wanderer.identity = None
-    api._preview_host = FocusedHost() if focused is None else focused
+    api._wanderer = StubWanderer(identity=None, identity_sequence=identity_sequence)
+    api._preview_host = (
+        SimpleNamespace(focused_session=lambda: focused())
+        if callable(focused)
+        else focused
+    )
     return api, api._wanderer
-
-
-def _sequence_identity(self, session):
-    if getattr(self, "identity_sequence", None):
-        return self.identity_sequence.pop(0)
-    return self.identity
-
-
-StubWanderer.prime_identity = _sequence_identity
 
 
 def test_no_identity_parks_the_prime_with_its_client_and_retries(tmp_path):
@@ -586,7 +583,11 @@ def test_retry_requires_a_provable_focused_client(tmp_path):
 
 
 def test_a_capture_with_no_provable_client_is_never_parked(tmp_path):
-    api, stub = retry_api(tmp_path, identity_sequence=[], focused=None)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[],
+        focused=SimpleNamespace(focused_session=lambda: None),
+    )
     api._preview_host = SimpleNamespace(focused_session=lambda: None)
     api._state.engine = RelayEngine(prime_record())
     api._push_eve_status()
