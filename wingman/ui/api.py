@@ -709,6 +709,12 @@ class Api:
         self._profiles = self._build_profiles_controller()
         self._settingsshare = self._build_settings_share_controller()
         self._wanderer = self._build_wanderer_controller()
+        # Bounded retry for no_identity declines (#349): a prime declined
+        # because the focused client's map identity was unavailable is
+        # re-offered on subsequent poll ticks until identity returns or the
+        # prime goes stale. Cleared immediately when a newer prime arrives
+        # or when the stored prime is successfully staged.
+        self._pending_prime = None
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
                 self._receive_fleet_sharing_status
@@ -4227,6 +4233,10 @@ class Api:
         status = engine.status(enabled=enabled)
         if status.prime is not None:
             self._relay_prime(status.prime)
+        elif self._pending_prime is not None:
+            # Engine has no new prime but we have a previously declined one.
+            # Re-offer it; if identity is still None it will be re-parked.
+            self._relay_prime(self._pending_prime)
         self._push(
             "onEveStatus",
             {
@@ -5247,7 +5257,16 @@ class Api:
                 return
             identity = self._wanderer_prime_identity()
             if identity is None:
+                # Bounded retry: remember this prime and re-offer it on
+                # the next poll tick when identity may have returned.
+                # Replaces the old immediate drop (#349).
+                self._pending_prime = prime
                 return
+            # Identity is available; offer the prime. If a previously
+            # declined prime is still pending, clear it once we're moving
+            # forward with the current one.
+            if self._pending_prime is not None:
+                self._pending_prime = None
             self._wanderer.stage_prime(prime, identity)
         except Exception:
             logger.debug("Prime relay degraded", exc_info=True)
