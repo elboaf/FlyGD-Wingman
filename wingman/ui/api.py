@@ -709,6 +709,12 @@ class Api:
         self._profiles = self._build_profiles_controller()
         self._settingsshare = self._build_settings_share_controller()
         self._wanderer = self._build_wanderer_controller()
+        # Bounded retry for no_identity declines (#349): a prime whose
+        # focused client was readable but whose map identity was not is
+        # parked as (prime, session) and re-offered on later poll ticks
+        # while that same client still holds focus, until the consume
+        # window expires or a newer capture supersedes it.
+        self._pending_prime = None
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
                 self._receive_fleet_sharing_status
@@ -4225,8 +4231,19 @@ class Api:
             return
         enabled = self._state.settings["eve_bookmarks"]["enabled"]
         status = engine.status(enabled=enabled)
-        if status.prime is not None:
-            self._relay_prime(status.prime)
+        if status.state == "running":
+            # The standing engine prime is the only retry carrier when the
+            # engine runs. A retained prime is re-offered only here: an
+            # off/stopped/stale status answers prime=None without it, and
+            # its states are never a retry signal (#349 review).
+            if status.prime is not None:
+                self._relay_prime(status.prime)
+            elif self._pending_prime is not None:
+                self._relay_prime(self._pending_prime[0])
+        elif self._pending_prime is not None:
+            # The engine can no longer re-offer -- restart resets its
+            # prime state -- so a retained capture is suspended, not kept.
+            self._pending_prime = None
         self._push(
             "onEveStatus",
             {
@@ -5244,13 +5261,48 @@ class Api:
             if not isinstance(captured, (int, float)) or isinstance(captured, bool):
                 return
             if time.time() - float(captured) > PRIME_MAX_AGE_SECONDS:
+                self._pending_prime = None
                 return
-            identity = self._wanderer_prime_identity()
+            # The #296 rule at the relay's front door: the focused client
+            # must be provable before anything stages. A capture whose
+            # client cannot be named is dropped, not parked (#349 review).
+            session = self._focused_prime_session()
+            if session is None:
+                self._pending_prime = None
+                return
+            # A parked retry rides only while its own client holds focus:
+            # staging under a newly focused client would prime the wrong
+            # character (#349 review).
+            pending = self._pending_prime
+            if pending is not None and pending[1] != session:
+                self._pending_prime = None
+                return
+            identity = self._wanderer.prime_identity(session)
             if identity is None:
+                # Bounded retry (#349): park with the client that ran Set
+                # Root and re-offer while that same client holds focus.
+                # Identity returns in seconds in the field (25 of 27
+                # observed declines self-healed); the consume window above
+                # bounds the rest.
+                self._pending_prime = (prime, session)
                 return
+            self._pending_prime = None
             self._wanderer.stage_prime(prime, identity)
         except Exception:
             logger.debug("Prime relay degraded", exc_info=True)
+
+    def _focused_prime_session(self):
+        """The focused client's session, or None -- the identity read minus
+        the map join (#349). A raising focus read degrades to None: the
+        prime relay must never cost the Set Root flow an exception."""
+        host = self._preview_host
+        if host is None:
+            return None
+        try:
+            return host.focused_session()
+        except Exception:
+            logger.debug("Could not read the focused preview session", exc_info=True)
+            return None
 
     def _wanderer_prime_identity(self):
         """The focused client's map identity, or None (#296, #297's input).
