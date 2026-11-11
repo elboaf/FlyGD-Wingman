@@ -1019,3 +1019,43 @@ def test_prime_relay_keeps_the_page_payload_and_the_outbound_lane_separate():
     # The #295 page payload contract is untouched by #297.
     push_body = api_method_body("_push_eve_status")
     assert '"prime"' in push_body and '"onEveStatus"' in push_body
+
+
+def test_the_prime_lifecycle_rides_the_existing_status_push():
+    """#353 adds one field to onEveStatus, not a second push: the sig-bar
+    mirror in _push fans the new field out for free, and a separate
+    prime push would double the poll traffic for data the status push
+    already carries."""
+    push_body = api_method_body("_push_eve_status")
+    assert '"prime_state"' in push_body
+    assert '"onEveStatus"' in push_body
+    # The word comes from the controller, and the engine's prime is the
+    # gate: no standing prime, no word, regardless of what the controller
+    # still remembers.
+    assert "prime_lifecycle" in push_body and "status.prime is not None" in push_body
+    # The relay hands the focused session over with the prime, so the
+    # controller can join consume detection later without re-deriving it.
+    relay_body = api_method_body("_relay_prime")
+    assert re.search(r"stage_prime\(prime, identity, session\)", relay_body)
+
+
+def test_the_prime_dot_is_page_state_on_both_strips():
+    """One dot per strip, severity-token classes only, no inline colour,
+    and the ~10s consumed pulse is a page timer that never crosses the
+    bridge -- sort order / row focus / countdown client-state rules apply
+    unchanged."""
+    for page, element in (("index.html", "eve-prime-dot"), ("sigbar.html", "bar-prime-dot")):
+        markup = (WEB / page).read_text(encoding="utf-8")
+        assert markup.count(f'id="{element}"') == 1, page
+    strip_js = (WEB / "bookmarks.js").read_text(encoding="utf-8")
+    bar_js = (WEB / "sigbar.js").read_text(encoding="utf-8")
+    for source in (strip_js, bar_js):
+        assert "PRIME_PULSE_MS = 10000" in source
+        # The pulse's episode key is the engine prime's event id: the
+        # standing prime re-answers 'consumed' on every tick, and only
+        # the key stops it from restarting the pulse forever.
+        assert "primePulseEvent" in source
+    # No inline colour decisions outside the stylesheet's token block.
+    assert "style=" not in bar_js and "style=" not in strip_js
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert css.count(".eve-prime-dot") >= 4

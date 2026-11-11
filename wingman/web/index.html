@@ -3076,6 +3076,13 @@
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>
         <span class="evelabel">NEXT</span><span id="eve-next">—</span>
+        <!-- The pre-jump prime's lifecycle dot (#353). Same .led shape the
+             pills use; the severity token is set from prime_state in the
+             onEveStatus handler, and grey (--text-faint) is its resting
+             colour whenever Python answers no word: nothing primed, no
+             prime token, or the 15-minute TTL lapsed. The strip's own
+             [hidden] still covers users who never turn bookmarks on. -->
+        <span class="led eve-prime-dot" id="eve-prime-dot"></span>
         <span class="evewarn" id="eve-warn" hidden>⚠</span>
       </span>
       <!-- `Idle`, not `Ready`. This is the strip's resting text, which is

@@ -77,6 +77,12 @@
       <span class="evelabel">SIG</span><span id="bar-sig">&mdash;</span>
       <span class="evelabel">ROOT</span><span id="bar-root">&mdash;</span>
       <span class="evelabel">NEXT</span><span id="bar-next">&mdash;</span>
+      <!-- The prime lifecycle dot (#353). Same shape and grey resting
+           colour as the main strip's dot: grey is the "no prime to
+           report" state the em-dashes already express for SIG/ROOT/NEXT,
+           and a fixed 7px dot keeps the bar's measured width stable
+           across the whole lifecycle, so fit never fights the state. -->
+      <span class="led eve-prime-dot" id="bar-prime-dot"></span>
     </span>
   </div>
   <script src="themeapply.js"></script>

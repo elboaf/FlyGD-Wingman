@@ -390,11 +390,14 @@ class StubWanderer:
             return self.identity_sequence.pop(0)
         return self.identity
 
-    def stage_prime(self, prime, identity):
+    def stage_prime(self, prime, identity, session=None):
         if self.fail:
             raise RuntimeError("staging exploded")
-        self.staged.append((prime, identity))
+        self.staged.append((prime, identity, session))
         return True
+
+    def prime_lifecycle(self):
+        return None
 
 
 def prime_record(captured=None):
@@ -411,8 +414,14 @@ def prime_record(captured=None):
 
 
 class FocusedHost:
+    def __init__(self):
+        # One stable sentinel: the relay now hands the focused session to
+        # the staging lane, so a test that inspects it needs the SAME
+        # object across calls, not a fresh one each time.
+        self.session = object()
+
     def focused_session(self):
-        return object()
+        return self.session
 
 
 def relay_api(tmp_path, prime):
@@ -431,10 +440,11 @@ def test_push_eve_status_relays_a_fresh_prime_with_identity(tmp_path):
     api, stub = relay_api(tmp_path, prime_record())
     api._push_eve_status()
     assert len(stub.staged) == 1
-    relayed, identity = stub.staged[0]
+    relayed, identity, session = stub.staged[0]
     assert isinstance(relayed, PrimeRecord)
     assert relayed.event == "0f0e0d0c0b0a09080706050403020100"
     assert identity == "IDENTITY"
+    assert session == api._preview_host.focused_session()
     # The page push is unchanged by staging: the prime still rides onEveStatus.
     handler, payload = pushes(api._window)[-1]
     assert handler == "onEveStatus"
@@ -448,6 +458,8 @@ def test_push_eve_status_relays_nothing_without_a_prime(tmp_path):
     handler, payload = pushes(api._window)[-1]
     assert handler == "onEveStatus"
     assert payload["prime"] is None
+    # No prime, no lifecycle word: the dot reads grey.
+    assert payload["prime_state"] is None
 
 
 def test_push_eve_status_skips_a_prime_older_than_the_consume_window(tmp_path):
@@ -612,3 +624,61 @@ def test_a_parked_prime_past_the_consume_window_stops_retrying(tmp_path):
     api._push_eve_status()
     assert stub.staged == []
     assert api._pending_prime is None
+
+
+# ---- Prime lifecycle word on the status push (#353) ------------------------
+
+
+def lifecycle_api(tmp_path, prime):
+    """A relay Api whose Wanderer stub answers a fixed lifecycle word."""
+    from wingman.wanderer.controller import PRIME_STAGED
+
+    api, stub = relay_api(tmp_path, prime)
+    stub.lifecycle = PRIME_STAGED
+
+    def prime_lifecycle():
+        return stub.lifecycle
+
+    stub.prime_lifecycle = prime_lifecycle
+    return api, stub
+
+
+def test_prime_state_rides_the_status_push_while_a_prime_stands(tmp_path):
+    api, stub = lifecycle_api(tmp_path, prime_record())
+    api._push_eve_status()
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime_state"] == "staged"
+
+    stub.lifecycle = "consumed"
+    api._push_eve_status()
+    assert pushes(api._window)[-1][1]["prime_state"] == "consumed"
+
+
+def test_prime_state_is_absent_when_the_engine_primed_nothing(tmp_path):
+    """A Set Root that primes nothing must not inherit the previous
+    capture's word: grey until a prime stands again."""
+    api, _stub = lifecycle_api(tmp_path, prime_record())
+    api._push_eve_status()
+    assert pushes(api._window)[-1][1]["prime_state"] == "staged"
+
+    api._state.engine = RelayEngine(None)
+    api._push_eve_status()
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime"] is None
+    assert payload["prime_state"] is None
+
+
+def test_prime_state_survives_a_raising_lifecycle_read(tmp_path):
+    """The readout must never cost the status push an exception -- a
+    degraded lifecycle degrades to grey, never to a dead poll tick."""
+    api, _stub = lifecycle_api(tmp_path, prime_record())
+    api._wanderer.prime_lifecycle = lambda: (_ for _ in ()).throw(
+        RuntimeError("lifecycle exploded")
+    )
+    api._push_eve_status()
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime"] is not None
+    assert payload["prime_state"] is None

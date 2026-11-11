@@ -101,6 +101,42 @@ test('Refresh remains exactly one local read and preserves native title identiti
   assert.match(p.el('eve-windows').textContent, /Mapper.*not running/);
   assert.equal(p.el('eve-windows').querySelector('label').title, 'EVE - Mapper');
 });
+test('the prime lifecycle dot paints every word and rests grey', async () => {
+  const p = page(); p.bookmarks(payload());
+  const dot = p.el('eve-prime-dot');
+  const sevs = () => ['ok', 'warn', 'err', 'pulse'].filter(c => dot.classList.contains(c));
+  const paint = payload => { p.status(Object.assign(
+    {state: 'running', sig: 'MYR', root: 'J123456', next_num: '21', next_alpha: 'A',
+     failed_binds: [], last_error: ''}, payload)); };
+  // Grey at rest: no prime_state, no severity class at all.
+  paint({prime_state: undefined});
+  assert.deepEqual(sevs(), []);
+  for (const [word, token] of [['staging', 'warn'], ['staged', 'ok'], ['failed', 'err']]) {
+    paint({prime: {event: 'a'}, prime_state: word});
+    assert.equal(dot.classList.contains(token), true, word);
+    assert.equal(dot.classList.contains('pulse'), false, word);
+  }
+  // Consumed arms the ~10s pulse exactly once per episode, keyed by the
+  // prime's event id: the standing prime re-answers 'consumed' on every
+  // poll tick, and the repeats must repaint grey, not restart the clock.
+  paint({prime: {event: 'a'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('ok') && dot.classList.contains('pulse'), true);
+  p.status({state: 'running', prime: {event: 'a'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('pulse'), true, 'same episode rides the open pulse');
+  // A new event restarts the machine: its consume pulses fresh.
+  paint({prime: {event: 'b'}, prime_state: 'staged'});
+  assert.equal(dot.classList.contains('pulse'), false);
+  paint({prime: {event: 'b'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('pulse'), true, 'new event pulses again');
+  // Any other word disarms: a Set Root restarts from yellow.
+  paint({prime: {event: 'b'}, prime_state: 'staging'});
+  assert.equal(dot.classList.contains('warn') && !dot.classList.contains('pulse'), true);
+  // The engine stopping greys the dot and forgets the episode.
+  p.status({state: 'stopped', prime_state: undefined});
+  assert.deepEqual(sevs(), []);
+  paint({prime: {event: 'c'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('pulse'), true, 'a fresh episode pulses after a stop');
+});
 test('SIG retains shared push-owned choice, tooltip, accessible name and pressed state', async () => {
   const p = page(); await turn(); const btn = p.el('btn-sigbar');
   assert.equal(btn.textContent.trim(), 'SIG');

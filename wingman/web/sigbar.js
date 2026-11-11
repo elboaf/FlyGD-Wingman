@@ -47,6 +47,70 @@
   }
 
   // ---- handlers (globals, called by Api._push) ------------------------
+  // The prime lifecycle dot (#353): this page shares no code with the
+  // main page, so it carries its own copy of the word->severity map and
+  // the ~10s consumed pulse (page state; Python schedules nothing). Grey
+  // is the resting colour -- absent prime_state just unsets the classes.
+  // The pulse's episode key is the prime's EVENT id: the engine keeps
+  // its standing prime until the next Set Root, so Python keeps
+  // answering 'consumed' for the same event on every tick -- keying by
+  // event is what arms the pulse once and keeps later pushes grey
+  // instead of resurrecting solid green. The dot's width is fixed, so
+  // the bar's fit never moves across the lifecycle.
+  var PRIME_PULSE_MS = 10000;
+  var primePulseTimer = null;
+  var primePulseEvent = null;
+
+  function renderPrimeDot(primeState, primeEvent, live) {
+    var el = document.getElementById('bar-prime-dot');
+    if (!live) {
+      if (primePulseEvent !== null) {
+        if (primePulseTimer !== null) clearTimeout(primePulseTimer);
+        primePulseTimer = null;
+        primePulseEvent = null;
+        el.classList.remove('pulse');
+      }
+      el.classList.remove('ok');
+      el.classList.remove('warn');
+      el.classList.remove('err');
+      return;
+    }
+    if (primeState === 'consumed') {
+      if (primePulseEvent === primeEvent && primePulseTimer === null) {
+        // This event's pulse already ran to the end: stay grey rather
+        // than resurrect solid green on the next poll tick.
+        el.classList.remove('ok');
+      el.classList.remove('warn');
+      el.classList.remove('err');
+        return;
+      }
+      if (primePulseEvent !== primeEvent) {
+        el.classList.remove('warn');
+        el.classList.remove('err');
+        el.classList.add('ok');
+        el.classList.add('pulse');
+        primePulseEvent = primeEvent;
+        if (primePulseTimer !== null) clearTimeout(primePulseTimer);
+        primePulseTimer = setTimeout(function () {
+          primePulseTimer = null;
+          // The pulse ends in grey -- the prime is consumed and gone.
+          el.classList.remove('pulse');
+          el.classList.remove('ok');
+        }, PRIME_PULSE_MS);
+      }
+      return;
+    }
+    if (primePulseEvent !== null) {
+      if (primePulseTimer !== null) clearTimeout(primePulseTimer);
+      primePulseTimer = null;
+      primePulseEvent = null;
+      el.classList.remove('pulse');
+    }
+    el.classList.toggle('ok', primeState === 'staged');
+    el.classList.toggle('warn', primeState === 'staging');
+    el.classList.toggle('err', primeState === 'failed');
+  }
+
   window.onEveStatus = function (payload) {
     payload = payload || {};
     // Values are shown ONLY while running; every other state renders the
@@ -64,6 +128,8 @@
       live && payload.next_num
         ? payload.next_num + ' / ' + (payload.next_alpha || '\u2014') : '\u2014';
     document.getElementById('sigbar-stat').classList.toggle('degraded', !live);
+    renderPrimeDot(payload.prime_state,
+                   payload.prime && payload.prime.event, live);
     fit();
   };
 

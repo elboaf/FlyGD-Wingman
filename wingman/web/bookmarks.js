@@ -83,6 +83,10 @@
       // WINGMAN: clear the suspended indicator after a save.
       var suspRow = WM.el('eve-suspended-row');
       if (suspRow) suspRow.hidden = true;
+      // And grey the prime dot (#353): no engine block means no prime
+      // fact -- the poll handler's !live path does the same when the
+      // engine stops later on.
+      renderPrimeDot(WM.el('eve-prime-dot'), 'off', undefined, undefined);
       return;
     }
     // The reason matters more than the state: "Stopped" alone leaves the
@@ -115,6 +119,85 @@
     el.classList.toggle('err', bad);
     el.classList.toggle('pill', state === 'running' && !bad);
     el.classList.toggle('ok', state === 'running' && !bad);
+  }
+
+  // ---- the prime lifecycle dot (#353) ---------------------------------
+  // One shared renderer for the strip (the bar registers its own copy:
+  // the pages share no code). Python answers one word on every
+  // onEveStatus -- 'staging' | 'staged' | 'consumed' | 'failed', absent
+  // for no prime -- and this maps it onto severity tokens the stylesheet
+  // already owns; grey is the resting colour, so absence of a word just
+  // unsets every class. The ~10s consumed pulse is PAGE state: the bridge
+  // carries semantic events, not widget calls, and a countdown is client
+  // state, so the timer lives here.
+  //
+  // The episode key is the prime's EVENT id, and it matters because the
+  // engine keeps its standing prime until the next Set Root: after a
+  // consume, Python keeps answering 'consumed' for the same event on
+  // every poll tick. Keying by event is what makes the pulse arm once --
+  // later pushes for the same consumed event repaint grey (the pulse
+  // ended; the prime is gone) instead of restarting it -- and what lets a
+  // NEW event's consume pulse again. Any other word disarms the timer,
+  // which is also the spec's reset: a new Set Root while pulsing restarts
+  // the machine from yellow.
+  var PRIME_PULSE_MS = 10000;
+  var primePulseTimer = null;
+  var primePulseEvent = null;
+
+  function disarmPrimePulse() {
+    if (primePulseTimer !== null) {
+      clearTimeout(primePulseTimer);
+      primePulseTimer = null;
+    }
+    primePulseEvent = null;
+    var el = WM.el('eve-prime-dot');
+    if (el) el.classList.remove('pulse');
+  }
+
+  function renderPrimeDot(el, state, primeState, primeEvent) {
+    if (!el) return;
+    var live = state === 'running';
+    if (!live) {
+      // Not running means no prime fact at all: grey, and the episode
+      // forgets its key so a later consume pulses from scratch.
+      disarmPrimePulse();
+      el.classList.remove('ok');
+      el.classList.remove('warn');
+      el.classList.remove('err');
+      return;
+    }
+    if (primeState === 'consumed') {
+      if (primePulseEvent === primeEvent && primePulseTimer === null) {
+        // This event's pulse already ran to the end: stay grey rather
+        // than resurrect solid green on the next poll tick.
+        el.classList.remove('ok');
+      el.classList.remove('warn');
+      el.classList.remove('err');
+        return;
+      }
+      if (primePulseEvent !== primeEvent) {
+        el.classList.remove('warn');
+        el.classList.remove('err');
+        el.classList.add('ok');
+        el.classList.add('pulse');
+        primePulseEvent = primeEvent;
+        if (primePulseTimer !== null) clearTimeout(primePulseTimer);
+        primePulseTimer = setTimeout(function () {
+          primePulseTimer = null;
+          // The pulse ends in grey -- the prime is consumed and gone.
+          el.classList.remove('pulse');
+          el.classList.remove('ok');
+        }, PRIME_PULSE_MS);
+      }
+      return;
+    }
+    // staging / staged / failed / absent: solid colour by word, no
+    // pulse. Reaching here also retires any pulse state -- the spec's
+    // "a new Set Root restarts the machine from yellow".
+    if (primePulseEvent !== null) disarmPrimePulse();
+    el.classList.toggle('ok', primeState === 'staged');
+    el.classList.toggle('warn', primeState === 'staging');
+    el.classList.toggle('err', primeState === 'failed');
   }
 
   // Every EVE client titles its window "EVE - <character>", so a list of
@@ -533,6 +616,11 @@
     if (suspRow) {
       suspRow.hidden = !live || !payload.suspended;
     }
+
+    // The prime lifecycle dot (#353): grey (resting) unless Python
+    // answers a word for the standing prime.
+    renderPrimeDot(WM.el('eve-prime-dot'), payload.state, payload.prime_state,
+                   payload.prime && payload.prime.event);
 
     host.classList.toggle('degraded', !live);
   });

@@ -1137,3 +1137,146 @@ def test_stage_prime_stages_a_replacement_event_while_a_lane_is_free(rig_tmp):
         call.reply(Staged())
     finally:
         rig.close()
+
+
+# ---- Prime lifecycle readout (#353) ---------------------------------------
+
+
+def wait_for_outcome(rig):
+    """The lane sets the health wake only after writing its outcome; wait
+    on that, not on time, then read the word."""
+    assert rig.controller._health_wake.wait(2)
+    rig.controller._health_wake.clear()
+
+
+def test_lifecycle_is_none_until_a_prime_is_staged(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.prime_lifecycle() is None
+        assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+        assert rig.controller.prime_lifecycle() == "staging"
+    finally:
+        rig.close()
+
+
+def test_lifecycle_answers_staged_after_the_server_accepts(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+        rig.staging.call(1).reply(Staged())
+        wait_for_outcome(rig)
+        assert rig.controller.prime_lifecycle() == "staged"
+    finally:
+        rig.close()
+
+
+def test_lifecycle_answers_failed_when_the_lane_gives_up(rig_tmp):
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+        for number in (1, 2, 3):
+            rig.staging.call(number).reply(StagingFailure("timeout"))
+        wait_for_outcome(rig)
+    finally:
+        rig.close()
+
+
+def test_lifecycle_consumes_when_the_map_shows_the_staged_character_moved(
+    rig_tmp,
+):
+    """Solid green flips to consumed only when the worker's fresh identity
+    join answers the same character OUT of the origin system -- the
+    condition ADR 0001's `update_location` consumes on."""
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    session = ClientSessionId(101, 201, "First Pilot", 1)
+    # The fixture map's First Pilot row: character 90000001, currently at
+    # 30000142 -- the origin system a real stage would have joined from.
+    identity = make_identity(character_id=90000001, solar_system_id=30000142)
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), identity, session)
+        rig.staging.call(1).reply(Staged())
+        wait_for_outcome(rig)
+
+        # Same system, same character: a fresh row is not a move.
+        assert rig.controller.prime_lifecycle() == "staged"
+
+        # The map now shows First Pilot out of the origin system.
+        def moved(s):
+            return (
+                PrimeIdentity(character_id=90000001, solar_system_id=30987654)
+                if s == session
+                else None
+            )
+
+        rig.worker.prime_identity = moved  # type: ignore[method-assign]
+        assert rig.controller.prime_lifecycle() == "consumed"
+        # Latched: the word stays consumed without re-probing.
+        assert rig.controller.prime_lifecycle() == "consumed"
+    finally:
+        rig.close()
+
+
+def test_lifecycle_never_consumes_on_a_replaced_character_or_stale_row(rig_tmp):
+    from wingman.telemetry.model import ClientSessionId
+    from wingman.wanderer.model import PrimeIdentity
+
+    session = ClientSessionId(101, 201, "First Pilot", 1)
+    identity = make_identity(character_id=90000001, solar_system_id=30000142)
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), identity, session)
+        rig.staging.call(1).reply(Staged())
+        wait_for_outcome(rig)
+
+        # A fresh row naming a DIFFERENT character is not this prime's
+        # jump: the map's identity join keys by the origin client, so a
+        # renamed/replaced row answers None there.
+        rig.worker.prime_identity = lambda s: (  # type: ignore[method-assign]
+            PrimeIdentity(character_id=90000002, solar_system_id=1)
+            if s == session
+            else None
+        )
+        assert rig.controller.prime_lifecycle() == "staged"
+
+        # No fresh row at all (stale/untracked) is equally not a jump.
+        rig.worker.prime_identity = lambda s: None  # type: ignore[method-assign]
+        assert rig.controller.prime_lifecycle() == "staged"
+    finally:
+        rig.close()
+
+
+def test_lifecycle_tracks_only_the_newest_event(rig_tmp):
+    """The server keeps one active prime per character+map: the word is
+    the newest handoff's, and a stale lane draining an old record cannot
+    overwrite a newer run's outcome."""
+    from wingman.wanderer.staging import StagingFailure
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+        # A replacement event while the first run is in flight.
+        replacement = make_prime(event="1a2b3c4d5e6f778899aabbccddeeff00")
+        assert rig.controller.stage_prime(replacement, make_identity(), None)
+        rig.staging.call(1).reply(Staged())  # stale lane's first record
+        rig.staging.call(2).reply(StagingFailure("timeout"))  # replacement
+        rig.staging.call(3).reply(StagingFailure("timeout"))
+        rig.staging.call(4).reply(StagingFailure("timeout"))
+        wait_for_outcome(rig)
+    finally:
+        rig.close()
+
+
+def test_lifecycle_stays_grey_while_staging_and_resets_with_the_runtime(rig_tmp):
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+        assert rig.controller.prime_lifecycle() == "staging"
+        rig.controller.close_admission()
+        assert rig.controller.prime_lifecycle() is None
+    finally:
+        rig.close()
