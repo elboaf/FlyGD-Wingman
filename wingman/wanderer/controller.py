@@ -66,6 +66,11 @@ PRIME_STAGING = "staging"
 PRIME_STAGED = "staged"
 PRIME_CONSUMED = "consumed"
 PRIME_FAILED = "failed"
+# The server honors a staged prime for 15 minutes (#353's TTL edge):
+# solid green past that would be a lie, so prime_lifecycle() stops
+# answering STAGED once the stage is this old. Mirrors Api's
+# PRIME_MAX_AGE_SECONDS, which bounds the same window capture-side.
+PRIME_TTL_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -163,12 +168,13 @@ class WandererController:
         self._staging_thread: threading.Thread | None = None
         self._staging_pending: tuple | None = None
         # Prime lifecycle readout (#353): the newest event handed to the
-        # lane and the word the lane last earned for it. Absence of a
-        # tracked event is the grey answer -- no prime, nothing to show.
-        # Origins holds the stage-time (character, system, client) per
-        # event: consume detection joins a fresh snapshot row for that
-        # client against that system.
-        self._prime_track: tuple[str, str] | None = None
+        # lane, the word the lane last earned for it, and the monotonic
+        # stage time the TTL edge needs. Absence of a tracked event is
+        # the grey answer -- no prime, nothing to show. Origins holds
+        # the stage-time (character, system, client) per event: consume
+        # detection joins a fresh snapshot row for that client against
+        # that system.
+        self._prime_track: tuple[str, str, float] | None = None
         self._prime_origins: dict[str, _PrimeOrigin] = {}
 
     def _load_prime(self, section) -> str | None:
@@ -424,7 +430,7 @@ class WandererController:
             # prime staged from, and the client whose movement would be
             # the jump.
             tracked_event = record["event_id"]
-            self._prime_track = (tracked_event, PRIME_STAGING)
+            self._prime_track = (tracked_event, PRIME_STAGING, time.monotonic())
             self._prime_origins[tracked_event] = _PrimeOrigin(
                 character_id=identity.character_id,
                 solar_system_id=identity.solar_system_id,
@@ -496,7 +502,7 @@ class WandererController:
             if event is not None:
                 with self._staging_state:
                     if self._prime_track is not None and self._prime_track[0] == event:
-                        self._prime_track = (event, outcome)
+                        self._prime_track = (event, outcome, self._prime_track[2])
                 self._health_wake.set()
 
     def prime_lifecycle(self) -> str | None:
@@ -507,18 +513,29 @@ class WandererController:
         between handoff and outcome, PRIME_CONSUMED once the map itself
         shows the primed character moving -- the same condition the
         server consumes on (ADR 0001, `update_location`). None -- the
-        grey answer -- when nothing is tracked. Passive: it reads the
-        same fresh snapshot the identity join already serves, so it
-        disturbs nothing ADR 0001 protects (clipboard, preview, Set Root
-        flow). The tracked event is always the event ledger's newest
-        (append and track update share one lock), so no separate
-        eviction check is needed.
+        grey answer -- when nothing is tracked or the tracked stage has
+        outlived the server's 15-minute consume window: the server no
+        longer honors that prime, so green (or yellow) would be a lie.
+        Passive: it reads the same fresh snapshot the identity join
+        already serves, so it disturbs nothing ADR 0001 protects
+        (clipboard, preview, Set Root flow). The tracked event is always
+        the event ledger's newest (append and track update share one
+        lock), so no separate eviction check is needed.
         """
         with self._staging_state:
             tracked = self._prime_track
             if tracked is None:
                 return None
-            event, outcome = tracked
+            event, outcome, staged_at = tracked
+            # The TTL edge (#353): expired means grey, for the staged
+            # word and for staging -- a lane stuck past the window has
+            # nothing the server would accept either. Failed and
+            # consumed stay: a refusal and a jump do not expire.
+            if (
+                outcome in (PRIME_STAGED, PRIME_STAGING)
+                and time.monotonic() - staged_at > PRIME_TTL_SECONDS
+            ):
+                return None
             # Only a staged prime can be consumed: the other words are
             # final until a newer capture replaces them.
             if outcome != PRIME_STAGED:
@@ -526,7 +543,7 @@ class WandererController:
         if self._map_shows_consumed(event):
             with self._staging_state:
                 if self._prime_track is not None and self._prime_track[0] == event:
-                    self._prime_track = (event, PRIME_CONSUMED)
+                    self._prime_track = (event, PRIME_CONSUMED, staged_at)
             return PRIME_CONSUMED
         return outcome
 

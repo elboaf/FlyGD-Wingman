@@ -4253,13 +4253,30 @@ class Api:
         # degraded read degrades to grey like every optional read here:
         # raised out, it would cost the WHOLE status push, not just the
         # dot, and with it the poll tick's sig/root/next refresh.
-        try:
-            prime_state = (
-                self._wanderer.prime_lifecycle() if status.prime is not None else None
-            )
-        except Exception:
-            logger.debug("Prime lifecycle read degraded", exc_info=True)
-            prime_state = None
+        #
+        # The #349 parked-retry window is yellow too (#353): the prime is
+        # captured but unconfirmed, which is exactly the word for it. The
+        # controller was never handed that prime (the relay declined it),
+        # so the Api synthesizes "staging" while the park lives. The park
+        # dies at the same 15-minute consume window a relayed capture
+        # would -- the engine's standing `captured` clock bounds it -- so
+        # past the window the word is grey, not yellow.
+        prime_state = None
+        if status.prime is not None:
+            try:
+                prime_state = self._wanderer.prime_lifecycle()
+            except Exception:
+                logger.debug("Prime lifecycle read degraded", exc_info=True)
+                prime_state = None
+            if prime_state is None and self._pending_prime is not None:
+                try:
+                    captured = float(status.prime.captured)
+                except (TypeError, ValueError):
+                    captured = None
+                if captured is not None and time.time() - captured <= (
+                    PRIME_MAX_AGE_SECONDS
+                ):
+                    prime_state = "staging"
         self._push(
             "onEveStatus",
             {

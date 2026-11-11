@@ -264,8 +264,12 @@ reached through injected seams or lazy `windll` binding):
   strip's dot. Consumed is client-side inference — the worker's fresh
   identity join answering the origin character out of the origin system is
   the same condition the server consumes on — and the Api relays it as
-  `prime_state` on the existing `onEveStatus` push; a denied or exhausted
-  staging lane answers `failed`, and grey is "no word".
+  `prime_state` on the existing `onEveStatus` push. Grey is "no word": a
+  stage older than the 15-minute consume window answers None (green would
+  be a lie), while `failed` persists until the next Set Root. The Api also
+  synthesizes `staging` while a #349 parked retry is alive — the controller
+  was never handed that prime — bounded by the same window on the capture's
+  own `captured` clock.
   `model.py` pins the deployed v1 snapshot contract; `credentials.py`
   DPAPI-protects the entire URL/map/token binding separately from settings
   (the prime token has its own document). `client.py` makes one bounded HTTPS

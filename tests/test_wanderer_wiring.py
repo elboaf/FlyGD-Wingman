@@ -682,3 +682,54 @@ def test_prime_state_survives_a_raising_lifecycle_read(tmp_path):
     assert handler == "onEveStatus"
     assert payload["prime"] is not None
     assert payload["prime_state"] is None
+
+
+def test_prime_state_is_yellow_while_the_parked_retry_is_alive(tmp_path):
+    """#353's yellow includes the #349 parked-retry window: the prime is
+    captured but unconfirmed. The controller was never handed that
+    prime, so the Api synthesizes the word from its own park state."""
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    api, stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    api._state.engine = RelayEngine(prime_record())
+    api._push_eve_status()  # parks
+    assert api._pending_prime is not None
+    handler, payload = pushes(api._window)[-1]
+    assert handler == "onEveStatus"
+    assert payload["prime_state"] == "staging"
+
+    # Identity returns: the park stages, the controller owns the word.
+    from wingman.wanderer.model import PrimeIdentity
+
+    stub.identity_sequence.append(PrimeIdentity(character_id=1, solar_system_id=2))
+    api._push_eve_status()
+    assert api._pending_prime is None
+    assert pushes(api._window)[-1][1]["prime_state"] is None  # stub answers None
+
+
+def test_prime_state_greys_out_when_the_parked_capture_passes_the_window(tmp_path):
+    """The park is bounded by the same 15-minute consume window as any
+    capture: past it, yellow would claim a prime the server ignores."""
+    import time
+
+    from wingman.telemetry.model import ClientSessionId
+
+    session = ClientSessionId(16, 101, "Alice", 1)
+    api, _stub = retry_api(
+        tmp_path,
+        identity_sequence=[None],
+        focused=SimpleNamespace(focused_session=lambda: session),
+    )
+    old = prime_record(captured=time.time() - 14 * 60)
+    api._state.engine = RelayEngine(old)
+    api._push_eve_status()  # parks, still inside the window: yellow
+    assert pushes(api._window)[-1][1]["prime_state"] == "staging"
+
+    api._state.engine = RelayEngine(prime_record(captured=time.time() - 16 * 60))
+    api._push_eve_status()
+    assert pushes(api._window)[-1][1]["prime_state"] is None

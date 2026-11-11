@@ -1280,3 +1280,50 @@ def test_lifecycle_stays_grey_while_staging_and_resets_with_the_runtime(rig_tmp)
         assert rig.controller.prime_lifecycle() is None
     finally:
         rig.close()
+
+
+def test_lifecycle_greys_out_when_the_staged_prime_passes_the_ttl(rig_tmp):
+    """The server honors a staged prime for 15 minutes: past that, green
+    would be a lie, so the word is None (grey). A refusal does not
+    expire -- red persists until the next Set Root."""
+    import wingman.wanderer.controller as controller_mod
+
+    class FakeTime:
+        now = 1000.0
+
+        @staticmethod
+        def monotonic():
+            return FakeTime.now
+
+        @staticmethod
+        def sleep(seconds):
+            FakeTime.now += seconds
+
+    rig = Rig(rig_tmp, with_prime_credential=True)
+    try:
+        real_time = controller_mod.time
+        controller_mod.time = FakeTime  # type: ignore[assignment]
+        try:
+            assert rig.controller.stage_prime(make_prime(), make_identity(), None)
+            rig.staging.call(1).reply(Staged())
+            wait_for_outcome(rig)
+            assert rig.controller.prime_lifecycle() == "staged"
+            FakeTime.now += 16 * 60
+            assert rig.controller.prime_lifecycle() is None
+            # Failed stays red: a refusal is a fact, not a lease.
+            from wingman.wanderer.staging import StagingFailure
+
+            assert rig.controller.stage_prime(
+                make_prime(event="1a2b3c4d5e6f778899aabbccddeeff00"),
+                make_identity(),
+                None,
+            )
+            for number in (2, 3, 4):
+                rig.staging.call(number).reply(StagingFailure("timeout"))
+            wait_for_outcome(rig)
+            FakeTime.now += 16 * 60
+            assert rig.controller.prime_lifecycle() == "failed"
+        finally:
+            controller_mod.time = real_time
+    finally:
+        rig.close()
