@@ -1044,7 +1044,10 @@ def test_the_prime_dot_is_page_state_on_both_strips():
     and the ~10s consumed pulse is a page timer that never crosses the
     bridge -- sort order / row focus / countdown client-state rules apply
     unchanged."""
-    for page, element in (("index.html", "eve-prime-dot"), ("sigbar.html", "bar-prime-dot")):
+    for page, element in (
+        ("index.html", "eve-prime-dot"),
+        ("sigbar.html", "bar-prime-dot"),
+    ):
         markup = (WEB / page).read_text(encoding="utf-8")
         assert markup.count(f'id="{element}"') == 1, page
     strip_js = (WEB / "bookmarks.js").read_text(encoding="utf-8")
