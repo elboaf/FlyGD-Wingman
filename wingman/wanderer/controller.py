@@ -38,15 +38,17 @@ _STAGING_RETRYABLE = frozenset(
 
 @dataclass(frozen=True)
 class _PrimeOrigin:
-    """Stage-time facts one staged prime binds to (#353).
+    """Stage-time facts the tracked prime binds to (#353).
 
     The server consumes the prime when THIS character's location update
     creates a new connection out of THIS system (ADR 0001), so consume
     detection needs both halves joined at the moment of staging: the
     origin system to compare against, and the client whose map row is
-    the movement evidence. The event id keys the dict that holds it.
+    the movement evidence. The event id rides along so a stale reader
+    cannot join a newer handoff's word to an older origin.
     """
 
+    event: str
     character_id: int
     solar_system_id: int
     session: ClientSessionId
@@ -168,14 +170,15 @@ class WandererController:
         self._staging_thread: threading.Thread | None = None
         self._staging_pending: tuple | None = None
         # Prime lifecycle readout (#353): the newest event handed to the
-        # lane, the word the lane last earned for it, and the monotonic
-        # stage time the TTL edge needs. Absence of a tracked event is
-        # the grey answer -- no prime, nothing to show. Origins holds
-        # the stage-time (character, system, client) per event: consume
-        # detection joins a fresh snapshot row for that client against
-        # that system.
+        # lane, the word the lane last earned for it, the monotonic
+        # stage time the TTL edge needs, and the one origin record that
+        # matters (consume detection joins a fresh snapshot row for that
+        # client against that system; only the tracked event's origin is
+        # ever read, so one slot -- replaced at each handoff -- is the
+        # whole history the readout needs). Absence of a tracked event
+        # is the grey answer -- no prime, nothing to show.
         self._prime_track: tuple[str, str, float] | None = None
-        self._prime_origins: dict[str, _PrimeOrigin] = {}
+        self._prime_origin: _PrimeOrigin | None = None
 
     def _load_prime(self, section) -> str | None:
         if section["base_url"] and section["map_identifier"]:
@@ -431,7 +434,8 @@ class WandererController:
             # the jump.
             tracked_event = record["event_id"]
             self._prime_track = (tracked_event, PRIME_STAGING, time.monotonic())
-            self._prime_origins[tracked_event] = _PrimeOrigin(
+            self._prime_origin = _PrimeOrigin(
+                event=tracked_event,
                 character_id=identity.character_id,
                 solar_system_id=identity.solar_system_id,
                 session=session,
@@ -561,8 +565,8 @@ class WandererController:
         the staging lock; only the origin record is copied under it.
         """
         with self._staging_state:
-            origin = self._prime_origins.get(event)
-        if origin is None or origin.session is None:
+            origin = self._prime_origin
+        if origin is None or origin.event != event or origin.session is None:
             return False
         identity = self._worker.prime_identity(origin.session)
         if (
@@ -833,7 +837,7 @@ class WandererController:
         # grey until a new runtime stages again.
         with self._staging_state:
             self._prime_track = None
-            self._prime_origins.clear()
+            self._prime_origin = None
         with self._lifecycle_lock:
             if self._started:
                 self._ports.set_metadata_callback(None)
