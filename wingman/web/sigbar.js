@@ -49,21 +49,26 @@
   // ---- handlers (globals, called by Api._push) ------------------------
   // The prime lifecycle dot (#353): this page shares no code with the
   // main page, so it carries its own copy of the word->severity map and
-  // the ~10s consumed pulse (page state; Python schedules nothing). Grey
-  // is the resting colour -- absent prime_state just unsets the classes.
-  // The pulse's episode key is the prime's EVENT id: the engine keeps
-  // its standing prime until the next Set Root, so Python keeps
-  // answering 'consumed' for the same event on every tick -- keying by
-  // event is what arms the pulse once and keeps later pushes grey
-  // instead of resurrecting solid green. The dot's width is fixed, so
-  // the bar's fit never moves across the lifecycle.
+  // the ~10s consumed pulse (page state; Python schedules nothing).
+  // No word -> NO dot (hidden): the issue offers "absent/grey when
+  // nothing to report" and absent is what keeps the bar's measured
+  // width honest -- it moves by a fixed 13px only while a prime is in
+  // flight. "Then grey" in the spec's consumed transition is the
+  // visible-unlit state after the pulse, until the word goes away. The
+  // pulse's episode key is the prime's EVENT id: the engine keeps its
+  // standing prime until the next Set Root, so Python keeps answering
+  // 'consumed' for the same event on every tick -- keying by event is
+  // what arms the pulse once and rests grey after, instead of pulsing
+  // forever.
   var PRIME_PULSE_MS = 10000;
   var primePulseTimer = null;
   var primePulseEvent = null;
 
   function renderPrimeDot(primeState, primeEvent, live) {
     var el = document.getElementById('bar-prime-dot');
-    if (!live) {
+    var visible = live && !!primeState;
+    el.hidden = !visible;
+    if (!visible) {
       if (primePulseEvent !== null) {
         if (primePulseTimer !== null) clearTimeout(primePulseTimer);
         primePulseTimer = null;
@@ -75,40 +80,40 @@
       el.classList.remove('err');
       return;
     }
-    if (primeState === 'consumed') {
-      if (primePulseEvent === primeEvent && primePulseTimer === null) {
-        // This event's pulse already ran to the end: stay grey rather
-        // than resurrect solid green on the next poll tick.
-        el.classList.remove('ok');
-      el.classList.remove('warn');
-      el.classList.remove('err');
-        return;
-      }
-      if (primePulseEvent !== primeEvent) {
-        el.classList.remove('warn');
-        el.classList.remove('err');
-        el.classList.add('ok');
-        el.classList.add('pulse');
-        primePulseEvent = primeEvent;
+    el.classList.toggle('ok', primeState === 'staged' || primeState === 'consumed');
+    el.classList.toggle('warn', primeState === 'staging');
+    el.classList.toggle('err', primeState === 'failed');
+    if (primeState !== 'consumed') {
+      if (primePulseEvent !== null) {
         if (primePulseTimer !== null) clearTimeout(primePulseTimer);
-        primePulseTimer = setTimeout(function () {
-          primePulseTimer = null;
-          // The pulse ends in grey -- the prime is consumed and gone.
-          el.classList.remove('pulse');
-          el.classList.remove('ok');
-        }, PRIME_PULSE_MS);
+        primePulseTimer = null;
+        primePulseEvent = null;
+        el.classList.remove('pulse');
       }
       return;
     }
-    if (primePulseEvent !== null) {
-      if (primePulseTimer !== null) clearTimeout(primePulseTimer);
-      primePulseTimer = null;
-      primePulseEvent = null;
+    if (primePulseEvent === primeEvent && primePulseTimer === null) {
+      // This event's pulse already ran its ~10s: rest grey. The dot
+      // stays visible and unlit until the word itself goes away.
       el.classList.remove('pulse');
+      el.classList.remove('ok');
+      el.classList.remove('warn');
+      el.classList.remove('err');
+      return;
     }
-    el.classList.toggle('ok', primeState === 'staged');
-    el.classList.toggle('warn', primeState === 'staging');
-    el.classList.toggle('err', primeState === 'failed');
+    if (primePulseEvent !== primeEvent) {
+      el.classList.remove('warn');
+      el.classList.remove('err');
+      el.classList.add('pulse');
+      primePulseEvent = primeEvent;
+      if (primePulseTimer !== null) clearTimeout(primePulseTimer);
+      primePulseTimer = setTimeout(function () {
+        primePulseTimer = null;
+        // The pulse ends in grey -- consumed and gone.
+        el.classList.remove('pulse');
+        el.classList.remove('ok');
+      }, PRIME_PULSE_MS);
+    }
   }
 
   window.onEveStatus = function (payload) {
