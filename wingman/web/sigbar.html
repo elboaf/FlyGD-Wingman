@@ -77,6 +77,12 @@
       <span class="evelabel">SIG</span><span id="bar-sig">&mdash;</span>
       <span class="evelabel">ROOT</span><span id="bar-root">&mdash;</span>
       <span class="evelabel">NEXT</span><span id="bar-next">&mdash;</span>
+      <!-- The prime lifecycle dot (#353). Same shape and behaviour as
+           the main strip's dot: hidden whenever Python answers no word
+           (absent = the issue's grey), visible with a severity token
+           while one stands, and the bar's measured width moves by a
+           fixed 13px only while a prime is actually in flight. -->
+      <span class="led eve-prime-dot" id="bar-prime-dot" hidden></span>
     </span>
   </div>
   <script src="themeapply.js"></script>

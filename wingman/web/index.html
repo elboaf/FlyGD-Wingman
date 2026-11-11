@@ -3076,6 +3076,13 @@
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>
         <span class="evelabel">NEXT</span><span id="eve-next">—</span>
+        <!-- The pre-jump prime's lifecycle dot (#353). Same .led shape the
+             pills use; severity tokens are set from prime_state in the
+             onEveStatus handler. Hidden whenever Python answers no word --
+             "absent" is the issue's grey, and at the 840px floor the
+             segment fits its text exactly, so a permanent meter would
+             clip it (the layout gate pins exactly this). -->
+        <span class="led eve-prime-dot" id="eve-prime-dot" hidden></span>
         <span class="evewarn" id="eve-warn" hidden>⚠</span>
       </span>
       <!-- `Idle`, not `Ready`. This is the strip's resting text, which is

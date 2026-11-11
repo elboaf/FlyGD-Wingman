@@ -47,3 +47,10 @@ tracked character's location update creates a new connection.
 - The feature is inert unless the user supplies a prime token, and inert for
   any Set Root that is not a single-bookmark selection.
 - An already-mapped destination never has its name or flags touched.
+- The readout stays silent (#353). The server sends no consume word, so
+  Wingman infers it locally: after a `Staged()` result, the same worker
+  snapshot the identity join already serves is asked whether the origin
+  character is now out of the origin system — the exact condition
+  `update_location` consumes on — and answers `consumed` once. This is a
+  passive read that disturbs nothing above; it never adds a push, a
+  request, or a write, so the decisions above stand unchanged.

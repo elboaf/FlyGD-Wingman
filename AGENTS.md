@@ -258,7 +258,18 @@ reached through injected seams or lazy `windll` binding):
   Set Root primes, and the clipboard flow is byte-identical with the feature
   on or off (pinned by `tests/test_engine_invariants.py`). The Wanderer
   server consumes the prime at most once, inside the tracked movement flow
-  (upstream guarzo/wanderer#163); a 200 means staged, never consumed.
+  (upstream guarzo/wanderer#163); a 200 means staged, never consumed. The
+  one passive readback is `controller.prime_lifecycle()` (#353): the newest
+  prime's word (`staging`/`staged`/`consumed`/`failed`) for the status
+  strip's dot. Consumed is client-side inference — the worker's fresh
+  identity join answering the origin character out of the origin system is
+  the same condition the server consumes on — and the Api relays it as
+  `prime_state` on the existing `onEveStatus` push. Grey is "no word": a
+  stage older than the 15-minute consume window answers None (green would
+  be a lie), while `failed` persists until the next Set Root. The Api also
+  synthesizes `staging` while a #349 parked retry is alive — the controller
+  was never handed that prime — bounded by the same window on the capture's
+  own `captured` clock.
   `model.py` pins the deployed v1 snapshot contract; `credentials.py`
   DPAPI-protects the entire URL/map/token binding separately from settings
   (the prime token has its own document). `client.py` makes one bounded HTTPS

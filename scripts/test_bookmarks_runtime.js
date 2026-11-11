@@ -101,6 +101,58 @@ test('Refresh remains exactly one local read and preserves native title identiti
   assert.match(p.el('eve-windows').textContent, /Mapper.*not running/);
   assert.equal(p.el('eve-windows').querySelector('label').title, 'EVE - Mapper');
 });
+test('the prime lifecycle dot paints every word and hides without one', async () => {
+  const p = page(); p.bookmarks(payload());
+  const dot = p.el('eve-prime-dot');
+  const sevs = () => ['ok', 'warn', 'err', 'pulse'].filter(c => dot.classList.contains(c));
+  const paint = payload => { p.status(Object.assign(
+    {state: 'running', sig: 'MYR', root: 'J123456', next_num: '21', next_alpha: 'A',
+     failed_binds: [], last_error: ''}, payload)); };
+  // No word -> NO dot (hidden): "absent" is the issue's grey, and the
+  // segment must not carry a permanent meter at the 840px floor.
+  paint({prime_state: undefined});
+  assert.equal(dot.hidden, true);
+  for (const [word, token] of [['staging', 'warn'], ['staged', 'ok'], ['failed', 'err']]) {
+    paint({prime: {event: 'a'}, prime_state: word});
+    assert.equal(dot.hidden, false, word);
+    assert.equal(dot.classList.contains(token), true, word);
+    assert.equal(dot.classList.contains('pulse'), false, word);
+  }
+  // Consumed arms the ~10s pulse once per episode, keyed by the prime's
+  // event id: the standing prime re-answers 'consumed' on every poll
+  // tick, and a repeat while the pulse is open rides it unchanged.
+  paint({prime: {event: 'a'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('ok') && dot.classList.contains('pulse'), true);
+  p.status({state: 'running', prime: {event: 'a'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('ok') && dot.classList.contains('pulse'), true,
+    'same episode rides the open pulse');
+  // Catch the timer instead of firing it synchronously inside the render
+  // (a synchronous fire would clobber the module's timer id -- an
+  // artifact no real timer exhibits). The ~10s elapses; the dot rests
+  // VISIBLE and UNLIT, and the next 'consumed' push for the same
+  // standing prime must not resurrect solid green.
+  let firePulse = null;
+  p.window.setTimeout = function (callback) { firePulse = callback; return 2; };
+  paint({prime: {event: 'b'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('ok') && dot.classList.contains('pulse'), true,
+    'a new event arms its own pulse');
+  firePulse();
+  assert.equal(dot.hidden, false);
+  assert.deepEqual(sevs(), [], 'after the pulse: visible and unlit');
+  p.status({state: 'running', prime: {event: 'b'}, prime_state: 'consumed'});
+  assert.deepEqual(sevs(), [], 'grey rests; green is never resurrected');
+  // A new Set Root restarts the machine from yellow, and its consume
+  // pulses fresh.
+  paint({prime: {event: 'c'}, prime_state: 'staging'});
+  assert.equal(dot.classList.contains('warn') && !dot.classList.contains('pulse'), true);
+  paint({prime: {event: 'c'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('pulse'), true, 'new episode pulses again');
+  // The engine stopping hides the dot and forgets the episode.
+  p.status({state: 'stopped'});
+  assert.equal(dot.hidden, true);
+  paint({prime: {event: 'c'}, prime_state: 'consumed'});
+  assert.equal(dot.classList.contains('pulse'), true, 'a fresh episode pulses after a stop');
+});
 test('SIG retains shared push-owned choice, tooltip, accessible name and pressed state', async () => {
   const p = page(); await turn(); const btn = p.el('btn-sigbar');
   assert.equal(btn.textContent.trim(), 'SIG');

@@ -4244,6 +4244,39 @@ class Api:
             # The engine can no longer re-offer -- restart resets its
             # prime state -- so a retained capture is suspended, not kept.
             self._pending_prime = None
+        # One new field on the existing push (#353). The engine's prime is
+        # the sole gate: with nothing primed the lifecycle answer is
+        # irrelevant -- it may still describe the previous capture -- so
+        # absent keeps the dot grey on every Set Root that primes nothing.
+        # `state` == "running" is implied by a standing prime, so no second
+        # gate is needed; every other state answers prime=None above. A
+        # degraded read degrades to grey like every optional read here:
+        # raised out, it would cost the WHOLE status push, not just the
+        # dot, and with it the poll tick's sig/root/next refresh.
+        #
+        # The #349 parked-retry window is yellow too (#353): the prime is
+        # captured but unconfirmed, which is exactly the word for it. The
+        # controller was never handed that prime (the relay declined it),
+        # so the Api synthesizes "staging" while the park lives. The park
+        # dies at the same 15-minute consume window a relayed capture
+        # would -- the engine's standing `captured` clock bounds it -- so
+        # past the window the word is grey, not yellow.
+        prime_state = None
+        if status.prime is not None:
+            try:
+                prime_state = self._wanderer.prime_lifecycle()
+            except Exception:
+                logger.debug("Prime lifecycle read degraded", exc_info=True)
+                prime_state = None
+            if prime_state is None and self._pending_prime is not None:
+                try:
+                    captured = float(status.prime.captured)
+                except (TypeError, ValueError):
+                    captured = None
+                if captured is not None and time.time() - captured <= (
+                    PRIME_MAX_AGE_SECONDS
+                ):
+                    prime_state = "staging"
         self._push(
             "onEveStatus",
             {
@@ -4266,6 +4299,11 @@ class Api:
                         "captured": status.prime.captured,
                     }
                 ),
+                # The staged prime's server-facing lifecycle word (#353):
+                # "staging"/"staged"/"consumed"/"failed" while the engine
+                # holds a prime, absent otherwise (grey). The pulse after
+                # "consumed" is page-side; nothing here schedules it.
+                "prime_state": prime_state,
                 # A failed start is otherwise invisible: this is the one
                 # actionable thing the user can be told ("the engine is
                 # missing, reinstall").
@@ -5287,7 +5325,7 @@ class Api:
                 self._pending_prime = (prime, session)
                 return
             self._pending_prime = None
-            self._wanderer.stage_prime(prime, identity)
+            self._wanderer.stage_prime(prime, identity, session)
         except Exception:
             logger.debug("Prime relay degraded", exc_info=True)
 

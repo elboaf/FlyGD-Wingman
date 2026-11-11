@@ -34,10 +34,45 @@ STAGING_BACKOFF_SECONDS = 0.5
 _STAGING_RETRYABLE = frozenset(
     {"timeout", "transport_error", "tls_error", "service_unavailable"}
 )
+
+
+@dataclass(frozen=True)
+class _PrimeOrigin:
+    """Stage-time facts the tracked prime binds to (#353).
+
+    The server consumes the prime when THIS character's location update
+    creates a new connection out of THIS system (ADR 0001), so consume
+    detection needs both halves joined at the moment of staging: the
+    origin system to compare against, and the client whose map row is
+    the movement evidence. The event id rides along so a stale reader
+    cannot join a newer handoff's word to an older origin.
+    """
+
+    event: str
+    character_id: int
+    solar_system_id: int
+    session: ClientSessionId
+
+
 PERSISTENCE_ERROR = (
     "Could not restore the saved Wanderer connection. Names are stopped; "
     "restart Wingman and re-enter the connection."
 )
+# Passive prime-lifecycle readout (#353). One word per stage of the
+# pre-jump prime (ADR 0001): staged while the server honors it, consumed
+# on a map-side location move by the primed character after a stage, and
+# failed once the staging lane has given up. Grey (nothing to show) is
+# "no word": the Api renders absence as grey, so nothing here invents a
+# state for a machine without a prime.
+PRIME_STAGING = "staging"
+PRIME_STAGED = "staged"
+PRIME_CONSUMED = "consumed"
+PRIME_FAILED = "failed"
+# The server honors a staged prime for 15 minutes (#353's TTL edge):
+# solid green past that would be a lie, so prime_lifecycle() stops
+# answering STAGED once the stage is this old. Mirrors Api's
+# PRIME_MAX_AGE_SECONDS, which bounds the same window capture-side.
+PRIME_TTL_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -134,6 +169,16 @@ class WandererController:
         self._staging_state = threading.Lock()
         self._staging_thread: threading.Thread | None = None
         self._staging_pending: tuple | None = None
+        # Prime lifecycle readout (#353): the newest event handed to the
+        # lane, the word the lane last earned for it, the monotonic
+        # stage time the TTL edge needs, and the one origin record that
+        # matters (consume detection joins a fresh snapshot row for that
+        # client against that system; only the tracked event's origin is
+        # ever read, so one slot -- replaced at each handoff -- is the
+        # whole history the readout needs). Absence of a tracked event
+        # is the grey answer -- no prime, nothing to show.
+        self._prime_track: tuple[str, str, float] | None = None
+        self._prime_origin: _PrimeOrigin | None = None
 
     def _load_prime(self, section) -> str | None:
         if section["base_url"] and section["map_identifier"]:
@@ -338,20 +383,23 @@ class WandererController:
         """
         return self._worker.prime_identity(session)
 
-    def stage_prime(self, prime, identity) -> bool:
+    def stage_prime(self, prime, identity, session=None) -> bool:
         """Stage one captured prime for the saved map, or silently do nothing.
 
-        The Api relay calls this with the engine's prime and the focused
-        client's map identity (#296). Inert — answering False, staging
-        nothing — unless a prime token is stored for exactly the saved
-        binding and the identity is a mapped character on that map. The
-        return says whether an outbound attempt was started or accepted;
-        staging failures are silent by design (ADR 0001: never disturb the
-        clipboard, preview or settings flows).
+        The Api relay calls this with the engine's prime, the focused
+        client's map identity (#296), and that same client's session --
+        the session is what consume detection (#353) later joins the
+        map's movement rows against, and the relay has it in hand, so it
+        rides along rather than being re-derived. Inert -- answering
+        False, staging nothing -- unless a prime token is stored for
+        exactly the saved binding and the identity is a mapped character
+        on that map. The return says whether an outbound attempt was
+        started or accepted; staging failures are silent by design (ADR
+        0001: never disturb the clipboard, preview or settings flows).
 
         One outbound lane carries the newest prime: while an attempt run is
         in flight, a newly captured event replaces any pending one (the
-        server keeps one active prime per character — newest wins) and is
+        server keeps one active prime per character -- newest wins) and is
         staged when the lane drains.
         """
         with self._staging_state:
@@ -376,6 +424,22 @@ class WandererController:
                 return False
             self._staged_events.append(event)
             self._staging_pending = (binding, token, record)
+            # The readout tracks the newest handoff (#353): the server
+            # keeps one active prime per character+map, so the word that
+            # matters is this lane's, not an older attempt's. The key is
+            # the RECORD's canonical event id -- what the lane carries
+            # and what the outcome write compares -- and origins holds
+            # the stage-time join for consume detection: the system the
+            # prime staged from, and the client whose movement would be
+            # the jump.
+            tracked_event = record["event_id"]
+            self._prime_track = (tracked_event, PRIME_STAGING, time.monotonic())
+            self._prime_origin = _PrimeOrigin(
+                event=tracked_event,
+                character_id=identity.character_id,
+                solar_system_id=identity.solar_system_id,
+                session=session,
+            )
             thread = self._staging_thread
             if thread is not None and thread.is_alive():
                 # The live lane drains the newest pending record itself.
@@ -409,9 +473,15 @@ class WandererController:
                 return
             base, map_identifier = pending[0]
             token, record = pending[1], pending[2]
+            event = record.get("event_id")
+            outcome: str | None = None
             for attempt in range(STAGING_ATTEMPTS):
                 result = self._staging.stage(base, map_identifier, token, record)
                 if isinstance(result, Staged):
+                    # Staged or refused is final for the readout: a stale
+                    # lane draining an old record must not overwrite the
+                    # word a newer run already earned (#353).
+                    outcome = PRIME_STAGED
                     break
                 failure = result if isinstance(result, StagingFailure) else None
                 code = failure.code if failure is not None else "transport_error"
@@ -419,13 +489,93 @@ class WandererController:
                     # A denied credential must not keep POSTing it; the token
                     # is wrong, revoked, or out of scope. Silent give-up;
                     # removing or replacing the token re-enables staging.
+                    outcome = PRIME_FAILED
                     break
                 if code not in _STAGING_RETRYABLE:
+                    outcome = PRIME_FAILED
                     break
                 if attempt + 1 < STAGING_ATTEMPTS:
                     time.sleep(STAGING_BACKOFF_SECONDS)
-            # Budget exhausted: silent give-up. A newer pending record, if
-            # any, is drained by the loop above; otherwise the lane retires.
+            else:
+                # Budget exhausted: silent give-up -- #353's red, the same
+                # word whether the refusal was declared or the budget ran
+                # out on transport-shaped codes. A newer pending record,
+                # if any, is drained by the loop above; otherwise the
+                # lane retires.
+                outcome = PRIME_FAILED
+            if event is not None:
+                with self._staging_state:
+                    if self._prime_track is not None and self._prime_track[0] == event:
+                        self._prime_track = (event, outcome, self._prime_track[2])
+                self._health_wake.set()
+
+    def prime_lifecycle(self) -> str | None:
+        """One word for the newest prime's server-facing state (#353).
+
+        PRIME_STAGED from a 200 on the staging POST, PRIME_FAILED when
+        the lane gave up or was refused, PRIME_STAGING while the lane is
+        between handoff and outcome, PRIME_CONSUMED once the map itself
+        shows the primed character moving -- the same condition the
+        server consumes on (ADR 0001, `update_location`). None -- the
+        grey answer -- when nothing is tracked or the tracked stage has
+        outlived the server's 15-minute consume window: the server no
+        longer honors that prime, so green (or yellow) would be a lie.
+        Passive: it reads the same fresh snapshot the identity join
+        already serves, so it disturbs nothing ADR 0001 protects
+        (clipboard, preview, Set Root flow). The tracked event is always
+        the event ledger's newest (append and track update share one
+        lock), so no separate eviction check is needed.
+        """
+        with self._staging_state:
+            tracked = self._prime_track
+            if tracked is None:
+                return None
+            event, outcome, staged_at = tracked
+            # The TTL edge (#353): expired means grey, for the staged
+            # word and for staging -- a lane stuck past the window has
+            # nothing the server would accept either. Failed and
+            # consumed stay: a refusal and a jump do not expire.
+            if (
+                outcome in (PRIME_STAGED, PRIME_STAGING)
+                and time.monotonic() - staged_at > PRIME_TTL_SECONDS
+            ):
+                return None
+            # Only a staged prime can be consumed: the other words are
+            # final until a newer capture replaces them.
+            if outcome != PRIME_STAGED:
+                return outcome
+        if self._map_shows_consumed(event):
+            with self._staging_state:
+                if self._prime_track is not None and self._prime_track[0] == event:
+                    self._prime_track = (event, PRIME_CONSUMED, staged_at)
+            return PRIME_CONSUMED
+        return outcome
+
+    def _map_shows_consumed(self, event: str) -> bool:
+        """The map's snapshot shows the staged prime's character moved.
+
+        Inference, not a server word: the worker's identity join answers
+        the character's CURRENT mapped solar system from the freshest
+        snapshot row, and a different system than the one the prime was
+        staged from is a location move -- exactly what `update_location`
+        consumes on. Everything that cannot prove a move (no snapshot,
+        no fresh row, still in the origin system, a row now naming a
+        different character) answers False, so the dot stays solid green
+        rather than lying about a jump. The identity read runs outside
+        the staging lock; only the origin record is copied under it.
+        """
+        with self._staging_state:
+            origin = self._prime_origin
+        if origin is None or origin.event != event or origin.session is None:
+            return False
+        identity = self._worker.prime_identity(origin.session)
+        if (
+            identity is None
+            or identity.character_id != origin.character_id
+            or identity.solar_system_id is None
+        ):
+            return False
+        return identity.solar_system_id != origin.solar_system_id
 
     def _result(self, applied: bool, error: str | None = None) -> dict:
         with self._condition:
@@ -681,6 +831,13 @@ class WandererController:
             self._sessions = frozenset()
             self._available = False
             self._condition.notify_all()
+        # The readout dies with the runtime (#353): a closed controller has
+        # no lane and no snapshot, so every word it could answer would be
+        # about a machine that no longer exists. The Api reads None ->
+        # grey until a new runtime stages again.
+        with self._staging_state:
+            self._prime_track = None
+            self._prime_origin = None
         with self._lifecycle_lock:
             if self._started:
                 self._ports.set_metadata_callback(None)
