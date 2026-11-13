@@ -97,6 +97,12 @@ NextAlpha := 1
 LastUsedNum := ""
 LastUsedAlpha := ""
 
+; WINGMAN: per-process monotonic counter for the debug log (#354).
+; A per-line sequence number lets a replay detect gaps or repeats after
+; a restart, which is itself diagnostic. Initialized once at script start
+; (under #Persistent), so the helper's `global _DebugSeq` reaches it.
+_DebugSeq := 0
+
 ; WINGMAN: suspend state tracker (#329).
 ; Suspend, Current does not reliably expose the state in all v1 builds,
 ; so we track it ourselves. KB_SuspendToggle's label flips this on every
@@ -260,6 +266,92 @@ JsonList(csv) {
     Loop, Parse, csv, `,
         out .= (out = "" ? "" : ",") . """" . JsonEsc(A_LoopField) . """"
     return out
+}
+
+; WINGMAN: structured keybind-press logging (#354).
+;
+; The out-of-sequence bookmark naming (re-used / skipped chain numbers)
+; lives entirely in AHK's sequence state, which Wingman cannot read apart
+; from the status file -- and the status file only carries the *next*
+; counter, not LastUsedNum or ReadyToIncrement, the two that decide reuse
+; vs. increment. So when a finisher produced 42 while the bar predicted 43
+; this was invisible. This helper writes one JSON line per bookmark-module
+; keybind press so the exact state at each event is recoverable after the
+; fact. It is a debug aid only: the write is best-effort and must never
+; change or delay the hotkey action, exactly like the status file.
+;
+; Callers pass all state as arguments; the helper never reads a script
+; global (so AHK v1's undeclared-is-local trap cannot lose a value, and
+; the contract test in test_engine_invariants does not gain a watched
+; global). State is captured BEFORE mutation so the log records intent,
+; not just effect; the caller passes a pre-state JSON string (built at
+; entry, before any mutation) alongside the post-state scalars/objects
+; and the produced result, so one log line carries the full transition.
+_DebugLog(event, title, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha,
+        nextNum, nextAlpha, usedNums, usedAlphas, isAlpha, finChar, result, preState) {
+    global _DebugSeq
+    _DebugSeq += 1
+    seq := _DebugSeq
+    ts := EpochNow()
+    rec := "{\"seq\":" . seq . ",\"ts\":" . ts . ",\"event\":\"" . JsonEsc(event)
+        . "\",\"title\":\"" . JsonEsc(title) . "\",\"root\":"
+        . (rootKey = "" ? "null" : ("""" . JsonEsc(rootKey) . """))
+        . ",\"last_sig\":"
+        . (lastSigId = "" ? "null" : ("""" . JsonEsc(lastSigId) . """))
+        . ",\"ready\":" . (ready ? "true" : "false")
+        . ",\"last_used_num\":" . (lastUsedNum = "" ? "null" : lastUsedNum)
+        . ",\"last_used_alpha\":" . (lastUsedAlpha = "" ? "null" : lastUsedAlpha)
+        . ",\"next_num\":" . nextNum
+        . ",\"next_alpha\":" . nextAlpha
+        . ",\"used_nums\":[" . _DebugMap(usedNums) . "]"
+        . ",\"used_alphas\":[" . _DebugMap(usedAlphas) . "]"
+        . ",\"is_alpha\":" . (isAlpha ? "true" : "false")
+        . ",\"fin_char\":"
+        . (finChar = "" ? "null" : ("""" . JsonEsc(finChar) . """))
+        . ",\"result\":"
+        . (result = "" ? "null" : ("""" . JsonEsc(result) . """))
+        . ",\"pre_state\":" . preState
+        . "}"
+    FileAppend, %rec%`n, eve_bookmarks_debug.log.tmp
+    FileMove, eve_bookmarks_debug.log.tmp, eve_bookmarks_debug.log, 1
+}
+
+; Serialize a UsedNums / UsedAlphas array (e.g. [2,3]) as a compact JSON
+; number array for the debug log. The keys of the AHK object ARE the slot
+; numbers, so iterating the object yields them directly.
+_DebugMap(obj) {
+    out := ""
+    idx := 0
+    ; AHK v1 `for k, v in obj` yields every key (the slot numbers). Order
+    ; is cosmetic for the log; the set of used slots is the point.
+    for k, _ in obj {
+        idx += 1
+        if (idx > 1)
+            out .= ","
+        out .= k
+    }
+    return out
+}
+
+; WINGMAN: serialize the current sequence state as one JSON object, for
+; the pre-state half of a finisher debug log (#354). Reads the globals by
+; name and declares them here, so AHK v1's undeclared-is-local rule cannot
+; turn a read into a local. Built at FireRootFinisher entry, before any
+; mutation, so the log records intent.
+_BuildSnapshot() {
+    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha,
+    NextNum, NextAlpha, UsedNums, UsedAlphas
+    root := (RootKey = "") ? "null" : ("""" . JsonEsc(RootKey) . """))
+    lastsig := (LastSigId = "") ? "null" : ("""" . JsonEsc(LastSigId) . """))
+    ready := (ReadyToIncrement ? "true" : "false")
+    lun := (LastUsedNum = "") ? "null" : LastUsedNum
+    lua := (LastUsedAlpha = "") ? "null" : LastUsedAlpha
+    return "{ \"root\":" . root . ",\"last_sig\":" . lastsig . ",\"ready\":"
+        . ready . ",\"last_used_num\":" . lun . ",\"last_used_alpha\":" . lua
+        . ",\"next_num\":" . NextNum . ",\"next_alpha\":" . NextAlpha
+        . ",\"used_nums\":[" . _DebugMap(UsedNums) . "]"
+        . ",\"used_alphas\":[" . _DebugMap(UsedAlphas) . "]"
+        . "}"
 }
 
 ; WINGMAN: report whether the script is currently suspended (#329).
