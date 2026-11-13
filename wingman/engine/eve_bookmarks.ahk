@@ -102,6 +102,9 @@ LastUsedAlpha := ""
 ; a restart, which is itself diagnostic. Initialized once at script start
 ; (under #Persistent), so the helper's `global _DebugSeq` reaches it.
 _DebugSeq := 0
+; WINGMAN (#354): the serialized bind table the last RefreshHotkeys pass
+; logged, so the 10-second re-read logs only when the set actually changed.
+_LastBinds := ""
 
 ; WINGMAN: suspend state tracker (#329).
 ; Suspend, Current does not reliably expose the state in all v1 builds,
@@ -158,6 +161,15 @@ GoSub, LoadAllSettings
 GoSub, RefreshHotkeys
 SetTimer, RefreshHotkeys, 10000
 SetTimer, RefreshStatusTab, 2000
+
+; WINGMAN (#354): log process exit. The 10s INI re-read re-registers binds
+; in place and never reloads the process, so a restart here means Wingman
+; re-spawned the engine (enable toggle, app restart, orphan recovery) or
+; the process died. Either resets every sequence global to fresh -- NextNum
+; 1, used slots empty -- and the status file's next readout then disagrees
+; with the bookmarks the user watched it produce. This is the one place a
+; restart can be told apart from a misfire.
+OnExit("_DebugLogExit")
 
 ; Initialize to Home/Zero mode by default
 RootModeActive := True
@@ -285,35 +297,60 @@ JsonList(csv) {
 ; the contract test in test_engine_invariants does not gain a watched
 ; global). State is captured BEFORE mutation so the log records intent,
 ; not just effect; the caller passes a pre-state JSON string (built at
-; entry, before any mutation) alongside the post-state scalars/objects
-; and the produced result, so one log line carries the full transition.
-_DebugLog(event, title, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha,
-        nextNum, nextAlpha, usedNums, usedAlphas, isAlpha, finChar, result, preState) {
+; entry, before any mutation) alongside the post-state scalars/objects,
+; the produced result, and one word naming the decision the press took
+; (increment / reuse / cross-family release), so one log line carries the
+; full transition.
+_DebugLog(event, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha
+        , nextNum, nextAlpha, usedNums, usedAlphas, isAlpha, finChar, result
+        , preState, decision) {
     global _DebugSeq
     _DebugSeq += 1
     seq := _DebugSeq
     ts := EpochNow()
-    rec := "{\"seq\":" . seq . ",\"ts\":" . ts . ",\"event\":\"" . JsonEsc(event)
-        . "\",\"title\":\"" . JsonEsc(title) . "\",\"root\":"
-        . (rootKey = "" ? "null" : ("""" . JsonEsc(rootKey) . """))
-        . ",\"last_sig\":"
-        . (lastSigId = "" ? "null" : ("""" . JsonEsc(lastSigId) . """))
-        . ",\"ready\":" . (ready ? "true" : "false")
-        . ",\"last_used_num\":" . (lastUsedNum = "" ? "null" : lastUsedNum)
-        . ",\"last_used_alpha\":" . (lastUsedAlpha = "" ? "null" : lastUsedAlpha)
-        . ",\"next_num\":" . nextNum
-        . ",\"next_alpha\":" . nextAlpha
-        . ",\"used_nums\":[" . _DebugMap(usedNums) . "]"
-        . ",\"used_alphas\":[" . _DebugMap(usedAlphas) . "]"
-        . ",\"is_alpha\":" . (isAlpha ? "true" : "false")
-        . ",\"fin_char\":"
-        . (finChar = "" ? "null" : ("""" . JsonEsc(finChar) . """))
-        . ",\"result\":"
-        . (result = "" ? "null" : ("""" . JsonEsc(result) . """))
-        . ",\"pre_state\":" . preState
+    ; AHK v1 escapes a quote by DOUBLING it (""); the backslash form is a
+    ; JSON-ism and terminates these strings early -- the same reason the
+    ; status file's fields below are written with doubled quotes too.
+    ; The active window title is captured HERE, not passed in: every call
+    ; site then gets it right by construction, and there is no second name
+    ; (a plausible-but-fictional built-in variable name) to get wrong.
+    WinGetTitle, _dbgTitle, A
+    rec := "{""seq"":" . seq . ",""ts"":" . ts . ",""event"":""" . JsonEsc(event)
+        . """,""title"":""" . JsonEsc(_dbgTitle) . """,""root"":"
+        . (rootKey = "" ? "null" : ("""" . JsonEsc(rootKey) . """"))
+        . ",""last_sig"":"
+        . (lastSigId = "" ? "null" : ("""" . JsonEsc(lastSigId) . """"))
+        . ",""ready"":" . (ready ? "true" : "false")
+        . ",""last_used_num"":" . (lastUsedNum = "" ? "null" : lastUsedNum)
+        . ",""last_used_alpha"":" . (lastUsedAlpha = "" ? "null" : lastUsedAlpha)
+        . ",""next_num"":" . nextNum
+        . ",""next_alpha"":" . nextAlpha
+        . ",""used_nums"":[" . _DebugMap(usedNums) . "]"
+        . ",""used_alphas"":[" . _DebugMap(usedAlphas) . "]"
+        . ",""is_alpha"":" . (isAlpha ? "true" : "false")
+        . ",""fin_char"":"
+        . (finChar = "" ? "null" : ("""" . JsonEsc(finChar) . """"))
+        . ",""result"":"
+        . (result = "" ? "null" : ("""" . JsonEsc(result) . """"))
+        . ",""decision"":""" . JsonEsc(decision)
+        . """,""pre_state"":" . preState
         . "}"
-    FileAppend, %rec%`n, eve_bookmarks_debug.log.tmp
-    FileMove, eve_bookmarks_debug.log.tmp, eve_bookmarks_debug.log, 1
+    ; APPEND to the real log, not temp-then-move: FileMove OVERWRITES the
+    ; target, so the status file's discipline would leave only the newest
+    ; line and destroy the history a diagnosis needs. The record is fully
+    ; built before the FileAppend and the `n rides INSIDE %rec% so the
+    ; command's own parameter cannot end mid-line. An event written while
+    ; the tmp file is held (antivirus scan, an interrupted earlier thread)
+    ; is skipped by the failed append rather than blocking the hotkey; the
+    ; next event's FileDelete cleans the orphaned tmp up after it.
+    ; APPEND directly to the real log. There is no temp file: AHK's
+    ; FileAppend with the text as the first parameter writes the whole
+    ; record in one call, so a reader can never see a torn line, and a
+    ; temp-then-move would OVERWRITE the log each event -- FileMove
+    ; replaces the target, which would keep only the newest line and
+    ; destroy the history a diagnosis needs. A failed append (log held
+    ; by a viewer) skips the event instead of blocking the hotkey.
+    FileAppend, %rec%`n, eve_bookmarks_debug.log
 }
 
 ; Serialize a UsedNums / UsedAlphas array (e.g. [2,3]) as a compact JSON
@@ -324,7 +361,13 @@ _DebugMap(obj) {
     idx := 0
     ; AHK v1 `for k, v in obj` yields every key (the slot numbers). Order
     ; is cosmetic for the log; the set of used slots is the point.
-    for k, _ in obj {
+    ; A slot whose value is False is RELEASED, not used: cross-family
+    ; correction clears the key's value without removing it, and logging a
+    ; released slot as used would make a healthy correction read as the
+    ; exact bug being diagnosed.
+    for k, v in obj {
+        if (!v)
+            continue
         idx += 1
         if (idx > 1)
             out .= ","
@@ -333,24 +376,43 @@ _DebugMap(obj) {
     return out
 }
 
+; WINGMAN (#354): the process-exit line, registered from the auto-execute
+; section. Its snapshot doubles as a restart marker in the log: a fresh
+; start answers every field empty, so a chain that restarts mid-way shows
+; as this line followed by state that contradicts it.
+_DebugLogExit(ExitReason, ExitCode) {
+    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha
+    global NextNum, NextAlpha, UsedNums, UsedAlphas
+    _DebugLog("exit", RootKey, LastSigId, ReadyToIncrement
+            , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", _BuildSnapshot()
+            , "{""reason"":""" . JsonEsc(ExitReason) . """}")
+}
+}
+
 ; WINGMAN: serialize the current sequence state as one JSON object, for
 ; the pre-state half of a finisher debug log (#354). Reads the globals by
 ; name and declares them here, so AHK v1's undeclared-is-local rule cannot
 ; turn a read into a local. Built at FireRootFinisher entry, before any
 ; mutation, so the log records intent.
 _BuildSnapshot() {
-    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha,
-    NextNum, NextAlpha, UsedNums, UsedAlphas
-    root := (RootKey = "") ? "null" : ("""" . JsonEsc(RootKey) . """))
-    lastsig := (LastSigId = "") ? "null" : ("""" . JsonEsc(LastSigId) . """))
+    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+    ; WINGMAN (#354): capture the active window title so a wrong-window
+    ; misfire (a finisher firing against a non-EVE window) is visible in
+    ; the log. A command-assigned name used only inside this function is
+    ; local, so no `global` declaration is needed.
+    WinGetTitle, _snapTitle, A
+    root := (RootKey = "") ? "null" : ("""" . JsonEsc(RootKey) . """")
+    lastsig := (LastSigId = "") ? "null" : ("""" . JsonEsc(LastSigId) . """")
     ready := (ReadyToIncrement ? "true" : "false")
     lun := (LastUsedNum = "") ? "null" : LastUsedNum
     lua := (LastUsedAlpha = "") ? "null" : LastUsedAlpha
-    return "{ \"root\":" . root . ",\"last_sig\":" . lastsig . ",\"ready\":"
-        . ready . ",\"last_used_num\":" . lun . ",\"last_used_alpha\":" . lua
-        . ",\"next_num\":" . NextNum . ",\"next_alpha\":" . NextAlpha
-        . ",\"used_nums\":[" . _DebugMap(UsedNums) . "]"
-        . ",\"used_alphas\":[" . _DebugMap(UsedAlphas) . "]"
+    return "{""title"":""" . JsonEsc(_snapTitle) . """,""root"":" . root
+        . ",""last_sig"":" . lastsig . ",""ready"":" . ready
+        . ",""last_used_num"":" . lun . ",""last_used_alpha"":" . lua
+        . ",""next_num"":" . NextNum . ",""next_alpha"":" . NextAlpha
+        . ",""used_nums"":[" . _DebugMap(UsedNums) . "]"
+        . ",""used_alphas"":[" . _DebugMap(UsedAlphas) . "]"
         . "}"
 }
 
@@ -500,6 +562,36 @@ Loop, Parse, EnabledSection, `n, `r
 
 ; Step 5: Reset the hotkey context
 Hotkey, IfWinActive
+
+; WINGMAN (#354): log the bind table so a changed INI that leaves a bind
+; missing (or a window dropping out of the set) is visible. Built as a JSON
+; array of {key,label} plus the enabled-window count and any failed binds.
+_binds := "["
+_hkcount := 0
+for _hk, _lbl in HotkeyLabelMap {
+    _hkcount += 1
+    if (_hkcount > 1)
+        _binds .= ","
+    _binds .= "{""key"":" . ("""" . JsonEsc(_hk) . """")
+        . ",""label"":" . ("""" . JsonEsc(_lbl) . """") . "}"
+}
+_binds .= "]"
+_bindExtras := "{""binds"":" . _binds . ",""bind_count"":" . _hkcount
+        . ",""enabled_windows"":" . RegisteredWindows.Length()
+        . ",""failed_binds"":" . ("""" . JsonEsc(FailedBinds) . """") . "}"
+; WINGMAN (#354): log the bind table, but ONLY when it changed from the
+; last pass -- this label runs on a 10-second timer, and the idle engine
+; must not write to the log on a timer (issue acceptance: writes happen
+; on keybind events, never on a poll). The first pass always logs:
+; startup's bind table is what makes a duplicate chord across two actions
+; visible.
+if (_bindExtras != _LastBinds) {
+    _LastBinds := _bindExtras
+    _DebugLog("refresh", RootKey, LastSigId, ReadyToIncrement
+            , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", "", _bindExtras)
+}
+
 Return
 
 ; WINGMAN: every Hotkey ... On UseErrorLevel in the author's script
@@ -565,6 +657,13 @@ FireRootFinisher(finChar, isAlpha) {
     global UsedNums, UsedAlphas, NextNum, NextAlpha
     global ReadyToIncrement, LastUsedNum, LastUsedAlpha
 
+    ; WINGMAN (#354): capture the pre-mutation state once, here before any
+    ; branch runs. The exit log below reuses this snapshot as its pre_state
+    ; and names the decision taken, so one line per press carries the whole
+    ; transition (issue acceptance: exactly one log line per keybind press).
+    _preSnap := _BuildSnapshot()
+    _decision := "entry"
+
     ; Cross-family correction. The first finisher after a Grab Sig
     ; reserves a slot in ITS family -- a number for C1..C6/C13, a letter
     ; for HS/LS/NS -- and a second finisher in the SAME family is the
@@ -597,9 +696,12 @@ FireRootFinisher(finChar, isAlpha) {
         }
         ; The new family now consumes a fresh slot through the normal
         ; path below, exactly as if it were the first finisher.
+        ; WINGMAN (#354): name the correction in the log. LastFinisherWasAlpha
+        ; still names the SUPERSEDED family here -- the read happens before
+        ; any mutation in this branch.
+        _decision := "cross_family_released_" . (LastFinisherWasAlpha ? "alpha" : "num")
         ReadyToIncrement := True
     }
-
     if (isAlpha) {
         if (ReadyToIncrement) {
             ; Use next available and mark as used
@@ -607,10 +709,12 @@ FireRootFinisher(finChar, isAlpha) {
             UsedAlphas[NextAlpha] := True
             LastUsedAlpha := NextAlpha
             FindNextAlpha()
+            _decision := "increment_alpha"
         } else {
             ; Correct-in-place: reuse last used alpha
             if (LastUsedAlpha = "")
                 LastUsedAlpha := NextAlpha
+            _decision := "reuse_alpha"
             SysKey := BuildSystemKey(RootKey, LastUsedAlpha, True)
         }
     } else {
@@ -620,10 +724,12 @@ FireRootFinisher(finChar, isAlpha) {
             UsedNums[NextNum] := True
             LastUsedNum := NextNum
             FindNextNum()
+            _decision := "increment_num"
         } else {
             ; Correct-in-place: reuse last used number
             if (LastUsedNum = "")
                 LastUsedNum := NextNum
+            _decision := "reuse_num"
             SysKey := BuildSystemKey(RootKey, LastUsedNum, False)
         }
     }
@@ -644,6 +750,13 @@ FireRootFinisher(finChar, isAlpha) {
     ReadyToIncrement     := False
     RootJustFired        := True
     LastFinisherWasAlpha := isAlpha
+
+    ; WINGMAN (#354): log the produced Result and post-mutation state,
+    ; with the decision taken. pre_state is the snapshot captured at entry,
+    ; before any branch ran, so this one line carries the whole transition.
+    _DebugLog("fire", RootKey, LastSigId, ReadyToIncrement
+            , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+            , isAlpha, finChar, Result, _preSnap, _decision)
 }
 
 GetFirstField(line) {
@@ -806,6 +919,13 @@ DoQ:
 ; the root: a failed Grab Sig took root J214811 and produced sig "-J21",
 ; which FireRootFinisher then wrote into real bookmarks while the status bar
 ; showed it like any ordinary signature.
+; WINGMAN (#354): snapshot BEFORE the clipboard is cleared, then log the
+; press. The lines below carry the same snapshot as their pre_state, so
+; the copy's outcome lands as a transition, not an isolated state.
+_grabPre := _BuildSnapshot()
+_DebugLog("grab", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "", _grabPre)
 Clipboard := ""
 SafeCtrl("c")
 Sleep 100
@@ -813,6 +933,13 @@ ClipWait, 2
 if (ErrorLevel) {
     ToolTip, Grab Sig failed - nothing was copied
     SetTimer, RemoveTooltip, -1500
+    ; WINGMAN (#354): record the failed copy. Nothing was copied, so the
+    ; sig this press would have produced does not exist -- the sig fields
+    ; are null and the decision column names the failure. pre_state is the
+    ; state captured at entry, before the clipboard was cleared.
+    _DebugLog("grab_fail", RootKey, "", False
+            , "", "", NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", "", _grabPre)
     Return
 }
 ClipSaved := Clipboard
@@ -821,6 +948,14 @@ Clipboard := "-" . ClipTrim . " "
 LastSigId := "-" . ClipTrim
 ReadyToIncrement := True
 RootJustFired := False
+; WINGMAN (#354): the ReadyToIncrement transition that drives the next
+; finisher's reuse-vs-increment decision. The raw clipboard is logged
+; beside the trimmed sig: a short or stale read is exactly what raw text
+; shows and a trimmed sig conceals.
+_DebugLog("grab_ok", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""raw_clip"":""" . JsonEsc(ClipSaved)
+        . """,""sig_len"":" . StrLen(ClipTrim) . "}", _grabPre)
 Return
 
 DoSemi:
@@ -829,6 +964,9 @@ SafeCtrl("c")
 Sleep 100
 ClipWait, 2, 1
 ClipSaved := Clipboard
+; WINGMAN (#354): snapshot BEFORE the reset below consumes the state --
+; this is the pre-state every setroot_* line reports.
+_setPre := _BuildSnapshot()
 RootKey              := ""
 RootJustFired        := False
 LastFinisherWasAlpha := False
@@ -848,6 +986,10 @@ PrimeCaptured        := 0
 
 if (ClipSaved = "") {
     RootModeActive := True
+    ; WINGMAN (#354): log the empty-clipboard exit (home mode).
+    _DebugLog("setroot_home", "", "", False
+            , "", "", NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", "", _setPre)
     Return
 }
 ValidCount := CountValidBookmarkLines(ClipSaved)
@@ -915,6 +1057,14 @@ if (!RootModeActive) {
         ZeroMode       := False
         Clipboard      := RootKey
     }
+    ; WINGMAN (#354): log the bare-prefix exit -- including the case where
+    ; no hyphen existed and root mode silently did NOT engage ("active"
+    ; false), which is invisible everywhere else.
+    _DebugLog("setroot_bare", RootKey, "", False
+            , "", "", NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", ""
+            , "{""branch"":""bare_prefix"",""active"":" . (RootModeActive ? "true" : "false") . "}"
+            , _setPre)
     Return
 }
 Loop, Parse, ClipSaved, `n, `r
@@ -950,9 +1100,25 @@ Loop, Parse, ClipSaved, `n, `r
 FindNextNum()
 FindNextAlpha()
 Clipboard := RootKey
+; WINGMAN (#354): log the parsed Set Root outcome -- which branch matched,
+; the reconstructed UsedNums/UsedAlphas and the computed next counters. The
+; sig this Set Root replaced and the slots it seeded are the exact inputs
+; the next finisher's reuse-vs-increment decision reads.
+_DebugLog("setroot_parsed", RootKey, "", False
+        , "", "", NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", ""
+        , "{""branch"":""" . (ZeroMode ? "zero" : "parsed") 
+        . ",""valid_count"":" . ValidCount . "}"
+        , _setPre)
 Return
 
 DoConvertScout:
+; WINGMAN (#354): Convert Scout touches no sequence state, so this line is
+; the whole of what the press can contribute: that it happened, in which
+; window, and what came of the conversion below.
+_DebugLog("convert", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "", "")
 ; Read current clipboard
 ClipSaved := ClipboardAll
 Clipboard := ""
@@ -963,6 +1129,9 @@ if (ErrorLevel) {
     ClipSaved := ""
     ToolTip, Failed to copy clipboard content
     SetTimer, RemoveTooltip, -1500
+    _DebugLog("convert_fail", RootKey, LastSigId, ReadyToIncrement
+            , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", "", "")
     Return
 }
 
@@ -1024,6 +1193,9 @@ OutputLines := RegExReplace(OutputLines, "`n$")
 if (OutputLines = "") {
     ToolTip, No EvE-Scout bookmarks found in clipboard
     SetTimer, RemoveTooltip, -1500
+    _DebugLog("convert_empty", RootKey, LastSigId, ReadyToIncrement
+            , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+            , False, "", "", "", "")
     Return
 }
 
@@ -1031,9 +1203,21 @@ if (OutputLines = "") {
 Clipboard := OutputLines
 ToolTip, Converted %ConvertedCount% EvE-Scout bookmarks to probe format
 SetTimer, RemoveTooltip, -2000
+_DebugLog("convert_ok", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""converted"":" . ConvertedCount . "}", "")
 Return
 
 DoE:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoE" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 NewSuffix := ""
 NewE := 0
 NewSlash := 0
@@ -1045,6 +1229,15 @@ GoSub, FormatClipAndPaste
 Return
 
 DoY:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoY" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FinChar := GetKeyState("CapsLock", "T") ? "h" : "H"
     FireRootFinisher(FinChar, True)
@@ -1061,6 +1254,15 @@ if (RootModeActive) {
 Return
 
 DoO:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoO" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("13", False)
 } else {
@@ -1076,6 +1278,15 @@ if (RootModeActive) {
 Return
 
 DoP:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoP" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FinChar := GetKeyState("CapsLock", "T") ? "l" : "L"
     FireRootFinisher(FinChar, True)
@@ -1092,6 +1303,15 @@ if (RootModeActive) {
 Return
 
 DoDot:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoDot" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FinChar := GetKeyState("CapsLock", "T") ? "n" : "N"
     FireRootFinisher(FinChar, True)
@@ -1108,6 +1328,15 @@ if (RootModeActive) {
 Return
 
 DoS:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoS" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
@@ -1119,6 +1348,15 @@ GoSub, FormatClipAndPaste
 Return
 
 DoC:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoC" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
@@ -1130,6 +1368,15 @@ GoSub, FormatClipAndPaste
 Return
 
 Do1:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do1" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("1", False)
 } else {
@@ -1145,6 +1392,15 @@ if (RootModeActive) {
 Return
 
 Do2:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do2" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("2", False)
 } else {
@@ -1160,6 +1416,15 @@ if (RootModeActive) {
 Return
 
 Do3:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do3" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("3", False)
 } else {
@@ -1175,6 +1440,15 @@ if (RootModeActive) {
 Return
 
 Do4:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do4" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("4", False)
 } else {
@@ -1190,6 +1464,15 @@ if (RootModeActive) {
 Return
 
 Do5:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do5" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("5", False)
 } else {
@@ -1205,6 +1488,15 @@ if (RootModeActive) {
 Return
 
 Do6:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "Do6" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 if (RootModeActive) {
     FireRootFinisher("6", False)
 } else {
@@ -1220,6 +1512,15 @@ if (RootModeActive) {
 Return
 
 DoQuote:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoQuote" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
@@ -1231,6 +1532,15 @@ GoSub, FormatClipAndPaste
 Return
 
 DoComma:
+; WINGMAN (#354): log the press with the mode it landed in. A root
+; finisher routes to FireRootFinisher, which logs its own decision
+; line with the pre-state; bare formatting cannot touch sequence
+; state, so this line is all the record this press gets.
+_DebugLog("press", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""bind"":" . ("""" . "DoComma" . """")
+        . ",""root_mode"":" . (RootModeActive ? """true""" : """false""")
+        . ",""suspend"":" . ("""" . SuspendState() . """") . "}", "")
 GoSub, ReadField
 StringUpper, ClipUpper, ClipRaw
 NewSuffix := ""
@@ -1260,6 +1570,10 @@ Return
 KB_SuspendToggle:
 Suspend
 _SuspendState := (SuspendState() = "On") ? "Off" : "On"
+; WINGMAN (#354): log the suspend transition.
+_DebugLog("suspend", RootKey, LastSigId, ReadyToIncrement
+        , LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+        , False, "", "", "{""suspended_after"":""" . _SuspendState . """}", "")
 GoSub, RefreshStatusTab
 Return
 

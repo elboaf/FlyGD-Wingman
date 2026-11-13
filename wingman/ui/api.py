@@ -8052,8 +8052,33 @@ class Api:
                 # Surfaced here so the Bookmarks page can show it next to
                 # the existing engine-state line.
                 "suspended": status.suspended if status else False,
+                # WINGMAN (#354): the engine's structured keybind-press
+                # log. Surfaced as a path (not opened behind the user's
+                # back) so a user hit by the sequence bug can grab the
+                # file without directory spelunking; `open` hands it to
+                # the shell on request.
+                "debug_log": str(paths.engine_debug_log_file()),
             },
         }
+
+    def open_bookmarks_debug_log(self) -> bool:
+        """Open the engine's debug log (#354) in the default text editor.
+
+        A missing file means the engine has logged nothing yet -- that is
+        worth saying, not an error to raise: the shell would otherwise
+        open an empty-editor window against a path that does not exist.
+        """
+        log = paths.engine_debug_log_file()
+        if not log.exists():
+            self._alert(
+                "info",
+                "No bookmark log yet",
+                "The bookmark engine has not logged anything yet. The log "
+                f"is created on the first keybind press at:\\n{log}",
+            )
+            return True
+        os.startfile(str(log))
+        return True
 
     def _preview_chords(self) -> dict:
         """Character-focus and All-cycle Preview chords, split by registration.

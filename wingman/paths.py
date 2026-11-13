@@ -243,6 +243,14 @@ def engine_status_file() -> Path:
     return state_dir() / "eve_status.json"
 
 
+def engine_debug_log_file() -> Path:
+    """The engine's structured keybind-press log (#354). Like the status
+    file, written only by the engine; Wingman surfaces the path so a user
+    hit by the sequence bug can grab the file without directory
+    spelunking."""
+    return state_dir() / "eve_bookmarks_debug.log"
+
+
 def engine_pid_file() -> Path:
     """PID plus run token of the last spawned engine, for orphan recovery."""
     return state_dir() / "eve_engine.pid"

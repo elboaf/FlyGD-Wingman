@@ -512,7 +512,11 @@
    // has a return value the page renders.
    'play_recording', 'post_recent_logs',
    'connect_google', 'dialog_response', 'minimize', 'close',
-   'skills_refresh', 'skills_reload_plans', 'skills_open_plans_folder'
+   'skills_refresh', 'skills_reload_plans', 'skills_open_plans_folder',
+   // WINGMAN (#354): same class as skills_open_plans_folder -- a click
+   // that ends in a Python-side shell call, doubled so the Bookmarks
+   // screen's control is clickable under ?dev=1.
+   'open_bookmarks_debug_log'
   ].forEach(function (name) { api[name] = log(name); });
 
   // Answers {ok, error}, which is the shape list.js branches on: a
