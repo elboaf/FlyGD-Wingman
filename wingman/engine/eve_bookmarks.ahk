@@ -319,8 +319,8 @@ _DebugLog(event, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha
         . ",""ts"":" . ts
         . ",""event"":" . ("""" . JsonEsc(event) . """")
         . ",""title"":" . ("""" . JsonEsc(_dbgTitle) . """")
-        . ",""root"":" . (rootKey = "" ? "null" : ("""" . rootKey . """"))
-        . ",""last_sig"":" . (lastSigId = "" ? "null" : ("""" . lastSigId . """"))
+        . ",""root"":" . (rootKey = "" ? "null" : ("""" . JsonEsc(rootKey) . """"))
+        . ",""last_sig"":" . (lastSigId = "" ? "null" : ("""" . JsonEsc(lastSigId) . """"))
         . ",""ready"":" . (ready ? "true" : "false")
         . ",""last_used_num"":" . (lastUsedNum = "" ? "null" : lastUsedNum)
         . ",""last_used_alpha"":" . (lastUsedAlpha = "" ? "null" : lastUsedAlpha)
@@ -984,16 +984,19 @@ ClipWait, 2
 if (ErrorLevel) {
     ToolTip, Grab Sig failed - nothing was copied
     SetTimer, RemoveTooltip, -1500
-    ; WINGMAN (#354): record the failed copy. Nothing was copied, so the
-    ; sig this press would have produced does not exist -- the sig fields
-    ; are null and the decision column names the failure. pre_state is the
-    ; state captured at entry, before the clipboard was cleared.
-_DebugLog("grab_fail"
+    ; WINGMAN (#354): record the failed copy. The copy failed, so the
+    ; sequence state below is whatever the previous operation left -- a
+    ; failed Grab Sig changes none of it (the sig assignment at grab_ok
+    ; never runs) -- so these pass the live globals, and the decision
+    ; column names the failure instead of a state transition that did
+    ; not happen. pre_state is the state captured at entry, before the
+    ; clipboard was cleared.
+    _DebugLog("grab_fail"
         , RootKey
-        , ""
-        , False
-        , ""
-        , ""
+        , LastSigId
+        , ReadyToIncrement
+        , LastUsedNum
+        , LastUsedAlpha
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1003,7 +1006,7 @@ _DebugLog("grab_fail"
         , ""
         , _grabPre
         , ""
-        , "")
+        , "grab_failed_no_new_sig")
     Return
 }
 ClipSaved := Clipboard
@@ -1063,10 +1066,13 @@ PrimeCaptured        := 0
 
 if (ClipSaved = "") {
     RootModeActive := True
-    ; WINGMAN (#354): log the empty-clipboard exit (home mode).
+    ; WINGMAN (#354): log the empty-clipboard exit (home mode). The reset
+    ; above consumed the sequence state, but LastSigId is deliberately NOT
+    ; in that reset list (DoSemi reuses it), so it survives -- report the
+    ; survivor, not a blank; decision names why the state is empty.
 _DebugLog("setroot_home"
         , ""
-        , ""
+        , LastSigId
         , False
         , ""
         , ""
@@ -1079,7 +1085,7 @@ _DebugLog("setroot_home"
         , ""
         , _setPre
         , ""
-        , "")
+        , "setroot_root_mode_reset")
     Return
 }
 ValidCount := CountValidBookmarkLines(ClipSaved)
@@ -1149,10 +1155,11 @@ if (!RootModeActive) {
     }
     ; WINGMAN (#354): log the bare-prefix exit -- including the case where
     ; no hyphen existed and root mode silently did NOT engage ("active"
-    ; false), which is invisible everywhere else.
+    ; false), which is invisible everywhere else. LastSigId survives the
+    ; reset above (DoSemi reuses it), so it is reported, not blanked.
 _DebugLog("setroot_bare"
         , RootKey
-        , ""
+        , LastSigId
         , False
         , ""
         , ""
@@ -1165,7 +1172,7 @@ _DebugLog("setroot_bare"
         , ""
         , _setPre
         , "{""branch"":""bare_prefix"",""active"":" . (RootModeActive ? "true" : "false") . "}"
-        , "")
+        , "setroot_root_mode_reset")
     Return
 }
 Loop, Parse, ClipSaved, `n, `r
@@ -1207,7 +1214,7 @@ Clipboard := RootKey
 ; the next finisher's reuse-vs-increment decision reads.
 _DebugLog("setroot_parsed"
         , RootKey
-        , ""
+        , LastSigId
         , False
         , ""
         , ""
@@ -1221,7 +1228,7 @@ _DebugLog("setroot_parsed"
         , _setPre
         , "{""branch"":""" . (ZeroMode ? """zero""" : """parsed""") 
         . ",""valid_count"":" . ValidCount . "}"
-        , "")
+        , "setroot_root_mode_reset")
 Return
 
 DoConvertScout:
@@ -1243,7 +1250,7 @@ _DebugLog("convert"
         , ""
         , ""
         , ""
-        , "")
+        , "convert_press")
 ; Read current clipboard
 ClipSaved := ClipboardAll
 Clipboard := ""
