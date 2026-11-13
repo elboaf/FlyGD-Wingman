@@ -106,19 +106,20 @@
       var suspEl = WM.el('eve-suspended');
       if (suspEl) suspEl.textContent = engine.suspended ? 'All bookmark hotkeys are suspended' : '';
     }
-    renderDebugLogRow(engine.state);
+    renderDebugLogRow();
   }
 
-  // WINGMAN (#354): the Open keybind log row. Shown whenever the engine
-  // is on (running OR failing -- a user diagnosing a failed start may
-  // still want the log), hidden while Off. The path rides the tooltip,
-  // not the text: it is long and machine-shaped, and the button is the
-  // affordance. state is enough to decide visibility; the path comes
-  // from the route payload, read on click, so a stale render cannot open
-  // a moved file.
-  function renderDebugLogRow(state) {
+  // WINGMAN (#354): the Open keybind log row. Always visible: the log is
+  // append-only and survives the engine being off, so a user who disables
+  // bookmark keybinds right after a reproduction must still be able to
+  // open the history (CodeRabbit #357). The path rides the tooltip, not
+  // the text: it is long and machine-shaped, and the button is the
+  // affordance. The path comes from the route payload, read on click, so
+  // a stale render cannot open a moved file; a not-yet-created log is
+  // answered by Python with a message, not an error.
+  function renderDebugLogRow() {
     var row = WM.el('eve-debuglog-row');
-    if (row) row.hidden = state === 'off';
+    if (row) row.hidden = false;
   }
 
   // Both engine-state write sites go through this. They already drifted
@@ -655,7 +656,7 @@
     // so a tooltip written here can only go stale, never wrong-way
     // round: refresh the tooltip too, from the state the render call
     // already holds.
-    renderDebugLogRow(payload.state);
+    renderDebugLogRow();
 
     // The prime lifecycle dot (#353): grey (resting) unless Python
     // answers a word for the standing prime.

@@ -8067,6 +8067,8 @@ class Api:
         A missing file means the engine has logged nothing yet -- that is
         worth saying, not an error to raise: the shell would otherwise
         open an empty-editor window against a path that does not exist.
+        The alert is informational, never a failure: opening nothing is
+        the correct outcome when there is no history to show.
         """
         log = paths.engine_debug_log_file()
         if not log.exists():
