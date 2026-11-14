@@ -102,6 +102,13 @@ LastUsedAlpha := ""
 ; a restart, which is itself diagnostic. Initialized once at script start
 ; (under #Persistent), so the helper's `global _DebugSeq` reaches it.
 _DebugSeq := 0
+; WINGMAN (#354): the debug log's target path, relative to the process
+; working directory like every other engine file. _DebugLog re-points
+; this ONCE to the alt sibling if the primary append ever fails, so a
+; held primary file (viewer, antivirus scan -- sharing-violation
+; territory) can mute the logger only until the first press after the
+; hold starts, never silently for the rest of a session.
+_DebugLogPath := "eve_bookmarks_debug.log"
 ; WINGMAN (#354): the serialized bind table the last RefreshHotkeys pass
 ; logged, so the 10-second re-read logs only when the set actually changed.
 _LastBinds := ""
@@ -304,7 +311,7 @@ JsonList(csv) {
 _DebugLog(event, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha
         , nextNum, nextAlpha, usedNums, usedAlphas, isAlpha, finChar, result
         , preState, detail, decision) {
-    global _DebugSeq
+    global _DebugSeq, _DebugLogPath
     _DebugSeq += 1
     seq := _DebugSeq
     ts := EpochNow()
@@ -335,22 +342,30 @@ _DebugLog(event, rootKey, lastSigId, ready, lastUsedNum, lastUsedAlpha
         . ",""pre_state"":" . (preState = "" ? "null" : preState)
         . ",""detail"":" . (detail = "" ? "null" : detail)
         . "}"
-    ; APPEND to the real log, not temp-then-move: FileMove OVERWRITES the
-    ; target, so the status file's discipline would leave only the newest
-    ; line and destroy the history a diagnosis needs. The record is fully
-    ; built before the FileAppend and the `n rides INSIDE %rec% so the
-    ; command's own parameter cannot end mid-line. An event written while
-    ; the tmp file is held (antivirus scan, an interrupted earlier thread)
-    ; is skipped by the failed append rather than blocking the hotkey; the
-    ; next event's FileDelete cleans the orphaned tmp up after it.
-    ; APPEND directly to the real log. There is no temp file: AHK's
-    ; FileAppend with the text as the first parameter writes the whole
-    ; record in one call, so a reader can never see a torn line, and a
-    ; temp-then-move would OVERWRITE the log each event -- FileMove
-    ; replaces the target, which would keep only the newest line and
-    ; destroy the history a diagnosis needs. A failed append (log held
-    ; by a viewer) skips the event instead of blocking the hotkey.
-    FileAppend, %rec%`n, eve_bookmarks_debug.log
+    ; APPEND directly to the real log -- no temp file: FileMove replaces
+    ; the target, which would keep only the newest line and destroy the
+    ; history a diagnosis needs, and a record written in one FileAppend
+    ; can never be seen torn by a reader. A failed append must never
+    ; block or delay the hotkey -- but the old behavior (silently skip
+    ; and keep going) muted the logger for a whole session in the field:
+    ; one transient holder of the file (a `tail -f`, an antivirus scan;
+    ; AHK's opener trips ERROR_SHARING_VIOLATION where looser openers
+    ; sail through) and every later press logged nothing, with no trace.
+    ; So on failure the helper switches ONCE to a sibling alt file for
+    ; the rest of the session, writes a marker line there naming the
+    ; Win32 error, and lands the very record that triggered the switch.
+    ; Later failures on the alt path still skip per-press -- the retry
+    ; is every press, the switch is once, and the marker explains it.
+    FileAppend, %rec%`n, %_DebugLogPath%
+    if (ErrorLevel) {
+        le := A_LastError
+        if (_DebugLogPath = "eve_bookmarks_debug.log") {
+            _DebugLogPath := "eve_bookmarks_debug_alt.log"
+            marker := "{""note"":""primary debug log unavailable (Win32 error " . le . "); writing to this alt file for the rest of the session"",""abandoned_file"":""eve_bookmarks_debug.log"",""ts"":" . EpochNow() . "}"
+            FileAppend, %marker%`n, %_DebugLogPath%
+            FileAppend, %rec%`n, %_DebugLogPath%
+        }
+    }
 }
 
 ; Serialize a UsedNums / UsedAlphas array (e.g. [2,3]) as a compact JSON

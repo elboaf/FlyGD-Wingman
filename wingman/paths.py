@@ -251,6 +251,16 @@ def engine_debug_log_file() -> Path:
     return state_dir() / "eve_bookmarks_debug.log"
 
 
+def engine_debug_log_alt_file() -> Path:
+    """The debug log's failover sibling. When the primary file is held by
+    another program (viewer, antivirus -- anything AHK's strict opener
+    trips a sharing violation on), the engine switches to this file for
+    the rest of the session and records why in a marker line. Field
+    finding from the first instrumented session: the old silent-skip
+    behavior muted the logger for a whole session with no trace."""
+    return state_dir() / "eve_bookmarks_debug_alt.log"
+
+
 def engine_pid_file() -> Path:
     """PID plus run token of the last spawned engine, for orphan recovery."""
     return state_dir() / "eve_engine.pid"

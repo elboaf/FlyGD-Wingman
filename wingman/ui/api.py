@@ -8056,8 +8056,10 @@ class Api:
                 # log. Surfaced as a path (not opened behind the user's
                 # back) so a user hit by the sequence bug can grab the
                 # file without directory spelunking; `open` hands it to
-                # the shell on request.
+                # the shell on request. The alt sibling carries the
+                # session when the primary is held by another program.
                 "debug_log": str(paths.engine_debug_log_file()),
+                "debug_log_alt": str(paths.engine_debug_log_alt_file()),
             },
         }
 
@@ -8071,6 +8073,24 @@ class Api:
         the correct outcome when there is no history to show.
         """
         log = paths.engine_debug_log_file()
+        alt = paths.engine_debug_log_alt_file()
+        if not log.exists() and alt.exists():
+            # Field finding (#354 follow-up): the primary log can be held
+            # by another program for a whole session (viewer, antivirus);
+            # the engine then fails over to the alt file and says so in a
+            # marker line. Prefer whichever file actually carries this
+            # session's history, and tell the user which one opened.
+            os.startfile(str(alt))
+            self._alert(
+                "info",
+                "Opened the fallback keybind log",
+                "The primary log file is held by another program, so the "
+                "engine wrote this session to the fallback file instead:\n"
+                f"{alt}\n\n"
+                "Close whatever holds the primary file and the engine "
+                "will use it again next session.",
+            )
+            return True
         if not log.exists():
             self._alert(
                 "info",
