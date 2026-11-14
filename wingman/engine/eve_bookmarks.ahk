@@ -84,18 +84,16 @@ FileEncoding, UTF-8-RAW
 RootKey := ""
 RootJustFired := False
 LastSigId := ""
-LastFinisherWasAlpha := False
 RootModeActive := False
 ZeroMode := False
 ReadyToIncrement := False
+PendingSlotIsAlpha := False
 
 ; Used slot tracking
 UsedNums := {}
 UsedAlphas := {}
 NextNum := 1
 NextAlpha := 1
-LastUsedNum := ""
-LastUsedAlpha := ""
 
 ; WINGMAN: per-process monotonic counter for the debug log (#354).
 ; A per-line sequence number lets a replay detect gaps or repeats after
@@ -184,12 +182,11 @@ RootKey := ""
 ZeroMode := False
 ReadyToIncrement := False
 RootJustFired := False
+PendingSlotIsAlpha := False
 UsedNums := {}
 UsedAlphas := {}
 NextNum := 1
 NextAlpha := 1
-LastUsedNum := ""
-LastUsedAlpha := ""
 
 Return
 
@@ -292,8 +289,9 @@ JsonList(csv) {
 ; The out-of-sequence bookmark naming (re-used / skipped chain numbers)
 ; lives entirely in AHK's sequence state, which Wingman cannot read apart
 ; from the status file -- and the status file only carries the *next*
-; counter, not LastUsedNum or ReadyToIncrement, the two that decide reuse
-; vs. increment. So when a finisher produced 42 while the bar predicted 43
+; counters, not the used-slot sets or the pending-slot family that decide
+; what the next finisher renders and what the next grab commits. So when
+; a finisher produced 42 while the bar predicted 43
 ; this was invisible. This helper writes one JSON line per bookmark-module
 ; keybind press so the exact state at each event is recoverable after the
 ; fact. It is a debug aid only: the write is best-effort and must never
@@ -396,14 +394,14 @@ _DebugMap(obj) {
 ; start answers every field empty, so a chain that restarts mid-way shows
 ; as this line followed by state that contradicts it.
 _DebugLogExit(ExitReason, ExitCode) {
-    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha
+    global RootKey, LastSigId, ReadyToIncrement
     global NextNum, NextAlpha, UsedNums, UsedAlphas
 _DebugLog("exit"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -422,7 +420,7 @@ _DebugLog("exit"
 ; turn a read into a local. Built at FireRootFinisher entry, before any
 ; mutation, so the log records intent.
 _BuildSnapshot() {
-    global RootKey, LastSigId, ReadyToIncrement, LastUsedNum, LastUsedAlpha, NextNum, NextAlpha, UsedNums, UsedAlphas
+    global RootKey, LastSigId, ReadyToIncrement, NextNum, NextAlpha, UsedNums, UsedAlphas
     ; WINGMAN (#354): capture the active window title so a wrong-window
     ; misfire (a finisher firing against a non-EVE window) is visible in
     ; the log. A command-assigned name used only inside this function is
@@ -431,8 +429,8 @@ _BuildSnapshot() {
     root := (RootKey = "") ? "null" : ("""" . JsonEsc(RootKey) . """")
     lastsig := (LastSigId = "") ? "null" : ("""" . JsonEsc(LastSigId) . """")
     ready := (ReadyToIncrement ? "true" : "false")
-    lun := (LastUsedNum = "") ? "null" : LastUsedNum
-    lua := (LastUsedAlpha = "") ? "null" : LastUsedAlpha
+    lun := "null" ; LastUsedNum removed by grab-as-commit (#354)
+    lua := "null" ; LastUsedAlpha removed by grab-as-commit (#354)
     return "{""title"":""" . JsonEsc(_snapTitle) . """,""root"":" . root
         . ",""last_sig"":" . lastsig . ",""ready"":" . ready
         . ",""last_used_num"":" . lun . ",""last_used_alpha"":" . lua
@@ -617,8 +615,8 @@ _DebugLog("refresh"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -692,9 +690,9 @@ SafeCtrl(key) {
 }
 
 FireRootFinisher(finChar, isAlpha) {
-    global RootKey, RootJustFired, LastSigId, LastFinisherWasAlpha
+    global RootKey, LastSigId
     global UsedNums, UsedAlphas, NextNum, NextAlpha
-    global ReadyToIncrement, LastUsedNum, LastUsedAlpha
+    global ReadyToIncrement, PendingSlotIsAlpha
 
     ; WINGMAN (#354): capture the pre-mutation state once, here before any
     ; branch runs. The exit log below reuses this snapshot as its pre_state
@@ -703,76 +701,25 @@ FireRootFinisher(finChar, isAlpha) {
     _preSnap := _BuildSnapshot()
     _decision := "entry"
 
-    ; Cross-family correction. The first finisher after a Grab Sig
-    ; reserves a slot in ITS family -- a number for C1..C6/C13, a letter
-    ; for HS/LS/NS -- and a second finisher in the SAME family is the
-    ; correct-in-place below: it reuses LastUsedNum/LastUsedAlpha and
-    ; consumes nothing. But a second finisher in the OTHER family
-    ; replaces the bookmark outright -- the pasted key moves from
-    ; "1-XXX 1" to "1A-XXX H" -- so the superseded family's reservation
-    ; has to be released and the new family's slot properly consumed,
-    ; or the chain number stays incremented by a finisher that is no
-    ; longer on any bookmark. Repro before this block: root 1, Grab Sig,
-    ; C1, HS left the counter at 12 instead of 11 -- the C1 slot was
-    ; still marked used even though the 1-key bookmark no longer exists.
-    ; LastFinisherWasAlpha was recorded for exactly this decision and
-    ; was read by nothing until this block existed.
-    ;
-    ; The LastUsed guard keeps a fresh Set Root (both LastUsed empty,
-    ; nothing reserved yet) on the plain correct-in-place path below.
-    if (!ReadyToIncrement && LastFinisherWasAlpha != isAlpha
-            && LastUsedNum . LastUsedAlpha != "") {
-        if (LastFinisherWasAlpha) {
-            UsedAlphas[LastUsedAlpha] := False
-            NextAlpha := 1
-            FindNextAlpha()
-            LastUsedAlpha := ""
-        } else {
-            UsedNums[LastUsedNum] := False
-            NextNum := 1
-            FindNextNum()
-            LastUsedNum := ""
-        }
-        ; The new family now consumes a fresh slot through the normal
-        ; path below, exactly as if it were the first finisher.
-        ; WINGMAN (#354): name the correction in the log. LastFinisherWasAlpha
-        ; still names the SUPERSEDED family here -- the read happens before
-        ; any mutation in this branch.
-        _decision := "cross_family_released_" . (LastFinisherWasAlpha ? "alpha" : "num")
-                . "_then_increment"
-        ReadyToIncrement := True
-    }
-    if (isAlpha) {
-        if (ReadyToIncrement) {
-            ; Use next available and mark as used
-            SysKey := BuildSystemKey(RootKey, NextAlpha, True)
-            UsedAlphas[NextAlpha] := True
-            LastUsedAlpha := NextAlpha
-            FindNextAlpha()
-            _decision := "increment_alpha"
-        } else {
-            ; Correct-in-place: reuse last used alpha
-            if (LastUsedAlpha = "")
-                LastUsedAlpha := NextAlpha
-            _decision := "reuse_alpha"
-            SysKey := BuildSystemKey(RootKey, LastUsedAlpha, True)
-        }
-    } else {
-        if (ReadyToIncrement) {
-            ; Use next available and mark as used
-            SysKey := BuildSystemKey(RootKey, NextNum, False)
-            UsedNums[NextNum] := True
-            LastUsedNum := NextNum
-            FindNextNum()
-            _decision := "increment_num"
-        } else {
-            ; Correct-in-place: reuse last used number
-            if (LastUsedNum = "")
-                LastUsedNum := NextNum
-            _decision := "reuse_num"
-            SysKey := BuildSystemKey(RootKey, LastUsedNum, False)
-        }
-    }
+    ; WINGMAN: the grab-as-commit model. A finisher never consumes its
+    ; slot. It renders the first free slot of its family, and the NEXT
+    ; Grab Sig commits that slot (marks it used, advances the counter)
+    ; after its own copy succeeds. Every finisher decision is therefore
+    ; "render the pending slot": repeated finishers -- including switches
+    ; between the number family (C1..C6/C13) and the letter family
+    ; (HS/LS/NS) -- are plain edits that re-render the still-free slot
+    ; and overwrite the pending record, so a superseded finisher can
+    ; never leave a consumed slot behind. The old consume-at-finisher
+    ; design needed the cross-family release block plus reuse tracking
+    ; (LastUsedNum/LastUsedAlpha/LastFinisherWasAlpha); all of that is
+    ; gone -- a reservation that is never consumed leaves nothing to
+    ; release, and a slot that is only consumed at grab cannot collide.
+    ; This also fixes the field-reported sequence bug (#354 logs,
+    ; 2026-11-14): Grab > Set Root > finisher > Grab > finisher produced
+    ; the same chain number twice, because Set Root reset the old
+    ; ready flag (keeping the sig) and the reuse path advanced nothing.
+    _decision := isAlpha ? "render_alpha_slot" : "render_num_slot"
+    SysKey := BuildSystemKey(RootKey, isAlpha ? NextAlpha : NextNum, isAlpha)
 
     Result := SysKey . LastSigId . " " . finChar
     StringUpper, Result, Result
@@ -787,9 +734,8 @@ FireRootFinisher(finChar, isAlpha) {
     Sleep 50
     SafeCtrl("v")
 
-    ReadyToIncrement     := False
-    RootJustFired        := True
-    LastFinisherWasAlpha := isAlpha
+    ReadyToIncrement    := True
+    PendingSlotIsAlpha  := isAlpha
 
     ; WINGMAN (#354): log the produced Result and post-mutation state,
     ; with the decision taken. pre_state is the snapshot captured at entry,
@@ -798,8 +744,8 @@ _DebugLog("fire"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -980,8 +926,8 @@ _DebugLog("grab"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1010,8 +956,8 @@ if (ErrorLevel) {
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1028,18 +974,43 @@ ClipSaved := Clipboard
 ClipTrim := SubStr(ClipSaved, 1, 3)
 Clipboard := "-" . ClipTrim . " "
 LastSigId := "-" . ClipTrim
-ReadyToIncrement := True
+; WINGMAN: grab-as-commit. This is the sequence's ONLY commit point: the
+; previous finisher rendered a slot but left it free (PendingSlotIsAlpha
+; says which family it was in); a successful copy commits it now -- mark
+; it used and advance to the first free slot -- BEFORE capturing the new
+; sig. ReadyToIncrement then arms the NEXT finisher's select-all, so the
+; first render after a grab replaces the field's contents and every
+; later finisher re-render (an edit) overwrites cleanly; without it the
+; select-all keyed on the old ready flag and the first render after this
+; change would append into stale text. A failed copy lands in the
+; grab_fail branch above and commits nothing, so the pending slot stays
+; pending. The buddy repro (#354, 2026-11-14) -- Grab > Set Root >
+; finisher > Grab > finisher yielding the same chain number twice -- is
+; closed by this: the first finisher's slot is committed HERE, on the
+; second grab, so the second render starts from the advanced counter.
+; A grab with nothing pending commits nothing (both guards false).
+if (ReadyToIncrement) {
+    if (PendingSlotIsAlpha) {
+        UsedAlphas[NextAlpha] := True
+        FindNextAlpha()
+    } else {
+        UsedNums[NextNum] := True
+        FindNextNum()
+    }
+}
+ReadyToIncrement := False
 RootJustFired := False
-; WINGMAN (#354): the ReadyToIncrement transition that drives the next
-; finisher's reuse-vs-increment decision. The raw clipboard is logged
-; beside the trimmed sig: a short or stale read is exactly what raw text
-; shows and a trimmed sig conceals.
+; WINGMAN (#354): the commit ran above (a pending slot, if any, is now
+; consumed and the counter advanced), so ready reports false -- nothing
+; is pending until the next finisher renders a slot. The raw clipboard
+; is logged beside the trimmed sig: a short or stale read is exactly
+; what raw text shows and a trimmed sig conceals.
 _DebugLog("grab_ok"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1064,16 +1035,14 @@ ClipSaved := Clipboard
 _setPre := _BuildSnapshot()
 RootKey              := ""
 RootJustFired        := False
-LastFinisherWasAlpha := False
 RootModeActive       := False
 ZeroMode             := False
 ReadyToIncrement     := False
+PendingSlotIsAlpha   := False
 UsedNums             := {}
 UsedAlphas           := {}
 NextNum              := 1
 NextAlpha            := 1
-LastUsedNum          := ""
-LastUsedAlpha        := ""
 PrimeJCode           := ""
 PrimeFlags           := ""
 PrimeEvent           := ""
@@ -1254,8 +1223,8 @@ _DebugLog("convert"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1280,8 +1249,8 @@ _DebugLog("convert_fail"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1357,8 +1326,8 @@ _DebugLog("convert_empty"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1380,8 +1349,8 @@ _DebugLog("convert_ok"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1403,8 +1372,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1436,8 +1405,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1474,8 +1443,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1511,8 +1480,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1549,8 +1518,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1587,8 +1556,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1620,8 +1589,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1653,8 +1622,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1690,8 +1659,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1727,8 +1696,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1764,8 +1733,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1801,8 +1770,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1838,8 +1807,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1875,8 +1844,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1908,8 +1877,8 @@ _DebugLog("press"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums
@@ -1956,8 +1925,8 @@ _DebugLog("suspend"
         , RootKey
         , LastSigId
         , ReadyToIncrement
-        , LastUsedNum
-        , LastUsedAlpha
+        , 0
+        , 0
         , NextNum
         , NextAlpha
         , UsedNums

@@ -418,6 +418,7 @@ def test_globals_written_inside_functions_are_declared(source):
         "LastSigId",
         "ConsumedSeq",
         "ReadyToIncrement",
+        "PendingSlotIsAlpha",
     }
     functions = re.findall(
         r"^([A-Za-z_]\w*)\s*\([^)]*\)\s*\{(.*?)^\}", source, re.DOTALL | re.MULTILINE
@@ -591,37 +592,44 @@ def _function_body(source, name):
     return match.group(1)
 
 
-def test_cross_family_finisher_correction_releases_the_superseded_slot(source):
-    """A finisher of the OTHER family replaces the bookmark outright
-    (1-XXX 1 becomes 1A-XXX H), so the superseded family's slot must be
-    released and its counter rewound, and the new family's slot consumed
-    -- or the chain counter stays incremented by a finisher that is no
-    longer on any bookmark. Repro: root 1, Grab Sig, C1, HS read
-    `next num 12`; the C1 slot was still marked used with no 1-key
-    bookmark left.
+def test_finishers_render_without_consuming_and_grab_commits(source):
+    """Grab-as-commit (#354 field repro, 2026-11-14): a finisher only
+    renders the first free slot of its family and records which family is
+    pending; the NEXT successful Grab Sig commits that slot (marks it
+    used, advances the counter) after its own copy succeeds.
 
-    LastFinisherWasAlpha is the decision input and was recorded by
-    FireRootFinisher while being read by NOTHING until this block
-    existed -- the exact failure shape this file exists to catch, a
-    feature present as dead state. The release of BOTH pools is
-    asserted so deleting either half still goes red.
+    The old consume-at-finisher design reserved the slot on the first
+    finisher and needed a cross-family release block plus LastUsed*
+    tracking to undo reservations that a later edit superseded -- and it
+    broke outright when Set Root landed between grab and finisher:
+    Grab > Set Root > finisher > Grab > finisher produced the same chain
+    number twice, because Set Root reset the old ready flag while keeping
+    the sig, and the reuse path consumed nothing. Slots are now consumed
+    in exactly one place, and only after the copy that justifies the
+    commit has succeeded.
     """
-    body = _function_body(source, "FireRootFinisher")
-    assert re.search(r"LastFinisherWasAlpha\s*!=\s*isAlpha", body), (
-        "FireRootFinisher never reads LastFinisherWasAlpha -- cross-family "
-        "correction releases no slot and the chain counter over-increments"
+    fire = _function_body(source, "FireRootFinisher")
+    assert "UsedNums[" not in fire and "UsedAlphas[" not in fire, (
+        "FireRootFinisher consumes slots -- a finisher must only render; "
+        "the grab is the commit point"
     )
-    assert "UsedNums[LastUsedNum] := False" in body, (
-        "the superseded NUM slot is never released"
+    assert re.search(
+        r"BuildSystemKey\(RootKey,\s*isAlpha \? NextAlpha : NextNum", fire
+    ), "the finisher no longer renders the first free slot of its family"
+    assert re.search(r"PendingSlotIsAlpha\s*:=\s*isAlpha", fire), (
+        "the pending family is not recorded for the next grab's commit"
     )
-    assert "UsedAlphas[LastUsedAlpha] := False" in body, (
-        "the superseded ALPHA slot is never released"
+    grab = _label_body(source, "DoQ")
+    assert re.search(r"if\s*\(ReadyToIncrement\)", grab), (
+        "the grab's commit is not gated on a pending slot"
     )
-    assert re.search(r"NextNum\s*:=\s*1\s*\n\s*FindNextNum\(\)", body) and re.search(
-        r"NextAlpha\s*:=\s*1\s*\n\s*FindNextAlpha\(\)", body
-    ), "the released family's counter is not rewound to the first free slot"
-    assert "ReadyToIncrement := True" in body, (
-        "the new family's slot is not consumed after the release"
+    assert (
+        "UsedNums[NextNum] := True" in grab and "UsedAlphas[NextAlpha] := True" in grab
+    ), "grab no longer commits the pending slot"
+    assert grab.index("grab_failed_no_new_sig") < grab.index(
+        "UsedNums[NextNum] := True"
+    ), (
+        "the commit runs before the failed-copy check -- a failed grab must commit nothing"
     )
 
 
