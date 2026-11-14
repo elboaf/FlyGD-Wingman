@@ -780,6 +780,15 @@
         <div class="row" id="eve-engine-row"><span class="lab"></span>
           <span class="hint operational-status" id="eve-engine-state" role="status" aria-live="polite"></span></div>
         </div>
+        <!-- WINGMAN (#354): the engine's structured keybind-press log.
+             Always visible: the log is append-only and survives the
+             engine being off, so a user who disables bookmark keybinds
+             right after a reproduction must still be able to open the
+             history. The path is a title tooltip, never rendered as
+             text: it is long, machine-shaped, and worthless twice. -->
+        <div class="row" id="eve-debuglog-row" hidden><span class="lab"></span>
+          <button class="btn" id="eve-open-debuglog" aria-label="Open the bookmark engine's keybind press log">Open keybind log</button>
+          <span class="hint" id="eve-debuglog-path"></span></div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
         <!-- WINGMAN: suspend indicator (#329). Shown only while running AND

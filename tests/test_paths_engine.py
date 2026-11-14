@@ -12,6 +12,15 @@ def test_state_files_live_together(monkeypatch, tmp_path):
     assert paths.engine_pid_file() == tmp_path / "eve_engine.pid"
 
 
+def test_debug_log_and_alt_sibling_live_together(monkeypatch, tmp_path):
+    """The failover sibling (#354 follow-up) must sit next to the primary:
+    the engine's relative-path appends resolve in one directory, and the
+    Open-keybind-log flow picks whichever file carries the session."""
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
+    assert paths.engine_debug_log_file() == tmp_path / "eve_bookmarks_debug.log"
+    assert paths.engine_debug_log_alt_file() == tmp_path / "eve_bookmarks_debug_alt.log"
+
+
 def test_engine_exe_never_falls_back_to_path(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
     monkeypatch.setattr(

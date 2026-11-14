@@ -37,6 +37,13 @@
     renderBlockers();
     renderWindows();
     renderBinds();
+    // WINGMAN (#354): the debug log's path rides the button's tooltip.
+    // Set on every render so a changed state dir (never expected, cheap
+    // anyway) cannot leave a stale path behind.
+    var logBtn = WM.el('eve-open-debuglog');
+    if (logBtn && payload.engine && payload.engine.debug_log) {
+      logBtn.title = payload.engine.debug_log;
+    }
   }
 
   // Enabled, running, and registering nothing. The two config states that
@@ -99,6 +106,20 @@
       var suspEl = WM.el('eve-suspended');
       if (suspEl) suspEl.textContent = engine.suspended ? 'All bookmark hotkeys are suspended' : '';
     }
+    renderDebugLogRow();
+  }
+
+  // WINGMAN (#354): the Open keybind log row. Always visible: the log is
+  // append-only and survives the engine being off, so a user who disables
+  // bookmark keybinds right after a reproduction must still be able to
+  // open the history (CodeRabbit #357). The path rides the tooltip, not
+  // the text: it is long and machine-shaped, and the button is the
+  // affordance. The path comes from the route payload, read on click, so
+  // a stale render cannot open a moved file; a not-yet-created log is
+  // answered by Python with a message, not an error.
+  function renderDebugLogRow() {
+    var row = WM.el('eve-debuglog-row');
+    if (row) row.hidden = false;
   }
 
   // Both engine-state write sites go through this. They already drifted
@@ -550,6 +571,16 @@
     WM.send('get_bookmarks').then(render);
   });
 
+  // WINGMAN (#354): open the engine's keybind-press log. The tooltip is
+  // set here rather than in render(): the route payload is the only
+  // holder of the path, and this listener runs once at wire time when
+  // that payload is already in hand. The log file itself need not exist
+  // yet -- Python answers that case with a message instead of opening an
+  // empty editor against a missing path.
+  WM.el('eve-open-debuglog').addEventListener('click', function () {
+    WM.send('open_bookmarks_debug_log');
+  });
+
   WM.el('eve-reset-binds').addEventListener('click', function () {
     // Overwrites all 18 (bookmarks.py BIND_IDS), so it is confirmed.
     //
@@ -618,6 +649,14 @@
     if (suspRow) {
       suspRow.hidden = !live || !payload.suspended;
     }
+
+    // WINGMAN (#354): the Open keybind log row follows the engine state
+    // on every poll tick, exactly like writeEngineState above it. The
+    // path itself is read fresh from the route payload at click time,
+    // so a tooltip written here can only go stale, never wrong-way
+    // round: refresh the tooltip too, from the state the render call
+    // already holds.
+    renderDebugLogRow();
 
     // The prime lifecycle dot (#353): grey (resting) unless Python
     // answers a word for the standing prime.
